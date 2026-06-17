@@ -1,12 +1,17 @@
 import { defineChain } from "viem";
 
+const DEFAULT_LITVM_RPC = "https://liteforge.rpc.caldera.xyz/http";
+
+export const LITVM_RPC_URL =
+  process.env.NEXT_PUBLIC_LITVM_RPC || DEFAULT_LITVM_RPC;
+
 export const litvm = defineChain({
   id: 4441,
   name: "LitVM LiteForge",
   nativeCurrency: { name: "zkLTC", symbol: "zkLTC", decimals: 18 },
   rpcUrls: {
     default: {
-      http: ["https://liteforge.rpc.caldera.xyz/http"],
+      http: [LITVM_RPC_URL],
     },
   },
   blockExplorers: {

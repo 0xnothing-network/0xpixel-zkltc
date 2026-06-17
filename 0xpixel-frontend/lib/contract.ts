@@ -1,7 +1,7 @@
 import { createPublicClient, http, fallback } from "viem";
 import { PixelNFTABI } from "./abi";
 import { pixelDataToSVG } from "./gridParser";
-import { litvm } from "@/config/wagmi";
+import { litvm, LITVM_RPC_URL } from "@/config/wagmi";
 
 export const PIXEL_NFT_CONTRACT_ADDRESS: `0x${string}` =
   "0x7bE3B9035AAAcB57b6634eCBa65402e37E30Bf66";
@@ -27,12 +27,9 @@ export function shortenAddress(addr: string, head = 6, tail = 4): string {
   return `${addr.slice(0, head)}...${addr.slice(-tail)}`;
 }
 
-const PRIMARY_RPC = "https://liteforge.rpc.caldera.xyz/http";
-const FALLBACK_RPC = "https://liteforge.rpc.caldera.xyz/http";
-
 export const publicClient = createPublicClient({
   chain: litvm,
-  transport: fallback([http(PRIMARY_RPC), http(FALLBACK_RPC)], {
+  transport: fallback([http(LITVM_RPC_URL), http(LITVM_RPC_URL)], {
     rank: false,
     retryCount: 3,
     retryDelay: 250,
