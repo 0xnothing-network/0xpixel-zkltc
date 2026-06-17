@@ -1,0 +1,38 @@
+# --- Foundry / Forge ---
+out/
+cache/
+broadcast/
+.gas-snapshot
+coverage/
+coverage.json
+
+# --- Node / Frontend ---
+node_modules/
+.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# --- Testing & coverage ---
+coverage/
+*.lcov
+.nyc_output
+
+# --- Next.js ---
+.next/
+out/
+build/
+dist/
+
+# --- Misc ---
+.DS_Store
+*.pem
+.env*.local
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+
+# --- Editor ---
+.idea/
+.vscode/
+*.swp
+*.swo
