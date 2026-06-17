@@ -1,0 +1,468 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0F0F23;
+  --foreground: #ffffff;
+  --surface: #13131F;
+  --surface-elevated: #1A1A2E;
+  --border: rgba(255, 255, 255, 0.05);
+  --border-strong: rgba(255, 255, 255, 0.08);
+  --border-accent: rgba(99, 102, 241, 0.15);
+  --primary: #6366F1;
+  --secondary: #8B5CF6;
+  --muted: #64748B;
+  --muted-light: #94A3B8;
+  --muted-dark: #374151;
+  --success: #10B981;
+  --error: #EF4444;
+  --amber: #F59E0B;
+  --indigo: #6366F1;
+  --purple: #8B5CF6;
+  --grid-line: #1F1F3A;
+  --grid-line-strong: #252540;
+  --text-muted: #64748B;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@theme inline {
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-mono);
+  --font-departure: var(--font-departure);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary);
+}
+
+/* Selection color */
+::selection {
+  background: var(--primary);
+  color: white;
+}
+
+/* Focus visible */
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Smooth scroll */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Input color picker styling */
+input[type="color"] {
+  -webkit-appearance: none;
+  border: none;
+  padding: 0;
+  background: transparent;
+}
+
+input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: 8px;
+}
+
+/* Number input - hide spinners */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* Range input */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--primary);
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  background: var(--secondary);
+  transform: scale(1.1);
+}
+
+/* Gradient text utility */
+.gradient-text {
+  background: linear-gradient(135deg, var(--primary), var(--secondary));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Glow effects */
+.glow-indigo {
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.3);
+}
+
+.glow-emerald {
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.3);
+}
+
+/* Backdrop blur for glassmorphism */
+.glass {
+  background: rgba(26, 26, 46, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Gradient backgrounds */
+.bg-gradient-radial {
+  background: radial-gradient(ellipse at center, rgba(99, 102, 241, 0.08) 0%, transparent 70%);
+}
+
+/* Card hover animation */
+.card-hover {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 40px rgba(99, 102, 241, 0.12);
+}
+
+/* ============================================
+   Pixel Art Button System
+   ============================================ */
+
+.pixel-btn {
+  position: relative;
+  font-family: var(--font-departure), 'Departure Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  padding: 6px 14px;
+  background: var(--surface-elevated);
+  color: var(--muted);
+  border-radius: 0;
+  clip-path: polygon(
+    0 4px, 4px 4px, 4px 0,
+    calc(100% - 4px) 0, calc(100% - 4px) 4px, 100% 4px,
+    100% calc(100% - 4px), calc(100% - 4px) calc(100% - 4px), calc(100% - 4px) 100%,
+    4px 100%, 4px calc(100% - 4px), 0 calc(100% - 4px)
+  );
+  box-shadow:
+    0 0 0 1px var(--border-color, rgba(255,255,255,0.06)),
+    4px 4px 0 0 var(--shadow-color, #0a0a18);
+  transition: transform 80ms ease, box-shadow 80ms ease;
+  user-select: none;
+  image-rendering: pixelated;
+}
+
+.pixel-btn:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow:
+    0 0 0 1px var(--border-color, rgba(255,255,255,0.06)),
+    2px 2px 0 0 var(--shadow-color, #0a0a18);
+}
+
+.pixel-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  color: var(--muted);
+}
+
+/* Pixel button color variants */
+.pixel-btn-indigo {
+  --border-color: rgba(99, 102, 241, 0.4);
+  --shadow-color: rgba(99, 102, 241, 0.25);
+  background: linear-gradient(180deg, #6366F1 0%, #4F46E5 100%);
+  color: #fff;
+}
+
+.pixel-btn-indigo:hover:not(:disabled) {
+  background: linear-gradient(180deg, #818CF8 0%, #6366F1 100%);
+  box-shadow:
+    0 0 0 1px rgba(99, 102, 241, 0.6),
+    4px 4px 0 0 rgba(99, 102, 241, 0.3),
+    0 0 12px rgba(99, 102, 241, 0.3);
+}
+
+.pixel-btn-emerald {
+  --border-color: rgba(16, 185, 129, 0.4);
+  --shadow-color: rgba(16, 185, 129, 0.25);
+  background: linear-gradient(180deg, #10B981 0%, #059669 100%);
+  color: #fff;
+}
+
+.pixel-btn-emerald:hover:not(:disabled) {
+  background: linear-gradient(180deg, #34D399 0%, #10B981 100%);
+  box-shadow:
+    0 0 0 1px rgba(16, 185, 129, 0.6),
+    4px 4px 0 0 rgba(16, 185, 129, 0.3),
+    0 0 12px rgba(16, 185, 129, 0.3);
+}
+
+.pixel-btn-amber {
+  --border-color: rgba(245, 158, 11, 0.4);
+  --shadow-color: rgba(245, 158, 11, 0.2);
+  background: linear-gradient(180deg, #F59E0B 0%, #D97706 100%);
+  color: #fff;
+}
+
+.pixel-btn-amber:hover:not(:disabled) {
+  background: linear-gradient(180deg, #FBBF24 0%, #F59E0B 100%);
+  box-shadow:
+    0 0 0 1px rgba(245, 158, 11, 0.6),
+    4px 4px 0 0 rgba(245, 158, 11, 0.3),
+    0 0 24px rgba(245, 158, 11, 0.4);
+}
+
+.pixel-btn-red {
+  --border-color: rgba(239, 68, 68, 0.4);
+  --shadow-color: rgba(239, 68, 68, 0.2);
+  background: linear-gradient(180deg, #EF4444 0%, #DC2626 100%);
+  color: #fff;
+}
+
+.pixel-btn-red:hover:not(:disabled) {
+  background: linear-gradient(180deg, #F87171 0%, #EF4444 100%);
+  box-shadow:
+    0 0 0 1px rgba(239, 68, 68, 0.6),
+    4px 4px 0 0 rgba(239, 68, 68, 0.3),
+    0 0 12px rgba(239, 68, 68, 0.3);
+}
+
+.pixel-btn-secondary {
+  --border-color: rgba(255, 255, 255, 0.08);
+  --shadow-color: rgba(0, 0, 0, 0.5);
+  background: var(--surface-elevated);
+  color: var(--muted);
+}
+
+.pixel-btn-secondary:hover:not(:disabled) {
+  background: var(--surface-elevated);
+  color: #fff;
+  --border-color: rgba(255, 255, 255, 0.15);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.12),
+    4px 4px 0 0 rgba(0, 0, 0, 0.5),
+    0 0 8px rgba(255, 255, 255, 0.05);
+}
+
+/* Pixel button small */
+.pixel-btn-sm {
+  padding: 4px 8px;
+  font-size: 9px;
+}
+
+.pixel-btn-icon {
+  padding: 5px 7px;
+  font-size: 0;
+}
+
+/* Pixel badge */
+.pixel-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-family: var(--font-departure), 'Departure Mono', monospace;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: var(--surface);
+  color: var(--muted);
+  border-radius: 0;
+  clip-path: polygon(
+    0 3px, 3px 3px, 3px 0,
+    calc(100% - 3px) 0, calc(100% - 3px) 3px, 100% 3px,
+    100% calc(100% - 3px), calc(100% - 3px) calc(100% - 3px), calc(100% - 3px) 100%,
+    3px 100%, 3px calc(100% - 3px), 0 calc(100% - 3px)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Pixel spinner */
+@keyframes pixel-spin {
+  to { transform: rotate(360deg); }
+}
+
+.pixel-spin {
+  animation: pixel-spin 0.6s linear infinite;
+}
+
+/* Mobile menu animation */
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slideDown {
+  animation: slideDown 0.2s ease-out;
+}
+
+/* Page transition animations */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeInUp {
+  animation: fadeInUp 0.4s ease-out forwards;
+}
+
+.animate-fadeInUp-delay-1 {
+  opacity: 0;
+  animation: fadeInUp 0.5s ease-out 0.1s forwards;
+}
+
+.animate-fadeInUp-delay-2 {
+  opacity: 0;
+  animation: fadeInUp 0.5s ease-out 0.2s forwards;
+}
+
+.animate-fadeInUp-delay-3 {
+  opacity: 0;
+  animation: fadeInUp 0.5s ease-out 0.3s forwards;
+}
+
+/* Stagger children */
+.stagger-children > *:nth-child(1) { animation-delay: 0.05s; }
+.stagger-children > *:nth-child(2) { animation-delay: 0.1s; }
+.stagger-children > *:nth-child(3) { animation-delay: 0.15s; }
+.stagger-children > *:nth-child(4) { animation-delay: 0.2s; }
+.stagger-children > *:nth-child(5) { animation-delay: 0.25s; }
+.stagger-children > *:nth-child(6) { animation-delay: 0.3s; }
+.stagger-children > *:nth-child(7) { animation-delay: 0.35s; }
+.stagger-children > *:nth-child(8) { animation-delay: 0.4s; }
+
+/* NFT Grid Cards Animation */
+.nft-grid {
+  animation: gridFadeIn 0.4s ease-out;
+}
+
+.nft-card {
+  opacity: 0;
+  transform: translateY(15px);
+  animation: cardSlideIn 0.4s ease-out forwards;
+  will-change: transform, opacity;
+}
+
+.nft-card:nth-child(1) { animation-delay: 0.05s; }
+.nft-card:nth-child(2) { animation-delay: 0.1s; }
+.nft-card:nth-child(3) { animation-delay: 0.15s; }
+.nft-card:nth-child(4) { animation-delay: 0.2s; }
+.nft-card:nth-child(5) { animation-delay: 0.25s; }
+.nft-card:nth-child(6) { animation-delay: 0.3s; }
+.nft-card:nth-child(7) { animation-delay: 0.35s; }
+.nft-card:nth-child(8) { animation-delay: 0.4s; }
+.nft-card:nth-child(n+9) { animation-delay: 0.45s; }
+
+@keyframes gridFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes cardSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(15px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Pixel page animations */
+.pixel-hero-anim {
+  opacity: 0;
+  transform: translateY(15px);
+  animation: pixelFadeUp 0.6s ease-out forwards;
+}
+
+.pixel-hero-anim:nth-child(1) { animation-delay: 0.05s; }
+.pixel-hero-anim:nth-child(2) { animation-delay: 0.15s; }
+
+@keyframes pixelFadeUp {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .pixel-hero-anim,
+  .nft-card,
+  .nft-grid,
+  .animate-fadeInUp,
+  .animate-fadeInUp-delay-1,
+  .animate-fadeInUp-delay-2,
+  .animate-fadeInUp-delay-3 {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .animate-slideDown {
+    animation: none;
+  }
+}

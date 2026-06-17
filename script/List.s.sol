@@ -21,12 +21,12 @@ contract ListForSale is Script {
         uint256 tokenId = vm.envUint("TOKEN_ID");
         uint256 price = vm.envUint("PRICE_WEI");
 
-        ZeroxPixel nft = ZeroxPixel(nftAddr);
+        ZeroxPixel nft = ZeroxPixel(payable(nftAddr));
 
         vm.startBroadcast(pk);
         nft.listForSale(tokenId, price);
         vm.stopBroadcast();
 
-        console.log("Listed token", tokenId, "for", price, "wei");
+        console.log("Listed token", tokenId, "price", price);
     }
 }
