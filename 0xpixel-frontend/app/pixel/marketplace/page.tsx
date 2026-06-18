@@ -14,6 +14,14 @@ import { GridSkeleton } from "@/components/Skeleton";
 
 type SortKey = "newest" | "price-asc" | "price-desc";
 
+interface TokenMetadata {
+  tokenId: string;
+  name: string;
+  imageUrl: string;
+  creator: string;
+  mintedAt: number;
+}
+
 const PAGE_SIZE = 24;
 const SCAN_BATCH = 200; // how many listingIds to scan per call
 
@@ -89,6 +97,44 @@ function MarketplaceBody({ userAddress, blockNumber }: BodyProps) {
   // has no public counter, so we walk backwards from the latest seen.
   const [activeIds, setActiveIds] = useState<bigint[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Map tokenId (string) -> display metadata (name + image). Hydrated
+  // lazily as cards mount so the marketplace header renders fast.
+  const [tokenMeta, setTokenMeta] = useState<Record<string, TokenMetadata | null>>({});
+  const metaReqRef = useRef<{ ids: Set<string>; pending: boolean }>({
+    ids: new Set(),
+    pending: false,
+  });
+
+  const requestTokenMeta = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    for (const id of ids) metaReqRef.current.ids.add(id);
+    if (metaReqRef.current.pending) return;
+
+    const drain = async () => {
+      metaReqRef.current.pending = true;
+      try {
+        // Loop in case more ids queue up between requests.
+        while (metaReqRef.current.ids.size > 0) {
+          const batch = Array.from(metaReqRef.current.ids).slice(0, 96);
+          for (const id of batch) metaReqRef.current.ids.delete(id);
+          try {
+            const r = await fetch(`/api/token-metadata?ids=${batch.join(",")}`);
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const body = (await r.json()) as { tokens: Record<string, TokenMetadata | null> };
+            setTokenMeta((prev) => ({ ...prev, ...body.tokens }));
+          } catch (err) {
+            console.error("[marketplace] token-metadata fetch failed:", err);
+            // Don't spin forever on a single failure.
+            break;
+          }
+        }
+      } finally {
+        metaReqRef.current.pending = false;
+      }
+    };
+    void drain();
+  }, []);
 
   const {
     data: idBatch,
@@ -181,8 +227,20 @@ function MarketplaceBody({ userAddress, blockNumber }: BodyProps) {
     safePage * PAGE_SIZE
   );
 
+  // Request on-chain token metadata for whatever is currently on screen.
+  // Skips ids we've already resolved, so flipping pages doesn't re-fetch.
+  useEffect(() => {
+    if (pageItems.length === 0) return;
+    const needed = pageItems
+      .map((n) => n.tokenId.toString())
+      .filter((id) => !(id in tokenMeta));
+    if (needed.length > 0) requestTokenMeta(needed);
+  }, [pageItems, tokenMeta, requestTokenMeta]);
+
   const handleRefresh = useCallback(() => {
     setPage(1);
+    setTokenMeta({});
+    metaReqRef.current.ids.clear();
     refetchIds();
     refetchDetails();
   }, [refetchIds, refetchDetails]);
@@ -242,6 +300,7 @@ function MarketplaceBody({ userAddress, blockNumber }: BodyProps) {
                 listing={nft}
                 userAddress={userAddress}
                 isPaused={false}
+                meta={tokenMeta[nft.tokenId.toString()] ?? null}
                 onActionComplete={handleRefresh}
               />
             ))}
@@ -367,6 +426,7 @@ interface CardProps {
   listing: RawListing;
   userAddress: `0x${string}` | undefined;
   isPaused: boolean;
+  meta: TokenMetadata | null;
   onActionComplete: () => void;
 }
 
@@ -374,31 +434,51 @@ function ListingCard({
   listing,
   userAddress,
   isPaused,
+  meta,
   onActionComplete,
 }: CardProps) {
   const isOwner =
     !!userAddress &&
     userAddress.toLowerCase() === listing.seller.toLowerCase();
 
+  // Show the on-chain name once we have it, but keep a visible token id
+  // beneath so users can always reference it. Falls back to a skeleton
+  // while loading and to "Token #N" if the metadata fetch failed.
+  const tokenIdStr = listing.tokenId.toString();
+  const displayName = meta?.name ?? (meta === undefined ? "" : `Token #${tokenIdStr}`);
+
   return (
     <div className="nft-card group bg-[#1A1A2E] rounded-2xl overflow-hidden border border-[#2D2D44] hover:border-indigo-500/50 transition-all duration-300 hover:shadow-xl hover:shadow-indigo-500/10 hover:-translate-y-1">
-      <ListingImage tokenId={listing.tokenId} />
+      <ListingImage
+        tokenId={listing.tokenId}
+        prefetchedUrl={meta?.imageUrl ?? undefined}
+      />
       <div className="p-4 space-y-3">
         <div>
           <div
             className="text-[10px] text-[#64748B] uppercase tracking-wider"
             style={{ fontFamily: "var(--font-departure)" }}
           >
-            0xPIXEL · #{listing.tokenId.toString()}
+            0xPIXEL · #{tokenIdStr}
           </div>
           <h3
             className="text-white font-bold text-base mt-0.5 truncate"
             style={{ fontFamily: "var(--font-departure)" }}
+            title={displayName}
           >
-            Token #{listing.tokenId.toString()}
+            {meta?.name ? (
+              displayName
+            ) : meta === null ? (
+              <span className="text-[#94A3B8] font-medium">Token #{tokenIdStr}</span>
+            ) : (
+              <span
+                className="inline-block h-4 w-32 rounded bg-white/5 animate-pulse"
+                aria-label="Loading name"
+              />
+            )}
           </h3>
           <div
-            className="text-[#94A3B8] text-xs mt-0.5"
+            className="text-[#94A3B8] text-xs mt-0.5 truncate"
             style={{ fontFamily: "var(--font-departure)" }}
           >
             Seller: {shortenAddress(listing.seller)}
@@ -440,11 +520,24 @@ function ListingCard({
   );
 }
 
-function ListingImage({ tokenId }: { tokenId: bigint }) {
-  const [src, setSrc] = useState<string>("");
-  const [loading, setLoading] = useState(true);
+function ListingImage({
+  tokenId,
+  prefetchedUrl,
+}: {
+  tokenId: bigint;
+  prefetchedUrl?: string;
+}) {
+  // If the parent already has the image (e.g. from /api/token-metadata),
+  // skip the extra round-trip and render straight away.
+  const [src, setSrc] = useState<string>(prefetchedUrl ?? "");
+  const [loading, setLoading] = useState(!prefetchedUrl);
 
   useEffect(() => {
+    if (prefetchedUrl) {
+      setSrc(prefetchedUrl);
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     setSrc("");
@@ -463,7 +556,7 @@ function ListingImage({ tokenId }: { tokenId: bigint }) {
     return () => {
       cancelled = true;
     };
-  }, [tokenId]);
+  }, [tokenId, prefetchedUrl]);
 
   return (
     <div className="relative aspect-square bg-[#0F0F23] flex items-center justify-center overflow-hidden">
