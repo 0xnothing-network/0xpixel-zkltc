@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
+import { gsap } from "gsap";
+import { useGSAP } from "@gsap/react";
 import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { parseEther, formatEther } from "viem";
 import {
@@ -12,6 +14,8 @@ import {
 } from "@/lib/contract";
 import { PixelNFTABI } from "@/lib/abi";
 import { MarketplaceAbi } from "@/lib/marketplaceAbi";
+
+gsap.registerPlugin(useGSAP);
 
 export interface OwnedNft {
   tokenId: bigint;
@@ -32,9 +36,45 @@ interface CardProps {
 export function OwnedNftCard({ nft, isPaused, onChanged }: CardProps) {
   const [mode, setMode] = useState<"idle" | "list">("idle");
   const [price, setPrice] = useState("");
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  useGSAP(() => {
+    if (!cardRef.current) return;
+
+    const card = cardRef.current;
+
+    const handleMouseEnter = () => {
+      gsap.to(card, {
+        y: -8,
+        scale: 1.02,
+        duration: 0.4,
+        ease: "power2.out",
+      });
+    };
+
+    const handleMouseLeave = () => {
+      gsap.to(card, {
+        y: 0,
+        scale: 1,
+        duration: 0.4,
+        ease: "power2.out",
+      });
+    };
+
+    card.addEventListener("mouseenter", handleMouseEnter);
+    card.addEventListener("mouseleave", handleMouseLeave);
+
+    return () => {
+      card.removeEventListener("mouseenter", handleMouseEnter);
+      card.removeEventListener("mouseleave", handleMouseLeave);
+    };
+  }, { scope: cardRef });
 
   return (
-    <div className="nft-card group bg-[#1A1A2E] rounded-2xl overflow-hidden border border-[#2D2D44] hover:border-indigo-500/50 transition-all duration-300 hover:shadow-xl hover:shadow-indigo-500/10 hover:-translate-y-1">
+    <div
+      ref={cardRef}
+      className="nft-card group bg-[#1A1A2E] rounded-2xl overflow-hidden border border-[#2D2D44] hover:border-indigo-500/50 transition-shadow duration-300 hover:shadow-xl hover:shadow-indigo-500/10"
+    >
       <Link
         href={getExplorerUrl(nft.tokenId)}
         target="_blank"

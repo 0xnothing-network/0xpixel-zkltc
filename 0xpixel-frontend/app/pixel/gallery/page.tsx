@@ -1,12 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import Link from "next/link";
+import { gsap } from "gsap";
+import { ScrollTrigger } from "gsap/ScrollTrigger";
+import { useGSAP } from "@gsap/react";
 import { useAccount, useReadContract, useBlockNumber } from "wagmi";
 import { OwnedNftCard, type OwnedNft } from "@/components/OwnedNftCard";
 import { GridSkeleton } from "@/components/Skeleton";
 import { PIXEL_MARKETPLACE_ADDRESS } from "@/lib/contract";
 import { MarketplaceAbi } from "@/lib/marketplaceAbi";
+
+gsap.registerPlugin(ScrollTrigger, useGSAP);
 
 type SortKey = "newest" | "oldest" | "name";
 
@@ -15,6 +20,12 @@ export default function GalleryPage() {
   const { data: blockNumber } = useBlockNumber({ watch: true });
   const [refreshKey, setRefreshKey] = useState(0);
   const [sort, setSort] = useState<SortKey>("newest");
+
+  const headerRef = useRef<HTMLDivElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const subtitleRef = useRef<HTMLParagraphElement>(null);
+  const ctaRef = useRef<HTMLAnchorElement>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(() => {
     setRefreshKey((k) => k + 1);
@@ -45,30 +56,88 @@ export default function GalleryPage() {
     return arr;
   }, [data, sort]);
 
+  useGSAP(() => {
+    const tl = gsap.timeline({ defaults: { ease: "power3.out" } });
+
+    if (titleRef.current) {
+      tl.fromTo(
+        titleRef.current,
+        { opacity: 0, y: 40, scale: 0.95 },
+        { opacity: 1, y: 0, scale: 1, duration: 0.8 }
+      );
+    }
+
+    if (subtitleRef.current) {
+      tl.fromTo(
+        subtitleRef.current,
+        { opacity: 0, y: 20 },
+        { opacity: 1, y: 0, duration: 0.6 },
+        "-=0.4"
+      );
+    }
+
+    if (ctaRef.current) {
+      tl.fromTo(
+        ctaRef.current,
+        { opacity: 0, scale: 0.9 },
+        { opacity: 1, scale: 1, duration: 0.5 },
+        "-=0.3"
+      );
+    }
+  });
+
+  useEffect(() => {
+    if (!gridRef.current || sorted.length === 0) return;
+
+    const cards = gridRef.current.querySelectorAll("[data-card]");
+    if (cards.length === 0) return;
+
+    gsap.fromTo(
+      cards,
+      { opacity: 0, y: 30, scale: 0.95 },
+      {
+        opacity: 1,
+        y: 0,
+        scale: 1,
+        duration: 0.6,
+        stagger: 0.08,
+        ease: "power3.out",
+        scrollTrigger: {
+          trigger: gridRef.current,
+          start: "top 80%",
+          toggleActions: "play none none none",
+        },
+      }
+    );
+  }, [sorted.length]);
+
   return (
-    <div className="min-h-[calc(100vh-64px)] px-4 py-8 max-w-7xl mx-auto">
-      <div className="mb-8 flex items-end justify-between flex-wrap gap-3">
+    <div className="min-h-[calc(100vh-64px)] px-5 py-10 max-w-7xl mx-auto">
+      <div ref={headerRef} className="mb-10 flex items-end justify-between flex-wrap gap-4">
         <div>
           <h1
-            className="text-3xl sm:text-4xl font-bold text-white"
+            ref={titleRef}
+            className="text-3xl sm:text-4xl font-bold text-white mb-2"
             style={{ fontFamily: "var(--font-departure)" }}
           >
             MY GALLERY
           </h1>
           <p
-            className="text-[#94A3B8] mt-1"
+            ref={subtitleRef}
+            className="text-[#94A3B8] text-sm"
             style={{ fontFamily: "var(--font-departure)" }}
           >
             Your 0xPIXEL collection
           </p>
         </div>
         <Link
+          ref={ctaRef}
           href="/pixel"
-          className="pixel-btn pixel-btn-secondary pixel-btn-sm"
+          className="pixel-btn pixel-btn-indigo"
           style={{
             display: "inline-flex",
             alignItems: "center",
-            gap: 6,
+            gap: 8,
           }}
         >
           + NEW PIXEL ART
@@ -77,7 +146,7 @@ export default function GalleryPage() {
 
       {paused === true ? (
         <div
-          className="mb-4 px-4 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm"
+          className="mb-4 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm"
           style={{ fontFamily: "var(--font-departure)" }}
         >
           Marketplace is paused. Listing and delisting are temporarily disabled.
@@ -94,7 +163,7 @@ export default function GalleryPage() {
         <EmptyState />
       ) : (
         <>
-          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
             <div
               className="text-sm text-[#94A3B8]"
               style={{ fontFamily: "var(--font-departure)" }}
@@ -104,7 +173,7 @@ export default function GalleryPage() {
             <select
               value={sort}
               onChange={(e) => setSort(e.target.value as SortKey)}
-              className="bg-[#0F0F23] border border-[#2D2D44] text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500"
+              className="bg-[#0F0F23] border border-[#2D2D44] text-white text-sm rounded-lg px-4 py-2 focus:outline-none focus:border-indigo-500 transition-colors cursor-pointer"
               style={{ fontFamily: "var(--font-departure)" }}
             >
               <option value="newest">Newest</option>
@@ -112,14 +181,18 @@ export default function GalleryPage() {
               <option value="name">Name</option>
             </select>
           </div>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 nft-grid">
-            {sorted.map((nft) => (
-              <OwnedNftCard
-                key={nft.tokenId}
-                nft={nft}
-                isPaused={paused === true}
-                onChanged={refresh}
-              />
+          <div
+            ref={gridRef}
+            className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
+          >
+            {sorted.map((nft, i) => (
+              <div key={nft.tokenId.toString()} data-card>
+                <OwnedNftCard
+                  nft={nft}
+                  isPaused={paused === true}
+                  onChanged={refresh}
+                />
+              </div>
             ))}
           </div>
         </>
@@ -129,8 +202,25 @@ export default function GalleryPage() {
 }
 
 function NotConnected() {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useGSAP(() => {
+    if (!ref.current) return;
+    gsap.fromTo(
+      ref.current.children,
+      { opacity: 0, y: 30 },
+      {
+        opacity: 1,
+        y: 0,
+        duration: 0.6,
+        stagger: 0.1,
+        ease: "power3.out",
+      }
+    );
+  }, { scope: ref });
+
   return (
-    <div className="text-center py-20">
+    <div ref={ref} className="text-center py-20">
       <div className="w-24 h-24 mx-auto mb-6 bg-[#1A1A2E] rounded-2xl flex items-center justify-center border border-[#2D2D44]">
         <svg
           width="48"
@@ -162,8 +252,25 @@ function NotConnected() {
 }
 
 function EmptyState() {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useGSAP(() => {
+    if (!ref.current) return;
+    gsap.fromTo(
+      ref.current.children,
+      { opacity: 0, y: 30 },
+      {
+        opacity: 1,
+        y: 0,
+        duration: 0.6,
+        stagger: 0.1,
+        ease: "power3.out",
+      }
+    );
+  }, { scope: ref });
+
   return (
-    <div className="text-center py-20">
+    <div ref={ref} className="text-center py-20">
       <div className="w-24 h-24 mx-auto mb-6 bg-[#1A1A2E] rounded-2xl flex items-center justify-center border border-[#2D2D44]">
         <svg
           width="48"
@@ -191,12 +298,12 @@ function EmptyState() {
       </p>
       <Link
         href="/pixel"
-        className="pixel-btn pixel-btn-indigo pixel-btn-sm"
+        className="pixel-btn pixel-btn-indigo"
         style={{
           display: "inline-flex",
           alignItems: "center",
           gap: 8,
-          padding: "10px 20px",
+          padding: "12px 24px",
         }}
       >
         START DRAWING
@@ -212,8 +319,22 @@ function ErrorState({
   message: string;
   onRetry: () => void;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useGSAP(() => {
+    if (!ref.current) return;
+    gsap.fromTo(
+      ref.current,
+      { opacity: 0, scale: 0.95 },
+      { opacity: 1, scale: 1, duration: 0.5, ease: "power3.out" }
+    );
+  }, { scope: ref });
+
   return (
-    <div className="text-center py-16 bg-[#1A1A2E] border border-red-500/30 rounded-2xl">
+    <div
+      ref={ref}
+      className="text-center py-16 bg-[#1A1A2E] border border-red-500/30 rounded-2xl"
+    >
       <p
         className="text-red-300 mb-4"
         style={{ fontFamily: "var(--font-departure)" }}
@@ -222,7 +343,7 @@ function ErrorState({
       </p>
       <button
         onClick={onRetry}
-        className="pixel-btn pixel-btn-secondary pixel-btn-sm"
+        className="pixel-btn pixel-btn-secondary"
       >
         Retry
       </button>

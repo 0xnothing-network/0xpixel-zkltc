@@ -48,17 +48,17 @@ function MarketplaceHeader() {
   });
 
   return (
-    <div className="mb-8 space-y-3">
-      <div className="flex items-end justify-between flex-wrap gap-3">
+    <div className="mb-10 space-y-4">
+      <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
           <h1
-            className="text-3xl sm:text-4xl font-bold text-white"
+            className="text-3xl sm:text-4xl font-bold text-white mb-2"
             style={{ fontFamily: "var(--font-departure)" }}
           >
             MARKETPLACE
           </h1>
           <p
-            className="text-[#94A3B8] mt-1"
+            className="text-[#94A3B8] text-sm"
             style={{ fontFamily: "var(--font-departure)" }}
           >
             0xPIXEL pixel art for sale
@@ -66,15 +66,15 @@ function MarketplaceHeader() {
         </div>
         <Link
           href="/pixel/gallery"
-          className="pixel-btn pixel-btn-secondary pixel-btn-sm"
-          style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+          className="pixel-btn pixel-btn-secondary"
+          style={{ display: "inline-flex", alignItems: "center", gap: 8 }}
         >
           MY GALLERY
         </Link>
       </div>
       {paused === true ? (
         <div
-          className="px-4 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm"
+          className="px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm"
           style={{ fontFamily: "var(--font-departure)" }}
         >
           Marketplace is paused. Buying and listing are temporarily disabled.

@@ -117,19 +117,19 @@ export function PixelHeader() {
 
   return (
     <header className="sticky top-0 z-50 bg-[#1A1A2E]/90 backdrop-blur-xl border-b border-[#2D2D44]">
-      <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+      <div className="max-w-7xl mx-auto px-5 py-3.5 flex items-center justify-between gap-4">
         <div className="flex items-center gap-4">
-          <Link href="/" className="flex items-center gap-2 group">
+          <Link href="/" className="flex items-center gap-2.5 group">
             <Image
               src="/icon.svg"
               alt="0xPixel Logo"
-              width={32}
-              height={32}
+              width={36}
+              height={36}
               priority
-              className="w-8 h-8 rounded-full object-cover transition-transform duration-200 group-hover:scale-105"
+              className="w-9 h-9 rounded-full object-cover transition-transform duration-200 group-hover:scale-105"
             />
             <span
-              className="text-white font-bold text-base tracking-tight"
+              className="text-white font-bold text-lg tracking-tight"
               style={{ fontFamily: "var(--font-departure)" }}
             >
               0xPixel
@@ -137,7 +137,7 @@ export function PixelHeader() {
           </Link>
         </div>
 
-        <nav className="hidden md:flex items-center gap-1">
+        <nav className="hidden md:flex items-center gap-2">
           {NAV_LINKS.map((link) => {
             const active = isActive(pathname, link.href);
             return (
@@ -145,21 +145,9 @@ export function PixelHeader() {
                 key={link.href}
                 href={link.href}
                 aria-current={active ? "page" : undefined}
-                className={[
-                  "relative px-4 py-2 rounded-lg text-sm transition-all duration-150",
-                  active
-                    ? "text-white bg-white/5"
-                    : "text-[#64748B] hover:text-white hover:bg-white/5",
-                ].join(" ")}
-                style={{ fontFamily: "var(--font-departure)" }}
+                className={active ? "pixel-nav pixel-nav-active" : "pixel-nav"}
               >
-                <span className="relative z-10">{link.label}</span>
-                {active ? (
-                  <span
-                    aria-hidden="true"
-                    className="absolute left-3 right-3 -bottom-0.5 h-px bg-gradient-to-r from-transparent via-indigo-400 to-transparent"
-                  />
-                ) : null}
+                {link.label}
               </Link>
             );
           })}
@@ -167,7 +155,7 @@ export function PixelHeader() {
             href="https://x.com/0xnothing_net"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm text-[#64748B] hover:text-white hover:bg-white/5 transition-all duration-150"
+            className="pixel-nav-icon"
             aria-label="X / Twitter"
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
@@ -320,7 +308,7 @@ export function PixelHeader() {
       {mobileMenuOpen ? (
         <nav
           key="mobile-menu"
-          className="md:hidden border-t border-[#2D2D44] px-4 py-3 space-y-0.5 animate-slideDown"
+          className="md:hidden border-t border-[#2D2D44] px-4 py-3 space-y-1 animate-slideDown"
         >
           {NAV_LINKS.map((link) => {
             const active = isActive(pathname, link.href);
@@ -329,16 +317,14 @@ export function PixelHeader() {
                 key={link.href}
                 href={link.href}
                 aria-current={active ? "page" : undefined}
-                className={[
-                  "flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm transition-all duration-150",
+                className={
                   active
-                    ? "text-white bg-white/5"
-                    : "text-[#64748B] hover:text-white hover:bg-white/5",
-                ].join(" ")}
-                style={{ fontFamily: "var(--font-departure)" }}
+                    ? "pixel-nav-mobile pixel-nav-mobile-active"
+                    : "pixel-nav-mobile"
+                }
               >
                 {active ? (
-                  <span aria-hidden="true" className="w-1 h-4 rounded-full bg-indigo-400" />
+                  <span aria-hidden="true" className="w-1 h-3 bg-white/40 flex-shrink-0" />
                 ) : null}
                 {link.label}
               </Link>
@@ -348,10 +334,9 @@ export function PixelHeader() {
             href="https://x.com/0xnothing_net"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm text-[#64748B] hover:text-white hover:bg-white/5 transition-colors"
-            style={{ fontFamily: "var(--font-departure)" }}
+            className="pixel-nav-mobile"
           >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+            <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
               <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
             </svg>
             Follow on X
@@ -359,10 +344,17 @@ export function PixelHeader() {
           {mounted && isConnected ? (
             <button
               onClick={() => disconnect()}
-              className="w-full flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm text-red-300 hover:text-red-200 hover:bg-red-500/10 transition-colors text-left"
-              style={{ fontFamily: "var(--font-departure)" }}
+              className="pixel-nav-mobile pixel-nav-danger"
             >
-              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <svg
+                width="14"
+                height="14"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                viewBox="0 0 24 24"
+                className="flex-shrink-0"
+              >
                 <path d="M16 17l5-5-5-5M21 12H9M9 21H4a2 2 0 01-2-2V5a2 2 0 012-2h5" />
               </svg>
               Disconnect

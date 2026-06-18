@@ -3,10 +3,15 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { gsap } from "gsap";
+import { ScrollTrigger } from "gsap/ScrollTrigger";
+import { useGSAP } from "@gsap/react";
 import { Canvas } from "@/components/Canvas";
 import { Toolbar } from "@/components/Toolbar";
 import { MintPanel } from "@/components/MintPanel";
 import { AIPromptGenerator } from "@/components/AIPromptGenerator";
+
+gsap.registerPlugin(ScrollTrigger, useGSAP);
 
 const MAX_HISTORY = 50;
 
@@ -25,6 +30,12 @@ export default function PixelPage() {
   const [history, setHistory] = useState<string[][][]>([]);
   const [selectedColor, setSelectedColor] = useState("#6366F1");
   const [mounted, setMounted] = useState(false);
+
+  const heroRef = useRef<HTMLElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const subtextRef = useRef<HTMLParagraphElement>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
+  const footerRef = useRef<HTMLElement>(null);
 
   const pixelDataRef = useRef(pixelData);
   const historyRef = useRef(history);
@@ -45,6 +56,72 @@ export default function PixelPage() {
   useEffect(() => {
     historyRef.current = history;
   }, [history]);
+
+  useGSAP(() => {
+    if (!mounted) return;
+
+    const tl = gsap.timeline({ defaults: { ease: "power3.out" } });
+
+    if (headingRef.current) {
+      tl.fromTo(
+        headingRef.current,
+        { opacity: 0, y: 50, scale: 0.95 },
+        { opacity: 1, y: 0, scale: 1, duration: 0.9 }
+      );
+    }
+
+    if (subtextRef.current) {
+      tl.fromTo(
+        subtextRef.current,
+        { opacity: 0, y: 30 },
+        { opacity: 1, y: 0, duration: 0.7 },
+        "-=0.4"
+      );
+    }
+
+    if (mainRef.current) {
+      const panels = mainRef.current.querySelectorAll("[data-panel]");
+      tl.fromTo(
+        panels,
+        { opacity: 0, y: 40 },
+        {
+          opacity: 1,
+          y: 0,
+          duration: 0.7,
+          stagger: 0.15,
+          ease: "power2.out",
+        },
+        "-=0.3"
+      );
+    }
+
+    if (footerRef.current) {
+      gsap.fromTo(
+        footerRef.current,
+        { opacity: 0 },
+        {
+          opacity: 1,
+          duration: 0.6,
+          ease: "power2.out",
+          scrollTrigger: {
+            trigger: footerRef.current,
+            start: "top 90%",
+          },
+        }
+      );
+    }
+
+    gsap.to(heroRef.current, {
+      scrollTrigger: {
+        trigger: heroRef.current,
+        start: "top top",
+        end: "bottom top",
+        scrub: 1,
+      },
+      y: 60,
+      opacity: 0.5,
+    });
+  }, [mounted]);
 
   const pushHistory = useCallback((snapshot: string[][]) => {
     setHistory((h) => [...h, snapshot.map((row) => [...row])].slice(-MAX_HISTORY));
@@ -77,7 +154,7 @@ export default function PixelPage() {
   const canUndo = history.length > 0;
 
   const handleMintSuccess = useCallback(() => {
-    // intentionally silent — user can navigate to /pixel/gallery to see the new NFT
+    // intentionally silent
   }, []);
 
   const setSelectedColorStable = useCallback((c: string) => setSelectedColor(c), []);
@@ -107,7 +184,10 @@ export default function PixelPage() {
 
   return (
     <div style={{ fontFamily: "var(--font-departure)" }}>
-      <section className="pixel-hero-anim relative overflow-hidden border-b border-white/5">
+      <section
+        ref={heroRef}
+        className="relative overflow-hidden border-b border-white/5"
+      >
         <div
           className="absolute inset-0 pointer-events-none"
           style={{
@@ -115,9 +195,13 @@ export default function PixelPage() {
               "radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99,102,241,0.15) 0%, transparent 60%)",
           }}
         />
-        <div className="max-w-7xl mx-auto px-4 pt-10 pb-8 text-center">
+        <div className="absolute top-20 left-1/4 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl animate-pulse" />
+        <div className="absolute bottom-10 right-1/4 w-64 h-64 bg-purple-500/10 rounded-full blur-3xl animate-pulse" style={{ animationDelay: "1s" }} />
+
+        <div className="max-w-7xl mx-auto px-5 pt-12 pb-10 text-center relative">
           <h1
-            className="pixel-hero-anim text-4xl md:text-5xl font-bold text-white mb-3 tracking-tight leading-tight"
+            ref={headingRef}
+            className="text-3xl md:text-5xl font-bold text-white mb-4 tracking-tight leading-tight"
             style={{ fontFamily: "var(--font-departure)" }}
           >
             Create your{" "}
@@ -126,7 +210,8 @@ export default function PixelPage() {
             </span>
           </h1>
           <p
-            className="pixel-hero-anim text-[#94A3B8] text-base md:text-lg max-w-md mx-auto"
+            ref={subtextRef}
+            className="text-[#94A3B8] text-base md:text-lg max-w-md mx-auto"
             style={{ fontFamily: "var(--font-departure)" }}
           >
             Draw. Mint. Trade on LitVM.
@@ -134,9 +219,9 @@ export default function PixelPage() {
         </div>
       </section>
 
-      <main className="max-w-7xl mx-auto px-4 pt-6 pb-12">
-        <div className="grid xl:grid-cols-[280px_1fr_360px] gap-6 items-start">
-          <div className="order-2 xl:order-1">
+      <main ref={mainRef} className="max-w-7xl mx-auto px-5 pt-8 pb-16">
+        <div className="grid xl:grid-cols-[300px_1fr_380px] gap-6 items-start">
+          <div className="order-2 xl:order-1" data-panel>
             <div className="xl:sticky xl:top-20">
               <Toolbar
                 selectedColor={selectedColor}
@@ -148,11 +233,11 @@ export default function PixelPage() {
             </div>
           </div>
 
-          <div className="order-1 xl:order-2 flex justify-center">
+          <div className="order-1 xl:order-2 flex justify-center" data-panel>
             <Canvas {...canvasMemo} />
           </div>
 
-          <div className="order-3 space-y-4">
+          <div className="order-3 space-y-4" data-panel>
             <MintPanel
               pixelData={pixelData}
               gridSize={gridSize}
@@ -166,7 +251,7 @@ export default function PixelPage() {
         </div>
       </main>
 
-      <footer className="border-t border-white/5 py-5 mt-8">
+      <footer ref={footerRef} className="border-t border-white/5 py-5 mt-8">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
           <Link
             href="/"
@@ -193,4 +278,3 @@ export default function PixelPage() {
     </div>
   );
 }
-

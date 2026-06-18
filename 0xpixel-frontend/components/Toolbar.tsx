@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { gsap } from "gsap";
+import { useGSAP } from "@gsap/react";
 
 interface ToolbarProps {
   selectedColor: string;
@@ -33,9 +35,27 @@ export function Toolbar({
   const [recentColors, setRecentColors] = useState<string[]>([]);
   const [mounted, setMounted] = useState(false);
   const [customHex, setCustomHex] = useState(selectedColor);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { setMounted(true); }, []);
   useEffect(() => { setCustomHex(selectedColor); }, [selectedColor]);
+
+  useGSAP(() => {
+    if (!containerRef.current || !mounted) return;
+
+    const children = Array.from(containerRef.current.children);
+    gsap.fromTo(
+      children,
+      { opacity: 0, y: 20 },
+      {
+        opacity: 1,
+        y: 0,
+        duration: 0.5,
+        stagger: 0.08,
+        ease: "power3.out",
+      }
+    );
+  }, { scope: containerRef, dependencies: [mounted] });
 
   const handleColorSelect = (color: string) => {
     onColorChange(color);
@@ -46,7 +66,8 @@ export function Toolbar({
 
   return (
     <div
-      className="bg-[#1A1A2E] rounded-2xl p-4 border border-[#2D2D44] flex flex-col gap-5"
+      ref={containerRef}
+      className="bg-[#1A1A2E] rounded-2xl p-5 border border-[#2D2D44] flex flex-col gap-6"
     >
       {!mounted ? (
         <>
@@ -87,17 +108,13 @@ export function Toolbar({
               Color Palette
             </p>
             <div className="grid grid-cols-8 gap-1 mb-3">
-              {PALETTE_COLORS.map((color) => (
-                <button
+              {PALETTE_COLORS.map((color, i) => (
+                <ColorButton
                   key={color}
+                  color={color}
+                  isSelected={selectedColor === color}
                   onClick={() => handleColorSelect(color)}
-                  className="aspect-square rounded transition-all duration-100 hover:scale-110 active:scale-95"
-                  style={{
-                    backgroundColor: color,
-                    outline: selectedColor === color ? "2px solid white" : "2px solid transparent",
-                    outlineOffset: "1px",
-                  }}
-                  title={color}
+                  index={i}
                 />
               ))}
             </div>
@@ -237,5 +254,54 @@ export function Toolbar({
         </>
       )}
     </div>
+  );
+}
+
+function ColorButton({
+  color,
+  isSelected,
+  onClick,
+  index,
+}: {
+  color: string;
+  isSelected: boolean;
+  onClick: () => void;
+  index: number;
+}) {
+  const btnRef = useRef<HTMLButtonElement>(null);
+
+  useGSAP(() => {
+    if (!btnRef.current) return;
+
+    const handleMouseEnter = () => {
+      gsap.to(btnRef.current, { scale: 1.15, duration: 0.15, ease: "power2.out" });
+    };
+
+    const handleMouseLeave = () => {
+      gsap.to(btnRef.current, { scale: 1, duration: 0.15, ease: "power2.out" });
+    };
+
+    const btn = btnRef.current;
+    btn.addEventListener("mouseenter", handleMouseEnter);
+    btn.addEventListener("mouseleave", handleMouseLeave);
+
+    return () => {
+      btn.removeEventListener("mouseenter", handleMouseEnter);
+      btn.removeEventListener("mouseleave", handleMouseLeave);
+    };
+  }, { scope: btnRef });
+
+  return (
+    <button
+      ref={btnRef}
+      onClick={onClick}
+      className="aspect-square rounded"
+      style={{
+        backgroundColor: color,
+        outline: isSelected ? "2px solid white" : "2px solid transparent",
+        outlineOffset: "1px",
+      }}
+      title={color}
+    />
   );
 }
