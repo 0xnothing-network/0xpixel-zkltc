@@ -13,6 +13,8 @@ import { publicClient, PIXEL_NFT_CONTRACT_ADDRESS, getMarketplaceTxUrl } from "@
 import { PixelNFTABI, MintAbi } from "@/lib/abi";
 import { PixelButton } from "@/components/PixelButton";
 import { pixelDataToPNG, pixelDataToPackedBytes } from "@/lib/gridParser";
+import { useToast } from "@/components/Toast";
+import { normalizeError } from "@/lib/errors";
 
 interface MintPanelProps {
   pixelData: string[][];
@@ -21,24 +23,28 @@ interface MintPanelProps {
 }
 
 const DEBOUNCE_MS = 600;
+const TX_TOAST_DURATION = 12_000; // keep "submitted" toast visible longer
 
 export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [txHash, setTxHash] = useState<`0x${string}` | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
 
   const { address, isConnected } = useAccount();
   const wcClient = usePublicClient();
   const { sendTransactionAsync } = useSendTransaction();
+  const toast = useToast();
 
   const { isLoading: isConfirming, isSuccess: isConfirmed } =
     useWaitForTransactionReceipt({ hash: txHash ?? undefined });
 
   const firedRef = useRef(false);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Keep the latest tx hash accessible inside async callbacks without re-binding handlers.
+  const txHashRef = useRef<`0x${string}` | null>(null);
+  const toastIdsRef = useRef<{ submitted?: string; confirmed?: string }>({});
 
   useEffect(() => {
     setMounted(true);
@@ -49,6 +55,10 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    txHashRef.current = txHash;
+  }, [txHash]);
 
   const hasDrawing = useMemo(
     () => pixelData.some((row) => row.some((cell) => cell !== "transparent")),
@@ -104,6 +114,7 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
       try {
         const client = wcClient ?? publicClient;
         const receipt = await client.getTransactionReceipt({ hash: txHash });
+        let tokenId: bigint | null = null;
         for (const log of receipt.logs) {
           try {
             const decoded = decodeEventLog({
@@ -112,52 +123,70 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
               topics: log.topics,
             });
             if (decoded.eventName === "Minted") {
-              // Could surface the new tokenId in a toast here.
-              if (!cancelled) onMintSuccess();
-              return;
+              const args = decoded.args as { tokenId?: bigint };
+              if (args?.tokenId !== undefined) tokenId = args.tokenId;
+              break;
             }
           } catch {
             // not our event, skip
           }
         }
-        if (!cancelled) onMintSuccess();
+
+        if (cancelled) return;
+
+        // Replace the "submitted" toast with a confirmation toast.
+        if (toastIdsRef.current.submitted) toast.dismiss(toastIdsRef.current.submitted);
+        toastIdsRef.current.confirmed = toast.success(
+          "Minted successfully!",
+          tokenId !== null
+            ? `Your pixel NFT #${tokenId.toString()} is now on-chain.`
+            : "Your pixel NFT is now on-chain."
+        );
+
+        onMintSuccess();
       } catch (err) {
         console.error("[Mint] failed to decode receipt:", err);
-        if (!cancelled) onMintSuccess();
+        if (cancelled) return;
+        if (toastIdsRef.current.submitted) toast.dismiss(toastIdsRef.current.submitted);
+        toastIdsRef.current.confirmed = toast.success(
+          "Minted!",
+          "Your pixel NFT was created. (We couldn't read the token id.)"
+        );
+        onMintSuccess();
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [isConfirmed, txHash, wcClient, onMintSuccess]);
+  }, [isConfirmed, txHash, wcClient, onMintSuccess, toast]);
 
   const handleMint = useCallback(async () => {
     if (!isConnected || !address) {
-      setError("Please connect your wallet first!");
+      toast.warning("Connect your wallet", "Click CONNECT WALLET in the top-right to begin.");
       return;
     }
     if (!name.trim()) {
-      setError("Please enter a name for your pixel art!");
+      toast.warning("Name your artwork", "Give your pixel art a name before minting.");
       return;
     }
     if (!hasDrawing) {
-      setError("Please draw something first!");
+      toast.warning("Nothing to mint", "Draw at least one pixel first.");
       return;
     }
     if (isOriginal === false) {
-      setError("This artwork has already been minted!");
+      toast.info("Already minted", "This exact artwork has been claimed by someone else.");
       return;
     }
 
     setIsLoading(true);
     setTxHash(null);
-    setError(null);
     firedRef.current = false;
+    if (toastIdsRef.current.submitted) toast.dismiss(toastIdsRef.current.submitted);
 
     try {
       if (packedPixelBytes === "0x" || packedPixelBytes.length <= 2) {
-        setError("Please draw something first!");
+        toast.warning("Nothing to mint", "Draw at least one pixel first.");
         setIsLoading(false);
         return;
       }
@@ -195,15 +224,24 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
       });
 
       setTxHash(hash);
+      txHashRef.current = hash;
+
+      toastIdsRef.current.submitted = toast.show({
+        title: "Transaction submitted",
+        description: "Waiting for confirmation on LitVM…",
+        kind: "info",
+        duration: TX_TOAST_DURATION,
+        href: getMarketplaceTxUrl(hash),
+        hrefLabel: "View on Explorer",
+      });
     } catch (err: unknown) {
-      const e = err as { shortMessage?: string; message?: string; details?: string };
-      const msg = e.shortMessage || e.message || e.details || "";
+      const normalized = normalizeError(err);
       console.error("Mint error:", err);
-      if (msg.includes("already minted")) {
-        setError("This artwork has already been minted!");
-      } else {
-        setError(msg || "Failed to mint. Please try again.");
-      }
+      toast.show({
+        title: normalized.title,
+        description: normalized.description,
+        kind: normalized.kind,
+      });
     } finally {
       setIsLoading(false);
     }
@@ -216,6 +254,7 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
     gridSize,
     sendTransactionAsync,
     packedPixelBytes,
+    toast,
   ]);
 
   const canMint =
@@ -382,61 +421,6 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
                 style={{ fontFamily: "var(--font-departure)" }}
               />
             </div>
-
-            {error ? (
-              <div className="p-2.5 rounded-xl border flex items-center gap-2 bg-red-500/10 border-red-500/30">
-                <svg
-                  className="w-4 h-4 flex-shrink-0"
-                  fill="none"
-                  stroke="#f87171"
-                  strokeWidth="2"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                  />
-                </svg>
-                <p className="text-red-300 text-xs">{error}</p>
-              </div>
-            ) : null}
-
-            {txHash ? (
-              <div className="p-2.5 rounded-xl border bg-emerald-500/10 border-emerald-500/30">
-                <p
-                  className="text-emerald-300 text-xs font-medium mb-1"
-                  style={{ fontFamily: "var(--font-departure)" }}
-                >
-                  {isConfirmed
-                    ? "Minted successfully!"
-                    : isConfirming
-                    ? "Waiting for confirmation..."
-                    : "Transaction submitted"}
-                </p>
-                <a
-                  href={getMarketplaceTxUrl(txHash)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[11px] hover:underline flex items-center gap-1 text-indigo-300"
-                  style={{ fontFamily: "var(--font-departure)" }}
-                >
-                  View on Explorer
-                  <svg
-                    width="9"
-                    height="9"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    viewBox="0 0 24 24"
-                  >
-                    <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
-                    <path d="M15 3h6v6" />
-                    <path d="M10 14L21 3" />
-                  </svg>
-                </a>
-              </div>
-            ) : null}
 
             <PixelButton
               variant="indigo"
