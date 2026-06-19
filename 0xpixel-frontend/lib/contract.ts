@@ -39,8 +39,8 @@ export const publicClient = createPublicClient({
 
 async function withRetry<T>(
   fn: () => Promise<T>,
-  attempts = 3,
-  baseDelayMs = 300
+  attempts = 5,
+  baseDelayMs = 500
 ): Promise<T> {
   let lastErr: unknown;
   for (let i = 0; i < attempts; i++) {
@@ -53,10 +53,13 @@ async function withRetry<T>(
         msg.includes("Bandwidth limit") ||
         msg.includes("rate limit") ||
         msg.includes("429") ||
-        msg.includes("limit exceeded");
+        msg.includes("limit exceeded") ||
+        msg.includes("too many requests");
+      
       if (!isRateLimit && i > 0) throw err;
       if (i < attempts - 1) {
-        await new Promise((r) => setTimeout(r, baseDelayMs * Math.pow(2, i)));
+        const delay = baseDelayMs * Math.pow(2, i);
+        await new Promise((r) => setTimeout(r, delay));
       }
     }
   }

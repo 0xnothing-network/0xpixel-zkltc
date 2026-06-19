@@ -1,16 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import Link from "next/link";
-import { useReadContract, useReadContracts, useWriteContract, useWaitForTransactionReceipt, useBlockNumber, useAccount } from "wagmi";
-import { formatEther } from "viem";
-import {
-  PIXEL_MARKETPLACE_ADDRESS,
-  getMarketplaceTxUrl,
-  shortenAddress,
-} from "@/lib/contract";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, useBlockNumber } from "wagmi";
+import { formatEther, parseEther } from "viem";
+import { PIXEL_MARKETPLACE_ADDRESS, shortenAddress, getMarketplaceTxUrl, getExplorerUrl } from "@/lib/contract";
 import { MarketplaceAbi, type RawListing } from "@/lib/marketplaceAbi";
 import { GridSkeleton } from "@/components/Skeleton";
+import { useToast } from "@/components/Toast";
 
 type SortKey = "newest" | "price-asc" | "price-desc";
 
@@ -22,64 +18,45 @@ interface TokenMetadata {
   mintedAt: number;
 }
 
-const PAGE_SIZE = 24;
-const SCAN_BATCH = 200; // how many listingIds to scan per call
+interface ListingsResponse {
+  listings: Array<{
+    listingId: string;
+    tokenId: string;
+    price: string;
+    seller: `0x${string}`;
+    active: boolean;
+  }>;
+  tokens: Record<string, TokenMetadata | null>;
+}
+
+const PAGE_SIZE = 20;
 
 export default function MarketplacePage() {
   const { address } = useAccount();
-  const { data: blockNumber } = useBlockNumber({ watch: true });
+  const { data: blockNumber } = useBlockNumber({ watch: false });
 
   return (
     <div className="min-h-[calc(100vh-64px)] px-4 py-8 max-w-7xl mx-auto">
       <MarketplaceHeader />
-      <MarketplaceBody
-        userAddress={address}
-        blockNumber={blockNumber}
-      />
+      <MarketplaceBody userAddress={address} blockNumber={blockNumber} />
     </div>
   );
 }
 
 function MarketplaceHeader() {
-  const { data: paused } = useReadContract({
-    address: PIXEL_MARKETPLACE_ADDRESS,
-    abi: MarketplaceAbi,
-    functionName: "paused",
-  });
-
   return (
-    <div className="mb-10 space-y-4">
-      <div className="flex items-end justify-between flex-wrap gap-4">
-        <div>
-          <h1
-            className="text-3xl sm:text-4xl font-bold text-white mb-2"
-            style={{ fontFamily: "var(--font-departure)" }}
-          >
-            MARKETPLACE
-          </h1>
-          <p
-            className="text-[#94A3B8] text-sm"
-            style={{ fontFamily: "var(--font-departure)" }}
-          >
-            0xPIXEL pixel art for sale
-          </p>
-        </div>
-        <Link
-          href="/pixel/gallery"
-          className="pixel-btn pixel-btn-secondary"
-          style={{ display: "inline-flex", alignItems: "center", gap: 8 }}
-        >
-          MY GALLERY
-        </Link>
-      </div>
-      {paused === true ? (
-        <div
-          className="px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm"
+    <div className="flex items-center justify-between mb-8">
+      <div>
+        <h1
+          className="text-3xl font-bold text-white"
           style={{ fontFamily: "var(--font-departure)" }}
         >
-          Marketplace is paused. Buying and listing are temporarily disabled.
-        </div>
-      ) : null}
+          Marketplace
+        </h1>
+        <p className="text-[#94A3B8] mt-1">
+          Buy and sell 0xPIXEL NFTs
+        </p>
+      </div>
     </div>
   );
 }
@@ -89,120 +66,55 @@ interface BodyProps {
   blockNumber: bigint | undefined;
 }
 
-function MarketplaceBody({ userAddress, blockNumber }: BodyProps) {
+function MarketplaceBody({ userAddress }: BodyProps) {
   const [sort, setSort] = useState<SortKey>("newest");
   const [page, setPage] = useState(1);
-
-  // Pull the latest chunk of listingIds from the marketplace. The contract
-  // has no public counter, so we walk backwards from the latest seen.
-  const [activeIds, setActiveIds] = useState<bigint[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [data, setData] = useState<ListingsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
+  const abortRef = useRef<AbortController | null>(null);
+  const toast = useToast();
 
-  // Map tokenId (string) -> display metadata (name + image). Hydrated
-  // lazily as cards mount so the marketplace header renders fast.
-  const [tokenMeta, setTokenMeta] = useState<Record<string, TokenMetadata | null>>({});
-  const metaReqRef = useRef<{ ids: Set<string>; pending: boolean }>({
-    ids: new Set(),
-    pending: false,
-  });
-
-  const requestTokenMeta = useCallback((ids: string[]) => {
-    if (ids.length === 0) return;
-    for (const id of ids) metaReqRef.current.ids.add(id);
-    if (metaReqRef.current.pending) return;
-
-    const drain = async () => {
-      metaReqRef.current.pending = true;
-      try {
-        // Loop in case more ids queue up between requests.
-        while (metaReqRef.current.ids.size > 0) {
-          const batch = Array.from(metaReqRef.current.ids).slice(0, 96);
-          for (const id of batch) metaReqRef.current.ids.delete(id);
-          try {
-            const r = await fetch(`/api/token-metadata?ids=${batch.join(",")}`);
-            if (!r.ok) throw new Error(`HTTP ${r.status}`);
-            const body = (await r.json()) as { tokens: Record<string, TokenMetadata | null> };
-            setTokenMeta((prev) => ({ ...prev, ...body.tokens }));
-          } catch (err) {
-            console.error("[marketplace] token-metadata fetch failed:", err);
-            // Don't spin forever on a single failure.
-            break;
-          }
-        }
-      } finally {
-        metaReqRef.current.pending = false;
-      }
-    };
-    void drain();
+  const fetchListings = useCallback(async () => {
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await fetch(`/api/marketplace/listings?limit=${PAGE_SIZE * 2}`, {
+        signal: ctrl.signal,
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const body = (await r.json()) as ListingsResponse;
+      setData(body);
+    } catch (err) {
+      if ((err as { name?: string }).name === "AbortError") return;
+      console.error("[marketplace] load failed:", err);
+      setError("Couldn't load listings. Please retry.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const {
-    data: idBatch,
-    isLoading: idsLoading,
-    refetch: refetchIds,
-    error: idsError,
-  } = useReadContract({
-    address: PIXEL_MARKETPLACE_ADDRESS,
-    abi: MarketplaceAbi,
-    functionName: "getActiveListings",
-    args: [0n, BigInt(SCAN_BATCH)],
-  });
-
-  // Sort & paginate
   useEffect(() => {
-    if (idsError) {
-      setError(idsError.message);
-      setActiveIds([]);
-    } else if (idBatch) {
-      const ids = idBatch as bigint[];
-      setActiveIds(ids);
-      setError(null);
-    }
-  }, [idBatch, idsError, blockNumber]);
-
-  const visibleIds = useMemo(() => {
-    if (!activeIds) return [];
-    return activeIds;
-  }, [activeIds]);
-
-  const {
-    data: listingDetails,
-    isLoading: detailsLoading,
-    refetch: refetchDetails,
-  } = useReadContracts({
-    allowFailure: true,
-    query: { enabled: visibleIds.length > 0 },
-    contracts: visibleIds.map((id) => ({
-      address: PIXEL_MARKETPLACE_ADDRESS,
-      abi: MarketplaceAbi,
-      functionName: "listings" as const,
-      args: [id] as const,
-    })),
-  });
+    void fetchListings();
+    return () => abortRef.current?.abort();
+  }, [fetchListings, reloadKey]);
 
   const listings: RawListing[] = useMemo(() => {
-    if (!listingDetails) return [];
-    const out: RawListing[] = [];
-    visibleIds.forEach((id, i) => {
-      const r = listingDetails[i] as
-        | { status: "success"; result: readonly [`0x${string}`, bigint, bigint, `0x${string}`, boolean] }
-        | { status: "failure"; error: Error }
-        | undefined;
-      if (r && r.status === "success") {
-        const v = r.result;
-        if (v[4] === true) {
-          out.push({
-            listingId: id,
-            tokenId: v[1],
-            price: v[2],
-            seller: v[3],
-            active: v[4],
-          });
-        }
-      }
-    });
-    return out;
-  }, [visibleIds, listingDetails]);
+    if (!data) return [];
+    return data.listings
+      .filter((l) => l.active)
+      .map((l) => ({
+        listingId: BigInt(l.listingId),
+        tokenId: BigInt(l.tokenId),
+        price: BigInt(l.price),
+        seller: l.seller,
+        active: l.active,
+      }));
+  }, [data]);
 
   const sorted = useMemo(() => {
     const arr = [...listings];
@@ -222,40 +134,23 @@ function MarketplaceBody({ userAddress, blockNumber }: BodyProps) {
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
-  const pageItems = sorted.slice(
-    (safePage - 1) * PAGE_SIZE,
-    safePage * PAGE_SIZE
-  );
-
-  // Request on-chain token metadata for whatever is currently on screen.
-  // Skips ids we've already resolved, so flipping pages doesn't re-fetch.
-  useEffect(() => {
-    if (pageItems.length === 0) return;
-    const needed = pageItems
-      .map((n) => n.tokenId.toString())
-      .filter((id) => !(id in tokenMeta));
-    if (needed.length > 0) requestTokenMeta(needed);
-  }, [pageItems, tokenMeta, requestTokenMeta]);
+  const pageItems = sorted.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   const handleRefresh = useCallback(() => {
     setPage(1);
-    setTokenMeta({});
-    metaReqRef.current.ids.clear();
-    refetchIds();
-    refetchDetails();
-  }, [refetchIds, refetchDetails]);
+    setReloadKey((k) => k + 1);
+  }, []);
 
-  const isLoading = idsLoading || detailsLoading;
+  const handleActionComplete = useCallback(() => {
+    handleRefresh();
+  }, [handleRefresh]);
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div
-          className="text-sm text-[#94A3B8]"
-          style={{ fontFamily: "var(--font-departure)" }}
-        >
-          {isLoading
-            ? "Loading…"
+        <div className="text-sm text-[#94A3B8]" style={{ fontFamily: "var(--font-departure)" }}>
+          {loading && !data
+            ? "Loading..."
             : sorted.length === 0
             ? "No listings"
             : `${sorted.length} listing${sorted.length === 1 ? "" : "s"}`}
@@ -276,76 +171,68 @@ function MarketplaceBody({ userAddress, blockNumber }: BodyProps) {
           </select>
           <button
             onClick={handleRefresh}
-            className="pixel-btn pixel-btn-secondary pixel-btn-icon"
-            title="Refresh"
+            className="px-3 py-2 bg-[#1A1A2E] border border-[#2D2D44] rounded-lg hover:border-indigo-500/50 transition-colors"
             aria-label="Refresh"
           >
-            <RefreshIcon />
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 12a9 9 0 0 0-9-9M3 12a9 9 0 0 0 9 9" />
+              <path d="M21 3v6h-6M3 21v-6h6" />
+            </svg>
           </button>
         </div>
       </div>
 
       {error ? (
-        <ErrorState message={error} onRetry={handleRefresh} />
-      ) : isLoading && sorted.length === 0 ? (
+        <div className="text-center py-20">
+          <p className="text-red-400 mb-4">{error}</p>
+          <button
+            onClick={handleRefresh}
+            className="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg"
+          >
+            Retry
+          </button>
+        </div>
+      ) : loading && !data ? (
         <GridSkeleton count={8} />
       ) : sorted.length === 0 ? (
         <EmptyState />
       ) : (
         <>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 nft-grid">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {pageItems.map((nft) => (
               <ListingCard
                 key={nft.listingId.toString()}
                 listing={nft}
                 userAddress={userAddress}
-                isPaused={false}
-                meta={tokenMeta[nft.tokenId.toString()] ?? null}
-                onActionComplete={handleRefresh}
+                meta={data?.tokens[nft.tokenId.toString()] ?? null}
+                onActionComplete={handleActionComplete}
               />
             ))}
           </div>
-          {totalPages > 1 ? (
-            <Pagination
-              page={safePage}
-              totalPages={totalPages}
-              onChange={setPage}
-            />
-          ) : null}
+          {totalPages > 1 && (
+            <Pagination page={safePage} totalPages={totalPages} onChange={setPage} />
+          )}
         </>
       )}
     </div>
   );
 }
 
-function Pagination({
-  page,
-  totalPages,
-  onChange,
-}: {
-  page: number;
-  totalPages: number;
-  onChange: (p: number) => void;
-}) {
+function Pagination({ page, totalPages, onChange }: { page: number; totalPages: number; onChange: (p: number) => void }) {
   return (
     <div className="flex items-center justify-center gap-2 pt-4">
       <button
         onClick={() => onChange(Math.max(1, page - 1))}
         disabled={page <= 1}
-        className="pixel-btn pixel-btn-secondary pixel-btn-sm"
+        className="px-4 py-2 bg-[#1A1A2E] border border-[#2D2D44] rounded-lg text-white disabled:opacity-50 hover:border-indigo-500/50 transition-colors"
       >
         Prev
       </button>
-      <span
-        className="text-sm text-[#94A3B8] px-3"
-        style={{ fontFamily: "var(--font-departure)" }}
-      >
-        {page} / {totalPages}
-      </span>
+      <span className="text-sm text-[#94A3B8] px-3">{page} / {totalPages}</span>
       <button
         onClick={() => onChange(Math.min(totalPages, page + 1))}
         disabled={page >= totalPages}
-        className="pixel-btn pixel-btn-secondary pixel-btn-sm"
+        className="px-4 py-2 bg-[#1A1A2E] border border-[#2D2D44] rounded-lg text-white disabled:opacity-50 hover:border-indigo-500/50 transition-colors"
       >
         Next
       </button>
@@ -357,384 +244,240 @@ function EmptyState() {
   return (
     <div className="text-center py-20">
       <div className="w-24 h-24 mx-auto mb-6 bg-[#1A1A2E] rounded-2xl flex items-center justify-center border border-[#2D2D44]">
-        <svg
-          width="48"
-          height="48"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="#6366F1"
-          strokeWidth="1.5"
-        >
-          <path d="M3 3h18v18H3z" />
-          <path d="M12 8v8M8 12h8" />
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#6366F1" strokeWidth="1.5">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3 3h18v18H3z M3 9h18 M9 21V9" />
         </svg>
       </div>
-      <h2
-        className="text-xl font-bold text-white mb-2"
-        style={{ fontFamily: "var(--font-departure)" }}
+      <h2 className="text-xl font-bold text-white mb-2">No active listings</h2>
+      <p className="text-[#94A3B8] mb-6">Be the first to list your 0xPIXEL NFT</p>
+      <a
+        href="/pixel"
+        className="inline-block px-6 py-3 bg-indigo-500 hover:bg-indigo-600 text-white font-bold rounded-lg transition-colors"
       >
-        No NFTs for Sale
-      </h2>
-      <p
-        className="text-[#94A3B8] max-w-sm mx-auto mb-8"
-        style={{ fontFamily: "var(--font-departure)" }}
-      >
-        Be the first to list your 0xPIXEL NFT
-      </p>
-      <Link
-        href="/pixel/gallery"
-        className="pixel-btn pixel-btn-indigo pixel-btn-sm"
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "10px 20px",
-        }}
-      >
-        MY GALLERY
-      </Link>
+        Create one now
+      </a>
     </div>
   );
-}
-
-function ErrorState({
-  message,
-  onRetry,
-}: {
-  message: string;
-  onRetry: () => void;
-}) {
-  return (
-    <div className="text-center py-16 bg-[#1A1A2E] border border-red-500/30 rounded-2xl">
-      <p
-        className="text-red-300 mb-4"
-        style={{ fontFamily: "var(--font-departure)" }}
-      >
-        Failed to load marketplace: {message}
-      </p>
-      <button
-        onClick={onRetry}
-        className="pixel-btn pixel-btn-secondary pixel-btn-sm"
-      >
-        Retry
-      </button>
-    </div>
-  );
-}
-
-interface CardProps {
-  listing: RawListing;
-  userAddress: `0x${string}` | undefined;
-  isPaused: boolean;
-  meta: TokenMetadata | null;
-  onActionComplete: () => void;
 }
 
 function ListingCard({
   listing,
   userAddress,
-  isPaused,
   meta,
   onActionComplete,
-}: CardProps) {
-  const isOwner =
-    !!userAddress &&
-    userAddress.toLowerCase() === listing.seller.toLowerCase();
-
-  // Show the on-chain name once we have it, but keep a visible token id
-  // beneath so users can always reference it. Falls back to a skeleton
-  // while loading and to "Token #N" if the metadata fetch failed.
-  const tokenIdStr = listing.tokenId.toString();
-  const displayName = meta?.name ?? (meta === undefined ? "" : `Token #${tokenIdStr}`);
-
-  return (
-    <div className="nft-card group bg-[#1A1A2E] rounded-2xl overflow-hidden border border-[#2D2D44] hover:border-indigo-500/50 transition-all duration-300 hover:shadow-xl hover:shadow-indigo-500/10 hover:-translate-y-1">
-      <ListingImage
-        tokenId={listing.tokenId}
-        prefetchedUrl={meta?.imageUrl ?? undefined}
-      />
-      <div className="p-4 space-y-3">
-        <div>
-          <div
-            className="text-[10px] text-[#64748B] uppercase tracking-wider"
-            style={{ fontFamily: "var(--font-departure)" }}
-          >
-            0xPIXEL · #{tokenIdStr}
-          </div>
-          <h3
-            className="text-white font-bold text-base mt-0.5 truncate"
-            style={{ fontFamily: "var(--font-departure)" }}
-            title={displayName}
-          >
-            {meta?.name ? (
-              displayName
-            ) : meta === null ? (
-              <span className="text-[#94A3B8] font-medium">Token #{tokenIdStr}</span>
-            ) : (
-              <span
-                className="inline-block h-4 w-32 rounded bg-white/5 animate-pulse"
-                aria-label="Loading name"
-              />
-            )}
-          </h3>
-          <div
-            className="text-[#94A3B8] text-xs mt-0.5 truncate"
-            style={{ fontFamily: "var(--font-departure)" }}
-          >
-            Seller: {shortenAddress(listing.seller)}
-          </div>
-        </div>
-        <div className="pt-3 border-t border-[#2D2D44] space-y-2">
-          <div className="flex items-center justify-between">
-            <span
-              className="text-[#64748B] text-sm"
-              style={{ fontFamily: "var(--font-departure)" }}
-            >
-              Price
-            </span>
-            <span
-              className="text-emerald-400 font-bold text-xl"
-              style={{ fontFamily: "var(--font-departure)" }}
-            >
-              {formatEther(listing.price)}{" "}
-              <span className="text-sm font-medium">zkLTC</span>
-            </span>
-          </div>
-          {isOwner ? (
-            <CancelListingButton
-              listingId={listing.listingId}
-              disabled={isPaused}
-              onSuccess={onActionComplete}
-            />
-          ) : (
-            <BuyButton
-              listingId={listing.listingId}
-              priceWei={listing.price}
-              disabled={isPaused}
-              onSuccess={onActionComplete}
-            />
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ListingImage({
-  tokenId,
-  prefetchedUrl,
 }: {
-  tokenId: bigint;
-  prefetchedUrl?: string;
+  listing: RawListing;
+  userAddress: `0x${string}` | undefined;
+  meta: TokenMetadata | null;
+  onActionComplete: () => void;
 }) {
-  // If the parent already has the image (e.g. from /api/token-metadata),
-  // skip the extra round-trip and render straight away.
-  const [src, setSrc] = useState<string>(prefetchedUrl ?? "");
-  const [loading, setLoading] = useState(!prefetchedUrl);
+  const toast = useToast();
+  const [busy, setBusy] = useState<"buy" | "cancel" | null>(null);
+  const [showBuyModal, setShowBuyModal] = useState(false);
+
+  const priceEth = formatEther(listing.price);
+  const isOwner = userAddress && listing.seller.toLowerCase() === userAddress.toLowerCase();
+
+  const { writeContractAsync, data: txHash } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess: isConfirmed } =
+    useWaitForTransactionReceipt({ hash: txHash });
 
   useEffect(() => {
-    if (prefetchedUrl) {
-      setSrc(prefetchedUrl);
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    setSrc("");
-    fetch(`/api/listing-image?tokenId=${tokenId.toString()}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (cancelled) return;
-        if (data && typeof data.imageUrl === "string") {
-          setSrc(data.imageUrl);
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+    if (!isConfirmed || !txHash) return;
+    const action = busy === "buy" ? "Purchase" : "Cancelled";
+    toast.show({
+      title: `${action} successful`,
+      description: `${meta?.name || `Token #${listing.tokenId}`}`,
+      href: getMarketplaceTxUrl(txHash),
+      hrefLabel: "View on Explorer",
+    });
+    setBusy(null);
+    setShowBuyModal(false);
+    onActionComplete();
+  }, [isConfirmed, txHash, busy, listing.tokenId, meta, toast, onActionComplete]);
+
+  const handleBuy = useCallback(async () => {
+    try {
+      setBusy("buy");
+      const hash = await writeContractAsync({
+        address: PIXEL_MARKETPLACE_ADDRESS,
+        abi: MarketplaceAbi,
+        functionName: "buy",
+        args: [listing.listingId],
+        value: listing.price,
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [tokenId, prefetchedUrl]);
+      toast.show({
+        title: "Purchase submitted",
+        description: "Waiting for confirmation...",
+        href: getMarketplaceTxUrl(hash),
+        hrefLabel: "View on Explorer",
+      });
+    } catch (err) {
+      toast.handleError(err, "Purchase failed");
+      setBusy(null);
+    }
+  }, [listing.listingId, listing.price, writeContractAsync, toast]);
+
+  const handleCancel = useCallback(async () => {
+    try {
+      setBusy("cancel");
+      const hash = await writeContractAsync({
+        address: PIXEL_MARKETPLACE_ADDRESS,
+        abi: MarketplaceAbi,
+        functionName: "cancelListing",
+        args: [listing.listingId],
+      });
+      toast.show({
+        title: "Cancellation submitted",
+        description: "Waiting for confirmation...",
+        href: getMarketplaceTxUrl(hash),
+        hrefLabel: "View on Explorer",
+      });
+    } catch (err) {
+      toast.handleError(err, "Cancel failed");
+      setBusy(null);
+    }
+  }, [listing.listingId, writeContractAsync, toast]);
 
   return (
-    <div className="relative aspect-square bg-[#0F0F23] flex items-center justify-center overflow-hidden">
-      {loading ? (
-        <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-      ) : src ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={src}
-          alt={`Token #${tokenId.toString()}`}
-          className="w-full h-full object-contain"
-          style={{ imageRendering: "pixelated" }}
+    <div className="bg-[#1A1A2E] rounded-2xl border border-[#2D2D44] overflow-hidden hover:border-indigo-500/40 transition-all hover:shadow-lg hover:shadow-indigo-500/10">
+      <a
+        href={getExplorerUrl(listing.tokenId)}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="block aspect-square bg-gradient-to-br from-[#1A1A2E] to-[#0F0F23] relative overflow-hidden"
+      >
+        {meta?.imageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={meta.imageUrl}
+            alt={meta.name}
+            loading="lazy"
+            className="w-full h-full object-cover transition-transform hover:scale-105"
+            style={{ imageRendering: "pixelated" }}
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <div className="w-12 h-12 border-2 border-[#2D2D44] border-t-indigo-500 rounded-full animate-spin" />
+          </div>
+        )}
+        <div className="absolute top-2 left-2 px-2 py-1 rounded-md bg-black/60 backdrop-blur text-[10px] font-bold text-white">
+          #{listing.tokenId.toString()}
+        </div>
+      </a>
+
+      <div className="p-4 space-y-3">
+        <div>
+          <h3 className="text-white font-bold text-sm truncate">
+            {meta?.name || `Token #${listing.tokenId.toString()}`}
+          </h3>
+          <p className="text-[#64748B] text-[11px] mt-0.5 truncate">
+            Seller: {shortenAddress(listing.seller)}
+          </p>
+        </div>
+
+        <div className="flex items-baseline justify-between">
+          <div>
+            <p className="text-[#64748B] text-[10px] uppercase tracking-wider">Price</p>
+            <p className="text-white font-bold text-lg">{priceEth} zkLTC</p>
+          </div>
+        </div>
+
+        {isOwner ? (
+          <button
+            onClick={handleCancel}
+            disabled={busy !== null || isConfirming}
+            className="w-full py-2.5 rounded-lg bg-red-500/20 border border-red-500/40 text-red-300 text-xs font-bold hover:bg-red-500/30 transition-colors disabled:opacity-50"
+          >
+            {busy === "cancel" || isConfirming ? "Cancelling..." : "Cancel Listing"}
+          </button>
+        ) : (
+          <button
+            onClick={() => setShowBuyModal(true)}
+            disabled={busy !== null || isConfirming}
+            className="w-full py-2.5 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white text-xs font-bold transition-colors disabled:opacity-50"
+          >
+            {busy === "buy" || isConfirming ? "Buying..." : "Buy Now"}
+          </button>
+        )}
+      </div>
+
+      {showBuyModal && (
+        <BuyModal
+          listing={listing}
+          meta={meta}
+          busy={busy === "buy"}
+          isConfirming={isConfirming}
+          onConfirm={handleBuy}
+          onClose={() => setShowBuyModal(false)}
         />
-      ) : (
-        <span
-          className="text-[#64748B] text-xs"
-          style={{ fontFamily: "var(--font-departure)" }}
-        >
-          No image
-        </span>
       )}
     </div>
   );
 }
 
-function BuyButton({
-  listingId,
-  priceWei,
-  disabled,
-  onSuccess,
+function BuyModal({
+  listing,
+  meta,
+  busy,
+  isConfirming,
+  onConfirm,
+  onClose,
 }: {
-  listingId: bigint;
-  priceWei: bigint;
-  disabled: boolean;
-  onSuccess: () => void;
+  listing: RawListing;
+  meta: TokenMetadata | null;
+  busy: boolean;
+  isConfirming: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
 }) {
-  const { writeContractAsync, isPending, data: txHash, error } =
-    useWriteContract();
-  const { isLoading: waiting, isSuccess } = useWaitForTransactionReceipt({
-    hash: txHash,
-  });
-  const firedRef = useRef(false);
-
-  useEffect(() => {
-    if (isSuccess && !firedRef.current) {
-      firedRef.current = true;
-      onSuccess();
-    }
-  }, [isSuccess, onSuccess]);
-
-  const handleBuy = async () => {
-    firedRef.current = false;
-    try {
-      await writeContractAsync({
-        address: PIXEL_MARKETPLACE_ADDRESS,
-        abi: MarketplaceAbi,
-        functionName: "buy",
-        args: [listingId],
-        value: priceWei,
-      });
-    } catch {
-      // surfaced via error below
-    }
-  };
-
-  const busy = isPending || waiting;
+  const priceEth = formatEther(listing.price);
 
   return (
-    <div className="space-y-1">
-      <button
-        onClick={handleBuy}
-        disabled={busy || disabled}
-        className="pixel-btn pixel-btn-emerald w-full"
-        style={{ padding: "10px 16px" }}
-      >
-        {busy ? (
-          <span className="flex items-center justify-center gap-2">
-            <span className="pixel-spinner" />{" "}
-            {waiting ? "Confirming…" : "Submitting…"}
-          </span>
-        ) : (
-          "BUY"
-        )}
-      </button>
-      {txHash ? (
-        <a
-          href={getMarketplaceTxUrl(txHash)}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="block text-center text-xs text-indigo-300 hover:text-indigo-200 underline"
-        >
-          View on Explorer
-        </a>
-      ) : null}
-      {error ? (
-        <p className="text-xs text-red-300 break-all">{error.message}</p>
-      ) : null}
-    </div>
-  );
-}
-
-function CancelListingButton({
-  listingId,
-  disabled,
-  onSuccess,
-}: {
-  listingId: bigint;
-  disabled: boolean;
-  onSuccess: () => void;
-}) {
-  const { writeContractAsync, isPending, data: txHash, error } =
-    useWriteContract();
-  const { isLoading: waiting, isSuccess } = useWaitForTransactionReceipt({
-    hash: txHash,
-  });
-  const firedRef = useRef(false);
-
-  useEffect(() => {
-    if (isSuccess && !firedRef.current) {
-      firedRef.current = true;
-      onSuccess();
-    }
-  }, [isSuccess, onSuccess]);
-
-  const handleCancel = async () => {
-    firedRef.current = false;
-    try {
-      await writeContractAsync({
-        address: PIXEL_MARKETPLACE_ADDRESS,
-        abi: MarketplaceAbi,
-        functionName: "cancelListing",
-        args: [listingId],
-      });
-    } catch {
-      // surfaced via error below
-    }
-  };
-
-  const busy = isPending || waiting;
-
-  return (
-    <div className="space-y-1">
-      <button
-        onClick={handleCancel}
-        disabled={busy || disabled}
-        className="pixel-btn pixel-btn-red w-full"
-        style={{ padding: "10px 16px" }}
-      >
-        {busy ? (
-          <span className="flex items-center justify-center gap-2">
-            <span className="pixel-spinner" />{" "}
-            {waiting ? "Confirming…" : "Submitting…"}
-          </span>
-        ) : (
-          "CANCEL LISTING"
-        )}
-      </button>
-      {error ? (
-        <p className="text-xs text-red-300 break-all">{error.message}</p>
-      ) : null}
-    </div>
-  );
-}
-
-function RefreshIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      onClick={onClose}
     >
-      <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
-      <path d="M21 3v5h-5" />
-      <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
-      <path d="M3 21v-5h5" />
-    </svg>
+      <div
+        className="bg-[#13133A] rounded-2xl border border-[#2D2D44] max-w-sm w-full overflow-hidden shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {meta?.imageUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={meta.imageUrl}
+            alt={meta.name}
+            className="w-full aspect-square object-cover"
+            style={{ imageRendering: "pixelated" }}
+          />
+        )}
+        <div className="p-5 space-y-4">
+          <div>
+            <h3 className="text-white font-bold text-lg">{meta?.name || `Token #${listing.tokenId.toString()}`}</h3>
+            <p className="text-[#64748B] text-xs">Sold by {shortenAddress(listing.seller)}</p>
+          </div>
+          <div className="bg-[#0F0F23] rounded-xl p-4 text-center">
+            <p className="text-[#64748B] text-[10px] uppercase tracking-wider">Total price</p>
+            <p className="text-white font-bold text-2xl mt-1">{priceEth} zkLTC</p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              disabled={busy || isConfirming}
+              className="flex-1 py-2.5 rounded-lg bg-[#1A1A2E] border border-[#2D2D44] text-white text-xs font-bold hover:border-[#4D4D64] transition-colors disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={onConfirm}
+              disabled={busy || isConfirming}
+              className="flex-1 py-2.5 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white text-xs font-bold transition-colors disabled:opacity-50"
+            >
+              {isConfirming ? "Confirming..." : busy ? "Submitting..." : "Confirm"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

@@ -622,14 +622,17 @@ input[type="range"]::-webkit-slider-thumb:hover {
 }
 
 /* Pixel page animations */
-.pixel-hero-anim {
+.pixel-hero-anim,
+.hero-fade-in {
   opacity: 0;
   transform: translateY(20px);
   animation: pixelFadeUp 0.7s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
-.pixel-hero-anim:nth-child(1) { animation-delay: 0.05s; }
-.pixel-hero-anim:nth-child(2) { animation-delay: 0.15s; }
+.pixel-hero-anim:nth-child(1),
+.hero-fade-in { animation-delay: 0.05s; }
+.pixel-hero-anim:nth-child(2),
+.hero-fade-in-delay { animation-delay: 0.2s; opacity: 0; transform: translateY(20px); animation: pixelFadeUp 0.7s cubic-bezier(0.4, 0, 0.2, 1) 0.2s forwards; }
 
 @keyframes pixelFadeUp {
   to {
@@ -640,6 +643,8 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
+  .hero-fade-in,
+  .hero-fade-in-delay,
   .pixel-hero-anim,
   .nft-card,
   .nft-grid,
@@ -647,9 +652,9 @@ input[type="range"]::-webkit-slider-thumb:hover {
   .animate-fadeInUp-delay-1,
   .animate-fadeInUp-delay-2,
   .animate-fadeInUp-delay-3 {
-    animation: none;
-    opacity: 1;
-    transform: none;
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
   }
 
   .animate-slideDown,

@@ -9,23 +9,54 @@ import { shortenAddress } from "@/lib/contract";
 import { useToast } from "@/components/Toast";
 import { normalizeError, shortHashOrAddr } from "@/lib/errors";
 
-const NAV_LINKS = [
+type Site = "pixel" | "pm";
+
+const PIXEL_NAV = [
   { href: "/pixel", label: "Draw" },
   { href: "/pixel/gallery", label: "Gallery" },
   { href: "/pixel/marketplace", label: "Marketplace" },
+  { href: "/pm", label: "Mining" },
 ] as const;
 
-function isActive(pathname: string | null, href: string): boolean {
+const PM_NAV = [
+  { href: "/pm", label: "Dashboard", exact: true },
+  { href: "/pm/marketplace", label: "Buy Rig" },
+  { href: "/pm/myrigs", label: "Leaderboard" },
+  { href: "/pixel", label: "← 0xPixel" },
+] as const;
+
+function detectSite(pathname: string | null): Site {
+  if (!pathname) return "pixel";
+  return pathname.startsWith("/pm") ? "pm" : "pixel";
+}
+
+function isActivePM(pathname: string | null, href: string, exact?: boolean): boolean {
+  if (!pathname) return false;
+  if (exact) return pathname === href;
+  return pathname === href || pathname.startsWith(href + "/");
+}
+
+function isActivePixel(pathname: string | null, href: string): boolean {
   if (!pathname) return false;
   if (href === "/pixel") return pathname === "/pixel";
+  if (href === "/pm") return pathname.startsWith("/pm");
   return pathname === href || pathname.startsWith(href + "/");
 }
 
 export function PixelHeader() {
+  return <AppHeader />;
+}
+
+export function PMHeader() {
+  return <AppHeader />;
+}
+
+function AppHeader() {
   const [mounted, setMounted] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [addressMenuOpen, setAddressMenuOpen] = useState(false);
   const pathname = usePathname();
+  const currentSite = detectSite(pathname);
 
   const { address, isConnected } = useAccount();
   const { connectors, connect, isPending, error: connectError } = useConnect();
@@ -40,12 +71,10 @@ export function PixelHeader() {
     setMounted(true);
   }, []);
 
-  // Close mobile menu on route change.
   useEffect(() => {
     setMobileMenuOpen(false);
   }, [pathname]);
 
-  // Close address menu when clicking outside.
   useEffect(() => {
     if (!addressMenuOpen) return;
     const handler = (e: MouseEvent) => {
@@ -64,7 +93,6 @@ export function PixelHeader() {
     };
   }, [addressMenuOpen]);
 
-  // Toast on connect / disconnect transitions.
   useEffect(() => {
     if (!mounted) return;
     const wasConnected = prevConnectedRef.current;
@@ -72,7 +100,7 @@ export function PixelHeader() {
     prevConnectedRef.current = isConnected;
     prevAddressRef.current = address ?? null;
 
-    if (wasConnected === null) return; // first mount, ignore
+    if (wasConnected === null) return;
     if (wasConnected === false && isConnected && address) {
       toast.success("Wallet connected", `Connected as ${shortHashOrAddr(address)}`);
     } else if (wasConnected === true && !isConnected) {
@@ -82,7 +110,6 @@ export function PixelHeader() {
     }
   }, [isConnected, address, mounted, toast]);
 
-  // Toast on wagmi/connect error (no provider, user reject, etc.)
   useEffect(() => {
     if (!connectError) return;
     const normalized = normalizeError(connectError);
@@ -119,7 +146,7 @@ export function PixelHeader() {
     <header className="sticky top-0 z-50 bg-[#1A1A2E]/90 backdrop-blur-xl border-b border-[#2D2D44]">
       <div className="max-w-7xl mx-auto px-5 py-3.5 flex items-center justify-between gap-4">
         <div className="flex items-center gap-4">
-          <Link href="/" className="flex items-center gap-2.5 group">
+          <Link href={currentSite === "pm" ? "/pm" : "/"} className="flex items-center gap-2.5 group">
             <Image
               src="/icon.svg"
               alt="0xPixel Logo"
@@ -134,34 +161,65 @@ export function PixelHeader() {
             >
               0xPixel
             </span>
+            {currentSite === "pm" ? (
+              <>
+                <span className="hidden sm:inline-block text-[#4D4D64] text-xs">/</span>
+                <span className="hidden sm:inline-block text-indigo-400 font-bold text-sm">
+                  Rig Mining
+                </span>
+              </>
+            ) : null}
           </Link>
         </div>
 
         <nav className="hidden md:flex items-center gap-2">
-          {NAV_LINKS.map((link) => {
-            const active = isActive(pathname, link.href);
-            return (
-              <Link
-                key={link.href}
-                href={link.href}
-                aria-current={active ? "page" : undefined}
-                className={active ? "pixel-nav pixel-nav-active" : "pixel-nav"}
-              >
-                {link.label}
-              </Link>
-            );
-          })}
-          <a
-            href="https://x.com/0xnothing_net"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="pixel-nav-icon"
-            aria-label="X / Twitter"
-          >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-            </svg>
-          </a>
+          {currentSite === "pm"
+            ? PM_NAV.map((link) => {
+                const active = isActivePM(pathname, link.href, "exact" in link ? link.exact : undefined);
+                const isExternal = link.label.startsWith("←");
+                return (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    aria-current={active ? "page" : undefined}
+                    className={
+                      isExternal
+                        ? "ml-2 px-3 py-1.5 rounded-lg text-[#64748B] text-xs font-bold hover:text-white hover:bg-white/5 transition-colors"
+                        : active
+                        ? "px-3 py-1.5 rounded-lg bg-indigo-500/20 border border-indigo-500/40 text-white text-xs font-bold whitespace-nowrap"
+                        : "px-3 py-1.5 rounded-lg text-[#94A3B8] text-xs font-bold hover:text-white hover:bg-white/5 transition-colors whitespace-nowrap"
+                    }
+                  >
+                    {link.label}
+                  </Link>
+                );
+              })
+            : PIXEL_NAV.map((link) => {
+                const active = isActivePixel(pathname, link.href);
+                return (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    aria-current={active ? "page" : undefined}
+                    className={active ? "pixel-nav pixel-nav-active" : "pixel-nav"}
+                  >
+                    {link.label}
+                  </Link>
+                );
+              })}
+          {currentSite === "pixel" ? (
+            <a
+              href="https://x.com/0xnothing_net"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="pixel-nav-icon"
+              aria-label="X / Twitter"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+              </svg>
+            </a>
+          ) : null}
         </nav>
 
         <div className="flex items-center gap-2">
@@ -240,7 +298,6 @@ export function PixelHeader() {
                 </div>
               ) : null}
 
-              {/* Mobile: compact address pill (no dropdown) */}
               <div className="sm:hidden flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/30">
                 <span className="w-2 h-2 rounded-full bg-emerald-400" />
                 <span className="text-white text-[11px] font-mono">
@@ -310,37 +367,69 @@ export function PixelHeader() {
           key="mobile-menu"
           className="md:hidden border-t border-[#2D2D44] px-4 py-3 space-y-1 animate-slideDown"
         >
-          {NAV_LINKS.map((link) => {
-            const active = isActive(pathname, link.href);
-            return (
-              <Link
-                key={link.href}
-                href={link.href}
-                aria-current={active ? "page" : undefined}
-                className={
-                  active
-                    ? "pixel-nav-mobile pixel-nav-mobile-active"
-                    : "pixel-nav-mobile"
-                }
+          <div className="px-3.5 py-2 text-xs text-[#64748B] uppercase tracking-wider" style={{ fontFamily: "var(--font-departure)" }}>
+            {currentSite === "pm" ? "Rig Mining" : "0xPixel"}
+          </div>
+          {currentSite === "pm"
+            ? PM_NAV.map((link) => {
+                const active = isActivePM(pathname, link.href, "exact" in link ? link.exact : undefined);
+                const isExternal = link.label.startsWith("←");
+                return (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    aria-current={active ? "page" : undefined}
+                    className={
+                      isExternal
+                        ? "pixel-nav-mobile"
+                        : active
+                        ? "pixel-nav-mobile pixel-nav-mobile-active"
+                        : "pixel-nav-mobile"
+                    }
+                  >
+                    {!isExternal && active ? (
+                      <span aria-hidden="true" className="w-1 h-3 bg-white/40 flex-shrink-0" />
+                    ) : null}
+                    {link.label}
+                  </Link>
+                );
+              })
+            : PIXEL_NAV.map((link) => {
+                const active = isActivePixel(pathname, link.href);
+                return (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    aria-current={active ? "page" : undefined}
+                    className={
+                      active
+                        ? "pixel-nav-mobile pixel-nav-mobile-active"
+                        : "pixel-nav-mobile"
+                    }
+                  >
+                    {active ? (
+                      <span aria-hidden="true" className="w-1 h-3 bg-white/40 flex-shrink-0" />
+                    ) : null}
+                    {link.label}
+                  </Link>
+                );
+              })}
+          {currentSite === "pixel" ? (
+            <>
+              <div className="h-px bg-[#2D2D44] my-2" />
+              <a
+                href="https://x.com/0xnothing_net"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="pixel-nav-mobile"
               >
-                {active ? (
-                  <span aria-hidden="true" className="w-1 h-3 bg-white/40 flex-shrink-0" />
-                ) : null}
-                {link.label}
-              </Link>
-            );
-          })}
-          <a
-            href="https://x.com/0xnothing_net"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="pixel-nav-mobile"
-          >
-            <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-            </svg>
-            Follow on X
-          </a>
+                <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                </svg>
+                Follow on X
+              </a>
+            </>
+          ) : null}
           {mounted && isConnected ? (
             <button
               onClick={() => disconnect()}

@@ -41,7 +41,7 @@ export async function GET(request: Request) {
     .split(",")
     .map((s) => s.trim())
     .filter((s) => /^\d+$/.test(s))
-    .slice(0, 96); // safety cap — matches marketplace PAGE_SIZE with headroom
+    .slice(0, 20); // safety cap
 
   if (ids.length === 0) {
     return NextResponse.json({ error: "No valid ids" }, { status: 400 });

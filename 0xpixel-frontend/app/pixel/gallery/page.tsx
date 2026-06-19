@@ -17,7 +17,7 @@ type SortKey = "newest" | "oldest" | "name";
 
 export default function GalleryPage() {
   const { address, isConnected } = useAccount();
-  const { data: blockNumber } = useBlockNumber({ watch: true });
+  const { data: blockNumber } = useBlockNumber({ watch: false });
   const [refreshKey, setRefreshKey] = useState(0);
   const [sort, setSort] = useState<SortKey>("newest");
 
