@@ -1,4 +1,5 @@
-import { PMINING_CONTRACT_ADDRESS } from "@/lib/pmContract";
+import { PMINING_CONTRACT_ADDRESS, pmPublicClient } from "@/lib/pmContract";
+import { PMiningAbi } from "./pmAbi";
 
 const BLOCKSCOUT_BASE = "https://liteforge.explorer.caldera.xyz/api/v2";
 
@@ -60,7 +61,6 @@ export async function buildLeaderboard(): Promise<LeaderboardData> {
   const logs = await fetchAllContractLogs();
 
   const minedByAddress = new Map<string, bigint>();
-  const rigsByAddress = new Map<string, Set<bigint>>();
 
   for (const log of logs) {
     const method = log.decoded?.method_call ?? "";
@@ -75,40 +75,56 @@ export async function buildLeaderboard(): Promise<LeaderboardData> {
       if (!user) continue;
       const reward = decodeUint256(rewardHex);
       minedByAddress.set(user.toLowerCase(), (minedByAddress.get(user.toLowerCase()) ?? 0n) + reward);
-    } else if (method.startsWith("RigBought(")) {
-      const user =
-        (params.find((p) => p.name === "user")?.value ??
-        params.find((p) => p.name === "buyer")?.value ??
-        "") as string;
-      const nftIdHex = params.find((p) => p.name === "nftId")?.value ?? "0";
-      if (!user) continue;
-      const nftId = decodeUint256(nftIdHex);
-      const set = rigsByAddress.get(user.toLowerCase()) ?? new Set<bigint>();
-      set.add(nftId);
-      rigsByAddress.set(user.toLowerCase(), set);
     }
   }
 
-  const allAddresses = new Set<string>([
-    ...minedByAddress.keys(),
-    ...rigsByAddress.keys(),
-  ]);
-
+  const allAddresses = [...minedByAddress.keys()];
   const entries: LeaderboardEntry[] = [];
   let totalRigs = 0;
   let totalMined = 0n;
 
-  for (const addr of allAddresses) {
-    const rigCount = rigsByAddress.get(addr)?.size ?? 0;
-    const totalMinedAddr = minedByAddress.get(addr) ?? 0n;
-    if (rigCount === 0 && totalMinedAddr === 0n) continue;
-    totalRigs += rigCount;
-    totalMined += totalMinedAddr;
-    entries.push({
-      address: addr as `0x${string}`,
-      rigCount,
-      totalMined: totalMinedAddr,
-    });
+  const BATCH = 20;
+  for (let i = 0; i < allAddresses.length; i += BATCH) {
+    const batch = allAddresses.slice(i, i + BATCH);
+    const results = await Promise.allSettled(
+      batch.map(async (addr) => {
+        const addrTyped = addr as `0x${string}`;
+        const [rigCount, totalMinedAddr] = await Promise.all([
+          (async () => {
+            try {
+              const count = (await pmPublicClient.readContract({
+                address: PMINING_CONTRACT_ADDRESS,
+                abi: PMiningAbi,
+                functionName: "userRigCount",
+                args: [addrTyped],
+              })) as bigint;
+              return Number(count);
+            } catch {
+              return 0;
+            }
+          })(),
+          Promise.resolve(minedByAddress.get(addr) ?? 0n),
+        ]);
+        return { addr, rigCount, totalMinedAddr };
+      })
+    );
+
+    for (const r of results) {
+      if (r.status !== "fulfilled") continue;
+      const { addr, rigCount, totalMinedAddr } = r.value;
+      if (rigCount === 0) continue;
+      totalRigs += rigCount;
+      totalMined += totalMinedAddr;
+      entries.push({
+        address: addr as `0x${string}`,
+        rigCount,
+        totalMined: totalMinedAddr,
+      });
+    }
+
+    if (i + BATCH < allAddresses.length) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
   }
 
   entries.sort((a, b) => {

@@ -163,12 +163,14 @@ export default function PMLeaderboard() {
     [toast]
   );
 
-  const myRank =
-    data && address
-      ? data.entries.findIndex(
-          (e) => e.address.toLowerCase() === address.toLowerCase()
-        )
-      : -1;
+  const TOP_DISPLAY = 20;
+
+  const topEntries = data?.entries.slice(0, TOP_DISPLAY) ?? [];
+  const userEntry = address
+    ? data?.entries.find((e) => e.address.toLowerCase() === address.toLowerCase())
+    : undefined;
+  const userInTop = userEntry !== undefined && topEntries.some((e) => e.address.toLowerCase() === address!.toLowerCase());
+  const myRank = userEntry ? (data?.entries.findIndex((e) => e.address.toLowerCase() === address!.toLowerCase()) ?? -1) : -1;
 
   return (
     <div className="space-y-5">
@@ -177,7 +179,7 @@ export default function PMLeaderboard() {
         <div>
           <h1 className="text-2xl font-bold text-white">Leaderboard</h1>
           <p className="text-[#94A3B8] text-sm mt-1">
-            Top miners ranked by total N claimed. Refreshes daily at 07:00 UTC.
+            Top miners ranked by total N claimed.
           </p>
         </div>
         <button
@@ -270,15 +272,31 @@ export default function PMLeaderboard() {
             ))}
           </div>
         ) : data && data.entries.length > 0 ? (
-          data.entries.map((entry, i) => (
-            <Row
-              key={entry.address}
-              entry={entry}
-              rank={i + 1}
-              isMe={!!address && entry.address.toLowerCase() === address.toLowerCase()}
-              onCopy={onCopy}
-            />
-          ))
+          <>
+            {topEntries.map((entry, i) => (
+              <Row
+                key={entry.address}
+                entry={entry}
+                rank={i + 1}
+                isMe={!!address && entry.address.toLowerCase() === address.toLowerCase()}
+                onCopy={onCopy}
+              />
+            ))}
+            {!userInTop && userEntry && (
+              <>
+                <div className="px-3.5 py-2 border-b border-[#2D2D44] text-center text-[10px] text-[#4D4D64] italic">
+                  ··· {data.entries.length - TOP_DISPLAY} more miners ···
+                </div>
+                <Row
+                  key={userEntry.address}
+                  entry={userEntry}
+                  rank={myRank + 1}
+                  isMe={true}
+                  onCopy={onCopy}
+                />
+              </>
+            )}
+          </>
         ) : (
           <div className="py-16 text-center text-[#64748B] text-sm">
             No mining activity yet. Be the first!
@@ -288,7 +306,7 @@ export default function PMLeaderboard() {
 
       {data && data.entries.length > 0 && (
         <p className="text-center text-[10px] text-[#64748B]">
-          Showing top {data.entries.length} miner{data.entries.length === 1 ? "" : "s"} from on-chain RigClaimed events
+          Showing top {topEntries.length}{!userInTop && userEntry ? ` + you (#${myRank + 1})` : ""} from {data.entries.length} total miners
         </p>
       )}
     </div>
