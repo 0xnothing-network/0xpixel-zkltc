@@ -35,11 +35,11 @@ export const KNOWN_TOKENS: Token[] = [
   },
 ];
 
-export function useDexRead<T = unknown>(functionName: string, args?: unknown[]) {
+export function useDexRead<T = unknown>(functionName: string, args?: readonly unknown[]) {
   const result = useReadContract({
     address: DEX_ADDRESS,
     abi: DEX_ABI,
-    functionName: functionName as keyof typeof DEX_ABI,
+    functionName: functionName as never,
     args: args as never,
   });
   
@@ -115,7 +115,7 @@ export function useDexWrite() {
   return { addLiquidity, removeLiquidity, swap, claimReward, createPool };
 }
 
-export function useTokenBalance(address: `0x${string}` | undefined, token: Token | null) {
+export function useTokenBalance(address: `0x${string}` | undefined, token: Token | null): { data: bigint | undefined } {
   const isNative = token?.address === NATIVE_ADDRESS;
   const { data: nativeBalance } = useBalance({ address });
   const { data: erc20Balance } = useReadContract({
@@ -127,7 +127,7 @@ export function useTokenBalance(address: `0x${string}` | undefined, token: Token
   });
 
   return {
-    data: isNative ? (nativeBalance?.value ?? 0n) : erc20Balance,
+    data: isNative ? (nativeBalance?.value ?? 0n) : (erc20Balance as bigint | undefined),
   };
 }
 
@@ -206,7 +206,7 @@ export function useDexOwner() {
 }
 
 export function useDexPoolStats(pairId: `0x${string}`) {
-  const { data: poolData } = useDexRead("pools", [pairId]);
+  const { data: poolData } = useDexRead<readonly [string, string, bigint, bigint, bigint, bigint, bigint, bigint]>("pools", [pairId]);
   
   if (!poolData) return null;
   
@@ -240,12 +240,12 @@ export function useSwapQuote(
     tokenIn && tokenOut ? [tokenIn.address, tokenOut.address] : undefined
   );
 
-  const { data: poolData } = useDexRead("pools", pairId ? [pairId] : undefined);
+  const { data: poolData } = useDexRead<readonly [string, string, bigint, bigint, bigint, bigint, bigint, bigint]>("pools", pairId ? [pairId] : undefined);
 
   return useMemo(() => {
     if (!poolData || amountInFormatted === 0n) return null;
     
-    const [token0, token1, reserve0, reserve1] = poolData;
+    const [token0, token1, reserve0, reserve1] = poolData as [string, string, bigint, bigint, bigint, bigint, bigint, bigint];
     const isReversed = tokenIn!.address !== token0;
     
     const reserveIn = isReversed ? reserve1 : reserve0;

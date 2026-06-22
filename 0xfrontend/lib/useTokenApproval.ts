@@ -1,7 +1,7 @@
 "use client";
 
 import { useReadContract, useWriteContract } from "wagmi";
-import { parseUnits, MaxUint256, erc20Abi, type WriteContractParameters } from "viem";
+import { parseUnits, maxUint256, erc20Abi } from "viem";
 import { useCallback } from "react";
 import { DEX_ADDRESS } from "./0xDexContract";
 
@@ -62,7 +62,7 @@ export function useTokenApproval(
           address: tokenAddress,
           abi: erc20Abi,
           functionName: "approve",
-          args: [spenderAddress, MaxUint256],
+          args: [spenderAddress, maxUint256],
         });
         return hash;
       } catch (error) {
@@ -79,7 +79,7 @@ export function useTokenApproval(
       address: tokenAddress,
       abi: erc20Abi,
       functionName: "approve",
-      args: [spenderAddress, MaxUint256],
+      args: [spenderAddress, maxUint256],
     });
   }, [writeContract, spenderAddress, tokenAddress]);
 
@@ -97,14 +97,19 @@ export function useTokenApproval(
 export async function approveTokenMax(
   tokenAddress: `0x${string}`,
   spenderAddress: `0x${string}`,
-  writeContractAsync: (params: WriteContractParameters) => Promise<`0x${string}`>
+  writeContractAsync: (params: {
+    address: `0x${string}`;
+    abi: typeof erc20Abi;
+    functionName: "approve";
+    args: [`0x${string}`, bigint];
+  }) => Promise<`0x${string}`>
 ): Promise<string | undefined> {
   try {
     const hash = await writeContractAsync({
       address: tokenAddress,
       abi: erc20Abi,
       functionName: "approve",
-      args: [spenderAddress, MaxUint256],
+      args: [spenderAddress, maxUint256],
     });
     return hash;
   } catch (error) {

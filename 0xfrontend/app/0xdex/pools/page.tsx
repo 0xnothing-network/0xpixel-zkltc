@@ -135,7 +135,7 @@ export default function PoolsPage() {
   );
   
   // Get pool reserves
-  const { data: poolData } = useDexRead("pools", pairId ? [pairId] : undefined);
+  const { data: poolData } = useDexRead<readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint]>("pools", pairId ? [pairId] : undefined);
   
   // Balances
   const { data: balanceA } = useTokenBalance(address, tokenA);
@@ -325,7 +325,6 @@ export default function PoolsPage() {
                 Add Liquidity
               </h2>
               
-              {/* Pool Selector */}
               <div className="mb-4">
                 <label className="block text-xs text-[#64748B] uppercase tracking-wider mb-2">
                   Select Pool
@@ -381,7 +380,7 @@ export default function PoolsPage() {
                   <label className="text-xs text-[#64748B] uppercase tracking-wider">
                     Token A
                   </label>
-                  {balanceA && tokenA && (
+                  {!!balanceA && !!tokenA && (
                     <button
                       onClick={() => setAmountA(formatUnits(balanceA, tokenA.decimals).slice(0, 8))}
                       className="text-xs text-indigo-400 hover:text-indigo-300"
@@ -419,7 +418,7 @@ export default function PoolsPage() {
                   <label className="text-xs text-[#64748B] uppercase tracking-wider">
                     Token B (NUSD)
                   </label>
-                  {balanceB && tokenB && (
+                  {!!balanceB && !!tokenB && (
                     <button
                       onClick={() => setAmountB(formatUnits(balanceB, tokenB.decimals).slice(0, 8))}
                       className="text-xs text-indigo-400 hover:text-indigo-300"
@@ -605,7 +604,7 @@ function PoolTopCard({ index, token0, token1 }: { index: number; token0: `0x${st
     token0 && token1 ? [token0, token1] : undefined
   );
   
-  const { data: poolData } = useDexRead("pools", pairId ? [pairId] : undefined);
+  const { data: poolData } = useDexRead<readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint]>("pools", pairId ? [pairId] : undefined);
   
   const token0Symbol = token0 === "0x0000000000000000000000000000000000000000" ? "zkLTC" : "TKN";
   const token1Symbol = "NUSD";
@@ -626,13 +625,13 @@ function PoolTopCard({ index, token0, token1 }: { index: number; token0: `0x${st
           <div>
             <div className="text-[#64748B]">Vol 24h</div>
             <div className="text-emerald-400 font-medium" style={{ fontFamily: "var(--font-departure)" }}>
-              {formatUSD(poolData[5])}
+              {formatUSD(poolData[5] as bigint)}
             </div>
           </div>
           <div>
             <div className="text-[#64748B]">Total Vol</div>
             <div className="text-white font-medium" style={{ fontFamily: "var(--font-departure)" }}>
-              {formatUSD(poolData[6])}
+              {formatUSD(poolData[6] as bigint)}
             </div>
           </div>
         </div>

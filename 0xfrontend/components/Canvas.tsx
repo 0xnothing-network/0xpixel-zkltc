@@ -4,7 +4,7 @@ import { useRef, useEffect, useState, useCallback } from "react";
 import { downloadAsPNG, downloadAsJSON, pixelDataToJSON } from "@/lib/gridParser";
 
 // Throttle utility for smooth performance
-function throttle<T extends (...args: unknown[]) => unknown>(
+function throttle<T extends (...args: never[]) => void>(
   fn: T,
   limit: number
 ): (...args: Parameters<T>) => void {
