@@ -184,7 +184,7 @@ export const DEX_ABI = [
   { stateMutability: "payable", type: "receive" },
 ] as const;
 
-export const DEX_ADDRESS = process.env.NEXT_PUBLIC_DEX_ADDRESS || "0xE042e43e3aBF44a17033B647F0c4559BD0185336";
+export const DEX_ADDRESS: `0x${string}` = (process.env.NEXT_PUBLIC_DEX_ADDRESS as `0x${string}`) || "0xE042e43e3aBF44a17033B647F0c4559BD0185336";
 export const NATIVE_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 export interface PoolInfo {

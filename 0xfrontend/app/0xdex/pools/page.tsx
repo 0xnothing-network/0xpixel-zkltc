@@ -157,7 +157,7 @@ export default function PoolsPage() {
       }
     ],
     functionName: "allowance",
-    args: tokenA?.address !== NATIVE_TOKEN.address && address ? [address as `0x${string}`, DEX_ADDRESS] : undefined,
+    args: tokenA?.address !== NATIVE_TOKEN.address && address ? [address, DEX_ADDRESS] : undefined,
     query: { enabled: !!address && !!tokenA && tokenA.address !== NATIVE_TOKEN.address }
   });
   
