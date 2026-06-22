@@ -59,7 +59,7 @@ export function useDexWrite() {
         abi: DEX_ABI,
         functionName: "addLiquidity",
         args: [tokenA, tokenB, amountA, amountB],
-        value: tokenA === NATIVE_ADDRESS || tokenB === NATIVE_ADDRESS ? amountA + amountB : undefined,
+        value: tokenA === NATIVE_ADDRESS ? amountA : tokenB === NATIVE_ADDRESS ? amountB : undefined,
       });
     },
     [writeContract]

@@ -194,10 +194,19 @@ export default function PoolsPage() {
     const amountAFormatted = parseUnits(amountA, tokenA.decimals);
     const amountBFormatted = parseUnits(amountB, tokenB.decimals);
     
+    console.log("Add LP Debug:", {
+      tokenA: tokenA.address,
+      tokenB: tokenB.address,
+      amountA: amountAFormatted.toString(),
+      amountB: amountBFormatted.toString(),
+      pairId: pairId,
+    });
+    
     try {
       addLiquidity(tokenA.address, tokenB.address, amountAFormatted, amountBFormatted);
       toast.info("Adding liquidity", "Please confirm the transaction...");
     } catch (err) {
+      console.error("Add liquidity error:", err);
       toast.error("Failed", "Could not add liquidity");
     }
   };
