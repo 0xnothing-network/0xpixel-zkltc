@@ -218,7 +218,7 @@ export default function PoolsPage() {
     }
   };
   
-  const isValidAdd = tokenA && tokenB && amountA && amountB && parseFloat(amountA) > 0 && parseFloat(amountB) > 0 && poolExists && hasAllowance;
+  const isValidAdd = tokenA && tokenB && amountA && amountB && parseFloat(amountA) > 0 && parseFloat(amountB) > 0 && poolExists !== false && hasAllowance;
 
   return (
     <div className="min-h-screen bg-[#0F0F23]">
@@ -474,7 +474,7 @@ export default function PoolsPage() {
               >
                 {!mounted || !isConnected 
                   ? "Connect Wallet"
-                  : !poolExists 
+                  : poolExists === false
                     ? "Pool Not Available"
                     : needsApproval && !hasAllowance
                       ? "Approve First"
