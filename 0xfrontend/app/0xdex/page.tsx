@@ -1280,20 +1280,20 @@ export default function DexAllInOne() {
             {/* Farm Panel */}
             <div className="bg-[#1A1A2E]/90 border border-amber-500/30 rounded-2xl p-5">
               <h2 className="text-lg font-bold text-amber-400 mb-1" style={{ fontFamily: "var(--font-departure)" }}>
-                Farm Reward
+                Liquidity Mining
               </h2>
               <p className="text-xs text-[#64748B] mb-4">Add liquidity to Base Pools (with NUSD) to earn rewards</p>
 
               {isSelectedBasePool && (
                 <div className="mb-4 p-3 bg-emerald-500/10 text-emerald-400 rounded-xl text-xs text-center" style={{ fontFamily: "var(--font-departure)" }}>
-                  This pool supports farming reward
+                  Supports Liquidity Mining rewards
                 </div>
               )}
 
               {/* Warnings */}
               {!isSelectedBasePool && (
                 <div className="mb-4 p-3 bg-blue-500/10 text-blue-400 rounded-xl text-xs" style={{ fontFamily: "var(--font-departure)" }}>
-                  This pool is not a Base Pool - Cannot farm rewards
+                  This pool is not a Base Pool - Cannot earn Liquidity Mining rewards
                 </div>
               )}
 

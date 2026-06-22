@@ -266,7 +266,7 @@ export default function PoolsPage() {
             >
               Liquidity Pools
             </h1>
-            <p className="text-[#64748B] text-sm">Farm rewards by providing liquidity</p>
+            <p className="text-[#64748B] text-sm">Earn Liquidity Mining rewards by providing liquidity</p>
           </div>
           <button
             onClick={() => setShowTopPools(!showTopPools)}
@@ -567,7 +567,7 @@ export default function PoolsPage() {
         {/* Info Card */}
         <div className="mt-6 p-4 rounded-xl bg-[#1A1A2E]/50 border border-[#2D2D44]">
           <h3 className="text-sm font-bold text-white mb-3" style={{ fontFamily: "var(--font-departure)" }}>
-            How Liquidity Farming Works
+            How Liquidity Mining Works
           </h3>
           <ul className="space-y-2 text-xs text-[#64748B]">
             <li className="flex items-start gap-2">
