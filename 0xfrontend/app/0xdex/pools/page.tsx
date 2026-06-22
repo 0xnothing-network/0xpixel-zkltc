@@ -600,8 +600,6 @@ function keccak256PairId(tokenA: `0x${string}`, tokenB: `0x${string}`): `0x${str
 }
 
 function PoolTopCard({ index, token0, token1 }: { index: number; token0: `0x${string}`; token1: `0x${string}` }) {
-  const { useDexRead } = require("@/lib/use0xDex");
-  
   const { data: pairId } = useDexRead<`0x${string}`>(
     "getPairId",
     token0 && token1 ? [token0, token1] : undefined

@@ -1,7 +1,7 @@
 "use client";
 
 import { useReadContract, useWriteContract } from "wagmi";
-import { parseUnits, MaxUint256, erc20Abi } from "viem";
+import { parseUnits, MaxUint256, erc20Abi, type WriteContractParameters } from "viem";
 import { useCallback } from "react";
 import { DEX_ADDRESS } from "./0xDexContract";
 
@@ -97,7 +97,7 @@ export function useTokenApproval(
 export async function approveTokenMax(
   tokenAddress: `0x${string}`,
   spenderAddress: `0x${string}`,
-  writeContractAsync: (params: any) => Promise<`0x${string}`>
+  writeContractAsync: (params: WriteContractParameters) => Promise<`0x${string}`>
 ): Promise<string | undefined> {
   try {
     const hash = await writeContractAsync({
