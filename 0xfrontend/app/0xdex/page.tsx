@@ -100,14 +100,12 @@ function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, 
   const reserveNUSD = isToken0NUSD ? reserve0 : (isToken1NUSD ? reserve1 : reserve0);
   const displaySymbol = tokenSymbol || (isOtherNative ? "zkLTC" : otherToken.slice(0, 8) + "...");
 
-  // Calculate price: show minimum value (cheaper side)
-  const pricePerNUSD = reserveOther > 0n && reserveNUSD > 0n
-    ? Number(formatUnits(reserveOther, tokenDecimals)) / Number(formatUnits(reserveNUSD, 18))
-    : 0;
+  // Calculate price: NUSD per Token (correct direction for "N/$NUSD" display)
+  // Since pool has equal value on both sides: reserveNUSD * price = reserveOther
+  // So: price (NUSD per Token) = reserveNUSD / reserveOther
   const pricePerToken = reserveNUSD > 0n && reserveOther > 0n
     ? Number(formatUnits(reserveNUSD, 18)) / Number(formatUnits(reserveOther, tokenDecimals))
     : 0;
-  const minPrice = Math.min(pricePerNUSD, pricePerToken);
 
   const handleClick = () => {
     if (!nusdAddr) return;
@@ -131,7 +129,7 @@ function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, 
             {displaySymbol}/$NUSD
           </span>
           <span className="text-xs text-emerald-400 font-medium" style={{ fontFamily: "var(--font-departure)" }}>
-            ${minPrice > 0 ? minPrice.toFixed(6) : "0"}
+            ${pricePerToken > 0 ? pricePerToken.toFixed(6) : "0"}
           </span>
         </div>
       </div>
@@ -254,8 +252,8 @@ export default function DexAllInOne() {
   // Data
   const stats = useDexStats();
   const { data: pendingReward } = useUserPendingReward();
-  const { data: allPools } = useAllPools();
-  const { data: nusdAddress } = useDexRead<`0x${string}`>("NUSD");
+  const { data: allPools, refetch: refetchAllPoolsData } = useAllPools();
+  const { data: nusdAddress, refetch: refetchNusd } = useDexRead<`0x${string}`>("NUSD");
 
   // Check allowance for create pool token
   const { data: createTokenAllowance, refetch: refetchAllowance } = useTokenAllowance(
@@ -285,6 +283,13 @@ export default function DexAllInOne() {
       };
     }).filter(Boolean) as { token: `0x${string}`; nusd: `0x${string}`; pairId: `0x${string}`; label: string }[];
   }, [allPools, nusdAddress]);
+
+  // Debug logging
+  useEffect(() => {
+    console.log("📊 Debug - allPools:", allPools);
+    console.log("📊 Debug - nusdAddress:", nusdAddress);
+    console.log("📊 Debug - poolOptions count:", poolOptions.length);
+  }, [allPools, nusdAddress, poolOptions.length]);
 
   // Get pool data for each option (max 8)
   const pool0PairId = poolOptions[0]?.pairId;
