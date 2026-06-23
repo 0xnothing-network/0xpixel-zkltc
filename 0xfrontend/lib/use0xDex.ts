@@ -27,7 +27,7 @@ export interface Token {
 export const KNOWN_TOKENS: Token[] = [
   NATIVE_TOKEN,
   {
-    address: "0xf29F6040919329e5273cFB370924069AF966C1d7",
+    address: "0xC1F96C07D3EAbd25b080522aE85DaaA978192EC0",
     symbol: "NUSD",
     decimals: 18,
     name: "NUSD Stablecoin",
@@ -244,19 +244,19 @@ export function useSwapQuote(
 
   return useMemo(() => {
     if (!poolData || amountInFormatted === 0n) return null;
-    
+
     const [token0, token1, reserve0, reserve1] = poolData as [string, string, bigint, bigint, bigint, bigint, bigint, bigint];
     const isReversed = tokenIn!.address !== token0;
-    
+
     const reserveIn = isReversed ? reserve1 : reserve0;
     const reserveOut = isReversed ? reserve0 : reserve1;
-    
+
     const fee = amountInFormatted * 100n / 10000n;
     const amountInAfterFee = amountInFormatted - fee;
     const amountOut = (amountInAfterFee * reserveOut) / (reserveIn + amountInAfterFee);
-    
+
     const amountOutFormatted = formatUnits(amountOut, tokenOut!.decimals);
-    
+
     return {
       amountOut,
       amountOutFormatted,
@@ -264,4 +264,16 @@ export function useSwapQuote(
       fee,
     };
   }, [poolData, amountInFormatted, tokenIn, tokenOut]);
+}
+
+// Auto-refresh hook for real-time data updates
+export function useDexAutoRefresh(enabled = true) {
+  const { data: blockNumber } = useReadContract({
+    address: DEX_ADDRESS,
+    abi: DEX_ABI,
+    functionName: "totalRewardPool", // any view function to track blocks
+    query: { enabled },
+  });
+
+  return { blockNumber, refetchKey: blockNumber };
 }

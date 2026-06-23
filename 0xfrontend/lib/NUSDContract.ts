@@ -217,4 +217,4 @@ export const NUSD_ABI = [
   },
 ] as const;
 
-export const NUSD_ADDRESS = "0xf29F6040919329e5273cFB370924069AF966C1d7" as const;
+export const NUSD_ADDRESS = "0xC1F96C07D3EAbd25b080522aE85DaaA978192EC0" as const;

@@ -19,7 +19,7 @@ const DEX_NAV = [
 const KNOWN_TOKENS: Token[] = [
   NATIVE_TOKEN,
   {
-    address: "0xf29F6040919329e5273cFB370924069AF966C1d7",
+    address: "0xC1F96C07D3EAbd25b080522aE85DaaA978192EC0",
     symbol: "NUSD",
     decimals: 18,
     name: "NUSD Stablecoin",

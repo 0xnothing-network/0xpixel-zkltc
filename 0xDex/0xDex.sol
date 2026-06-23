@@ -304,15 +304,6 @@ contract ZeroXDex {
         );
     }
 
-    function getPoolsVolume(address[] calldata tokens) external view returns (uint256[] memory volumes) {
-        volumes = new uint256[](tokens.length);
-        for (uint256 i = 0; i < tokens.length; i++) {
-            bytes32 pairId = keccak256(abi.encodePacked(NUSD, tokens[i]));
-            Pool storage pool = pools[pairId];
-            volumes[i] = pool.totalVolume;
-        }
-    }
-
     // ==================== INTERNAL ====================
 
     function _transferIn(address token, uint256 amount) internal {

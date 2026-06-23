@@ -5,7 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useAccount, useReadContract, useConnect, useDisconnect, useBlockNumber, useWriteContract, useSwitchChain } from "wagmi";
 import { erc20Abi, maxUint256 } from "viem";
-import { useDexStats, useUserPendingReward, useAllPools, useDexRead, useDexWrite, NATIVE_TOKEN, useTokenBalance, useTokenAllowance, useDexOwner, Token } from "@/lib/use0xDex";
+import { useDexStats, useUserPendingReward, useAllPools, useDexRead, useDexWrite, NATIVE_TOKEN, useTokenBalance, useTokenAllowance, useDexOwner, Token, useDexAutoRefresh } from "@/lib/use0xDex";
 import { useTokenApproval } from "@/lib/useTokenApproval";
 import { DEX_ADDRESS, NATIVE_ADDRESS } from "@/lib/0xDexContract";
 import { NUSD_ADDRESS, NUSD_ABI } from "@/lib/NUSDContract";
@@ -88,7 +88,7 @@ function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, 
   tokenSymbol?: string;
   tokenDecimals?: number;
 }) {
-  const NUSD_ADDRESS = "0xf29F6040919329e5273cFB370924069AF966C1d7";
+  const NUSD_ADDRESS = "0xC1F96C07D3EAbd25b080522aE85DaaA978192EC0";
   const NATIVE = "0x0000000000000000000000000000000000000000";
   const isToken0NUSD = token0.toLowerCase() === NUSD_ADDRESS.toLowerCase();
   const isToken1NUSD = token1.toLowerCase() === NUSD_ADDRESS.toLowerCase();
@@ -180,7 +180,6 @@ export default function DexAllInOne() {
   // State
   const [mounted, setMounted] = useState(false);
   const [activeTab, setActiveTab] = useState<"swap" | "pools" | "addpool">("swap");
-  const [totalVolume, setTotalVolume] = useState(0n);
 
   // Farm state - Add Liquidity = Farm (no separate stake needed)
   const [selectedFarmPool, setSelectedFarmPool] = useState(0);
@@ -297,14 +296,21 @@ export default function DexAllInOne() {
   const pool6PairId = poolOptions[6]?.pairId;
   const pool7PairId = poolOptions[7]?.pairId;
 
-  const { data: pool0Data } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool0PairId ? [pool0PairId] : undefined);
-  const { data: pool1Data } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool1PairId ? [pool1PairId] : undefined);
-  const { data: pool2Data } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool2PairId ? [pool2PairId] : undefined);
-  const { data: pool3Data } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool3PairId ? [pool3PairId] : undefined);
-  const { data: pool4Data } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool4PairId ? [pool4PairId] : undefined);
-  const { data: pool5Data } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool5PairId ? [pool5PairId] : undefined);
-  const { data: pool6Data } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool6PairId ? [pool6PairId] : undefined);
-  const { data: pool7Data } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool7PairId ? [pool7PairId] : undefined);
+  const { data: pool0Data, refetch: refetchPool0 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool0PairId ? [pool0PairId] : undefined);
+  const { data: pool1Data, refetch: refetchPool1 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool1PairId ? [pool1PairId] : undefined);
+  const { data: pool2Data, refetch: refetchPool2 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool2PairId ? [pool2PairId] : undefined);
+  const { data: pool3Data, refetch: refetchPool3 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool3PairId ? [pool3PairId] : undefined);
+  const { data: pool4Data, refetch: refetchPool4 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool4PairId ? [pool4PairId] : undefined);
+  const { data: pool5Data, refetch: refetchPool5 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool5PairId ? [pool5PairId] : undefined);
+  const { data: pool6Data, refetch: refetchPool6 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool6PairId ? [pool6PairId] : undefined);
+  const { data: pool7Data, refetch: refetchPool7 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool7PairId ? [pool7PairId] : undefined);
+  const { refetch: refetchAllPools } = useAllPools();
+
+  // Calculate total volume from all pools
+  const totalVolume = useMemo(() => {
+    const volumes = [pool0Data?.[6], pool1Data?.[6], pool2Data?.[6], pool3Data?.[6], pool4Data?.[6], pool5Data?.[6], pool6Data?.[6], pool7Data?.[6]];
+    return volumes.reduce((sum: bigint, v) => sum + (v ?? 0n), 0n);
+  }, [pool0Data, pool1Data, pool2Data, pool3Data, pool4Data, pool5Data, pool6Data, pool7Data]);
 
   // Fetch token symbols for each pool
   const { data: token0Symbol } = useReadContract({
@@ -452,6 +458,30 @@ export default function DexAllInOne() {
   const { data: blockNumber } = useBlockNumber({ watch: true });
   const { refetch: refetchPool } = useDexRead("pools", pairId ? [pairId] : undefined);
 
+  // Auto-refetch all data when block changes
+  useEffect(() => {
+    if (blockNumber) {
+      // Refetch all pool data
+      refetchPool?.();
+      refetchAllPools?.();
+      refetchFarmLP?.();
+      refetchPendingReward?.();
+      refetchAllowanceIn?.();
+      refetchAllowancePool?.();
+      refetchFarmAllowance?.();
+      refetchAllowance?.();
+      // Refetch individual pool data
+      refetchPool0?.();
+      refetchPool1?.();
+      refetchPool2?.();
+      refetchPool3?.();
+      refetchPool4?.();
+      refetchPool5?.();
+      refetchPool6?.();
+      refetchPool7?.();
+    }
+  }, [blockNumber]);
+
   // Allowances - use useReadContract directly for better reliability
   const { data: allowanceIn, refetch: refetchAllowanceIn, isError: allowanceInError } = useReadContract({
     address: swapTokenIn?.address !== NATIVE_ADDRESS ? swapTokenIn?.address : undefined,
@@ -496,8 +526,19 @@ export default function DexAllInOne() {
       refetchAllowanceIn?.();
       refetchAllowancePool?.();
       refetchPool?.();
+      refetchPool0?.();
+      refetchPool1?.();
+      refetchPool2?.();
+      refetchPool3?.();
+      refetchPool4?.();
+      refetchPool5?.();
+      refetchPool6?.();
+      refetchPool7?.();
+      refetchAllPools?.();
       refetchFarmLP?.();
       refetchPendingReward?.();
+      refetchFarmAllowance?.();
+      refetchAllowance?.();
     }
   }, [blockNumber]);
 
@@ -770,8 +811,19 @@ export default function DexAllInOne() {
     keccak256(encodePacked(["address", "address"], [token < nusd ? token : nusd, token < nusd ? nusd : token]));
 
   if (!mounted) return (
-    <div className="min-h-screen bg-[#0F0F23] flex items-center justify-center">
-      <div className="text-white">Loading...</div>
+    <div className="min-h-screen bg-[#0F0F23] flex flex-col items-center justify-center">
+      <div className="relative">
+        <div className="w-16 h-16 border-4 border-purple-500/30 border-t-purple-500 animate-spin rounded-full" />
+        <div className="absolute inset-0 w-16 h-16 border-4 border-indigo-500/20 border-t-indigo-500 animate-spin rounded-full" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }} />
+      </div>
+      <div className="mt-6 text-lg text-purple-400 animate-pulse" style={{ fontFamily: "var(--font-departure)" }}>
+        LOADING
+      </div>
+      <div className="flex gap-1 mt-2">
+        <span className="w-2 h-2 bg-purple-500 animate-bounce" style={{ animationDelay: '0ms' }} />
+        <span className="w-2 h-2 bg-indigo-500 animate-bounce" style={{ animationDelay: '150ms' }} />
+        <span className="w-2 h-2 bg-purple-500 animate-bounce" style={{ animationDelay: '300ms' }} />
+      </div>
     </div>
   );
 
@@ -811,7 +863,7 @@ export default function DexAllInOne() {
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
           <StatCard label="TVL" value={formatUSD(stats.totalNUSDLocked)} icon="◫" />
-          <StatCard label="Rewards" value={formatUSD(stats.totalRewardPool)} icon="◈" />
+          <StatCard label="Total Volume" value={formatUSD(totalVolume)} icon="◈" />
           <StatCard label="Pools" value={String(allPools?.length || 0)} icon="◫" />
           <StatCard label="Your Rewards" value={pendingReward ? formatUSD(pendingReward) : "$0.00"} icon="★" color="emerald" />
         </div>

@@ -25,21 +25,6 @@ export default function DocsPage() {
               0xNothing
             </span>
           </Link>
-
-          <div className="flex items-center gap-4">
-            <Link
-              href="/0xpixel"
-              className="text-white/40 hover:text-white/80 text-xs tracking-widest uppercase transition-colors"
-            >
-              0xPixel
-            </Link>
-            <Link
-              href="/0xdex"
-              className="text-white/40 hover:text-white/80 text-xs tracking-widest uppercase transition-colors"
-            >
-              0xDex
-            </Link>
-          </div>
         </div>
       </header>
 
@@ -125,9 +110,6 @@ export default function DocsPage() {
             </div>
           </section>
 
-          {/* Divider */}
-          <div className="border-t border-white/[0.04] my-12" />
-
           {/* 0xDex Section */}
           <section className="mb-16">
             <div className="flex items-center gap-3 mb-6">
@@ -155,11 +137,11 @@ export default function DocsPage() {
               <div className="space-y-3">
                 <div className="flex items-center gap-3">
                   <span className="text-white/40 text-xs w-12">DEX:</span>
-                  <code className="text-indigo-400 text-xs font-mono">0xE042e43e3aBF44a17033B647F0c4559BD0185336</code>
+                  <code className="text-indigo-400 text-xs font-mono">0xeFbC4aa3cB41476f986F047Da74f59DFaCBd7257</code>
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-white/40 text-xs w-12">NUSD:</span>
-                  <code className="text-indigo-400 text-xs font-mono">0xf29F6040919329e5273cFB370924069AF966C1d7</code>
+                  <code className="text-indigo-400 text-xs font-mono">0xC1F96C07D3EAbd25b080522aE85DaaA978192EC0</code>
                 </div>
               </div>
             </div>
@@ -219,8 +201,79 @@ export default function DocsPage() {
               </p>
               <div className="flex items-center gap-2">
                 <span className="text-white/40 text-xs">CA:</span>
-                <code className="text-indigo-400 text-xs font-mono">0xf29F6040919329e5273cFB370924069AF966C1d7</code>
+                <code className="text-indigo-400 text-xs font-mono">0xC1F96C07D3EAbd25b080522aE85DaaA978192EC0</code>
               </div>
+            </div>
+          </section>
+
+          {/* Divider */}
+          <div className="border-t border-white/[0.04] my-12" />
+
+          {/* 0xFactory Section */}
+          <section className="mb-16">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-10 h-10 bg-amber-500 text-black flex items-center justify-center" style={{ fontFamily: "var(--font-departure), monospace" }}>
+                F
+              </div>
+              <h2
+                className="text-white"
+                style={{
+                  fontFamily: "var(--font-departure), monospace",
+                  fontSize: "1.5rem",
+                  fontWeight: 700,
+                }}
+              >
+                0xFactory
+              </h2>
+            </div>
+
+            <p className="text-white/60 mb-8 leading-relaxed">
+              ERC-20 token factory on LitVM LiteForge. Deploy custom ERC-20 tokens with Clone pattern for gas efficiency.
+            </p>
+
+            <div className="bg-white/[0.03] border border-white/[0.08] rounded-none p-6 mb-6">
+              <h3 className="text-white/80 text-xs tracking-widest uppercase mb-4">Contract Address</h3>
+              <div className="flex items-center gap-3">
+                <span className="text-white/40 text-xs">Factory:</span>
+                <code className="text-indigo-400 text-xs font-mono">0xace39F54fF39A9f31125E09F85008183EECD98B8</code>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <h3 className="text-white/80 text-xs tracking-widest uppercase">Key Functions</h3>
+
+              {[
+                {
+                  name: "createToken",
+                  desc: "Create a new ERC-20 token using Clone pattern. Total supply is automatically multiplied by 10^18 (decimals).",
+                  signature: "createToken(name, symbol, totalSupply, devWallet) → tokenAddress",
+                },
+                {
+                  name: "getAllTokens",
+                  desc: "Get all tokens created through this factory.",
+                  signature: "getAllTokens() → address[]",
+                },
+                {
+                  name: "getTokensByCreator",
+                  desc: "Get all tokens created by a specific creator address.",
+                  signature: "getTokensByCreator(creator) → address[]",
+                },
+                {
+                  name: "totalTokensCreated",
+                  desc: "Get the total number of tokens created.",
+                  signature: "totalTokensCreated() → uint256",
+                },
+              ].map((fn) => (
+                <div key={fn.name} className="bg-white/[0.03] border border-white/[0.08] p-5">
+                  <div className="flex items-start gap-4">
+                    <span className="text-indigo-400 text-xs font-mono mt-0.5 shrink-0">{fn.name}</span>
+                    <div>
+                      <p className="text-white/60 text-sm mb-2">{fn.desc}</p>
+                      <code className="text-white/40 text-xs font-mono block">{fn.signature}</code>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </section>
 
