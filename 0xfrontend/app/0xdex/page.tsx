@@ -8,9 +8,8 @@ import ChartWindow from "@/app/components/ChartWindow";
 
 import { useAccount, useReadContract, useConnect, useDisconnect, useBlockNumber, useWriteContract, useSwitchChain } from "wagmi";
 import { erc20Abi, maxUint256 } from "viem";
-import { useDexStats, useUserPendingReward, useAllPools, useDexRead, useDexWrite, NATIVE_TOKEN, useTokenBalance, useTokenAllowance, useDexOwner, Token, useDexAutoRefresh } from "@/lib/use0xDex";
-import { useTokenApproval } from "@/lib/useTokenApproval";
-import { DEX_ADDRESS, NATIVE_ADDRESS } from "@/lib/0xDexContract";
+import { useDexStats, useAllPools, useDexRead, useDexWrite, NATIVE_TOKEN, useTokenBalance, useTokenAllowance, useDexOwner, Token } from "@/lib/use0xDex";
+import { DEX_ADDRESS, NATIVE_ADDRESS } from "@/lib/0xDexAbi";
 import { NUSD_ADDRESS, NUSD_ABI } from "@/lib/NUSDContract";
 import { formatUnits, parseUnits, keccak256, encodePacked } from "viem";
 import { useToast } from "@/components/Toast";
@@ -38,6 +37,74 @@ function castPoolData(data: unknown): PoolData | null {
     volume24h: data[5] as bigint,
     totalVolume: data[6] as bigint,
   };
+}
+
+// ============================================================
+// AMM helpers — must mirror ZeroDex.sol exactly so Swap UI
+// estimate and on-chain execution agree to the wei.
+// ============================================================
+
+const BPS_DENOM = 10000n; // matches `swapFee / 10000` in 0xDex.sol
+
+/**
+ * Estimate output of a constant-product swap with the same fee math as the contract.
+ *   fee = amountIn * swapFeeBps / 10000
+ *   amountInAfterFee = amountIn - fee
+ *   amountOut = amountInAfterFee * reserveOut / (reserveIn + amountInAfterFee)
+ *
+ * Pass `swapFeeBps` directly from contract `swapFee()` (default 10 = 0.1%).
+ */
+function estimateAmountOut(
+  amountIn: bigint,
+  reserveIn: bigint,
+  reserveOut: bigint,
+  swapFeeBps: bigint
+): bigint {
+  if (amountIn <= 0n || reserveIn <= 0n || reserveOut <= 0n) return 0n;
+  const fee = (amountIn * swapFeeBps) / BPS_DENOM;
+  const amountInAfterFee = amountIn - fee;
+  if (amountInAfterFee <= 0n) return 0n;
+  return (amountInAfterFee * reserveOut) / (reserveIn + amountInAfterFee);
+}
+
+/**
+ * Spot price consistent with `getPrice(tokenIn, tokenOut)` on-chain,
+ * scaled by 1e18 (matching contract return value).
+ * price = (reserve of tokenIn side) / (reserve of tokenOut side), scaled by 1e18.
+ */
+function spotPriceScaled(
+  tokenIn: `0x${string}`,
+  pool: PoolData,
+  tokenInDecimals: number,
+  tokenOutDecimals: number
+): number {
+  const reserveIn =
+    tokenIn.toLowerCase() === pool.token0.toLowerCase() ? pool.reserve0 : pool.reserve1;
+  const reserveOut =
+    tokenIn.toLowerCase() === pool.token0.toLowerCase() ? pool.reserve1 : pool.reserve0;
+  if (reserveIn === 0n || reserveOut === 0n) return 0;
+  // Scale: reserveIn / reserveOut * (10^tokenOutDecimals / 10^tokenInDecimals)
+  const scale = 10 ** (tokenOutDecimals - tokenInDecimals);
+  return (Number(reserveIn) / Number(reserveOut)) * scale;
+}
+
+/**
+ * Display helper: "1 TokenIn = X TokenOut" with proper decimal scaling.
+ * Uses human-readable numbers (NOT 1e18) so it's the same number you'd see on the chart.
+ */
+function humanRate(
+  tokenIn: `0x${string}`,
+  pool: PoolData,
+  tokenInDecimals: number,
+  tokenOutDecimals: number
+): number {
+  if (pool.reserve0 === 0n || pool.reserve1 === 0n) return 0;
+  const reserveIn =
+    tokenIn.toLowerCase() === pool.token0.toLowerCase() ? pool.reserve0 : pool.reserve1;
+  const reserveOut =
+    tokenIn.toLowerCase() === pool.token0.toLowerCase() ? pool.reserve1 : pool.reserve0;
+  const adj = 10 ** (tokenOutDecimals - tokenInDecimals);
+  return (Number(reserveIn) / Number(reserveOut)) * adj;
 }
 
 const KNOWN_TOKENS: Token[] = [
@@ -73,7 +140,11 @@ function formatNum(value: bigint, decimals = 18) {
 }
 
 function StatCard({ label, value, icon, color = "indigo" }: { label: string; value: string; icon: string; color?: string }) {
-  const gradient = color === "emerald" ? "from-emerald-500/10 to-teal-500/10" : "from-indigo-500/10 to-purple-500/10";
+  const gradient = color === "emerald"
+    ? "from-emerald-500/10 to-teal-500/10"
+    : color === "amber"
+    ? "from-amber-500/10 to-orange-500/10"
+    : "from-indigo-500/10 to-purple-500/10";
   return (
     <div className="relative overflow-hidden rounded-lg bg-gradient-to-br from-[#1A1A2E] to-[#13131F] border border-[#2D2D44] p-4">
       <div className={`absolute top-0 right-0 w-16 h-16 bg-gradient-to-br ${gradient} rounded-bl-full`} />
@@ -84,7 +155,7 @@ function StatCard({ label, value, icon, color = "indigo" }: { label: string; val
             {label}
           </span>
         </div>
-        <div className="text-2xl xl:text-3xl font-bold text-white truncate" style={{ fontFamily: "var(--font-departure)" }}>
+        <div className="text-lg md:text-xl xl:text-2xl font-bold text-white whitespace-nowrap" style={{ fontFamily: "var(--font-departure)" }}>
           {value}
         </div>
       </div>
@@ -99,10 +170,10 @@ function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, 
   tokenSymbol?: string;
   tokenDecimals?: number;
 }) {
-  const NUSD_ADDRESS = "0xC1F96C07D3EAbd25b080522aE85DaaA978192EC0";
+  const NUSD_ADDRESS_LOCAL = "0x6ffB02fa705A0DB3c8EbB31A63EdFE62c103363D";
   const NATIVE = "0x0000000000000000000000000000000000000000";
-  const isToken0NUSD = token0.toLowerCase() === NUSD_ADDRESS.toLowerCase();
-  const isToken1NUSD = token1.toLowerCase() === NUSD_ADDRESS.toLowerCase();
+  const isToken0NUSD = token0.toLowerCase() === NUSD_ADDRESS_LOCAL.toLowerCase();
+  const isToken1NUSD = token1.toLowerCase() === NUSD_ADDRESS_LOCAL.toLowerCase();
   const isToken0Native = token0.toLowerCase() === NATIVE.toLowerCase();
   const otherToken = isToken0NUSD ? token1 : (isToken1NUSD ? token0 : token0);
   const nusdAddr = isToken0NUSD ? token0 : (isToken1NUSD ? token1 : null);
@@ -114,8 +185,10 @@ function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, 
   // Calculate price: NUSD per Token (correct direction for "N/$NUSD" display)
   // Since pool has equal value on both sides: reserveNUSD * price = reserveOther
   // So: price (NUSD per Token) = reserveNUSD / reserveOther
+  // +0.1% markup matches the chart's standard price (consistent with CandleChart.tsx)
+  const PRICE_MARKUP = 1.001;
   const pricePerToken = reserveNUSD > 0n && reserveOther > 0n
-    ? Number(formatUnits(reserveNUSD, 18)) / Number(formatUnits(reserveOther, tokenDecimals))
+    ? (Number(formatUnits(reserveNUSD, 18)) / Number(formatUnits(reserveOther, tokenDecimals))) * PRICE_MARKUP
     : 0;
 
   const handleClick = () => {
@@ -191,12 +264,12 @@ export default function DexAllInOne() {
   const { switchChain } = useSwitchChain();
   const { writeContract } = useWriteContract();
   const toast = useToast();
-  const { addLiquidity, removeLiquidity, swap, claimReward, createPool } = useDexWrite();
+  const { addLiquidity, removeLiquidity, swap, claimReward } = useDexWrite();
   const LITVM_CHAIN_ID = 4441;
 
   // State
   const [mounted, setMounted] = useState(false);
-  const [activeTab, setActiveTab] = useState<"swap" | "pools" | "addpool">("swap");
+  const [activeTab, setActiveTab] = useState<"swap" | "pools" | "create">("swap");
 
   // Farm state - Add Liquidity = Farm (no separate stake needed)
   const [selectedFarmPool, setSelectedFarmPool] = useState(0);
@@ -274,9 +347,9 @@ export default function DexAllInOne() {
 
   // Data
   const stats = useDexStats();
-  const { data: pendingReward } = useUserPendingReward();
   const { data: allPools, refetch: refetchAllPoolsData } = useAllPools();
   const { data: nusdAddress, refetch: refetchNusd } = useDexRead<`0x${string}`>("NUSD");
+  const { data: totalRewardPool } = useDexRead<bigint>("totalRewardPool");
 
   // Check allowance for create pool token
   const { data: createTokenAllowance, refetch: refetchAllowance } = useTokenAllowance(
@@ -290,29 +363,22 @@ export default function DexAllInOne() {
   const poolOptions = useMemo(() => {
     if (!allPools || !nusdAddress) return [];
     const seen = new Set<string>();
-    return allPools.map((token) => {
-      const nusd = nusdAddress;
-      const pairId = keccak256(encodePacked(["address", "address"], 
-        [token < nusd ? token : nusd, token < nusd ? nusd : token]
-      ));
-      // Skip duplicates
-      if (seen.has(pairId)) return null;
-      seen.add(pairId);
-      return {
-        token,
-        nusd,
-        pairId,
-        label: `${token === NATIVE_ADDRESS ? "zkLTC" : token.slice(0, 8) + "..."}/NUSD`,
-      };
-    }).filter(Boolean) as { token: `0x${string}`; nusd: `0x${string}`; pairId: `0x${string}`; label: string }[];
+    return allPools
+      .map(({ pairId, token0, token1 }) => {
+        const token = token0 === nusdAddress ? token1 : token0;
+        const nusd = nusdAddress;
+        // Skip duplicates
+        if (seen.has(pairId)) return null;
+        seen.add(pairId);
+        return {
+          token,
+          nusd,
+          pairId,
+          label: `${token === NATIVE_ADDRESS ? "zkLTC" : token.slice(0, 8) + "..."}/NUSD`,
+        };
+      })
+      .filter(Boolean) as { token: `0x${string}`; nusd: `0x${string}`; pairId: `0x${string}`; label: string }[];
   }, [allPools, nusdAddress]);
-
-  // Debug logging
-  useEffect(() => {
-    console.log("📊 Debug - allPools:", allPools);
-    console.log("📊 Debug - nusdAddress:", nusdAddress);
-    console.log("📊 Debug - poolOptions count:", poolOptions.length);
-  }, [allPools, nusdAddress, poolOptions.length]);
 
   // Get pool data for each option (max 8)
   const pool0PairId = poolOptions[0]?.pairId;
@@ -324,14 +390,14 @@ export default function DexAllInOne() {
   const pool6PairId = poolOptions[6]?.pairId;
   const pool7PairId = poolOptions[7]?.pairId;
 
-  const { data: pool0Data, refetch: refetchPool0 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool0PairId ? [pool0PairId] : undefined);
-  const { data: pool1Data, refetch: refetchPool1 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool1PairId ? [pool1PairId] : undefined);
-  const { data: pool2Data, refetch: refetchPool2 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool2PairId ? [pool2PairId] : undefined);
-  const { data: pool3Data, refetch: refetchPool3 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool3PairId ? [pool3PairId] : undefined);
-  const { data: pool4Data, refetch: refetchPool4 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool4PairId ? [pool4PairId] : undefined);
-  const { data: pool5Data, refetch: refetchPool5 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool5PairId ? [pool5PairId] : undefined);
-  const { data: pool6Data, refetch: refetchPool6 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool6PairId ? [pool6PairId] : undefined);
-  const { data: pool7Data, refetch: refetchPool7 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint] >("pools", pool7PairId ? [pool7PairId] : undefined);
+  const { data: pool0Data, refetch: refetchPool0 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint] >("pools", pool0PairId ? [pool0PairId] : undefined);
+  const { data: pool1Data, refetch: refetchPool1 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint] >("pools", pool1PairId ? [pool1PairId] : undefined);
+  const { data: pool2Data, refetch: refetchPool2 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint] >("pools", pool2PairId ? [pool2PairId] : undefined);
+  const { data: pool3Data, refetch: refetchPool3 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint] >("pools", pool3PairId ? [pool3PairId] : undefined);
+  const { data: pool4Data, refetch: refetchPool4 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint] >("pools", pool4PairId ? [pool4PairId] : undefined);
+  const { data: pool5Data, refetch: refetchPool5 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint] >("pools", pool5PairId ? [pool5PairId] : undefined);
+  const { data: pool6Data, refetch: refetchPool6 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint] >("pools", pool6PairId ? [pool6PairId] : undefined);
+  const { data: pool7Data, refetch: refetchPool7 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint] >("pools", pool7PairId ? [pool7PairId] : undefined);
   const { refetch: refetchAllPools } = useAllPools();
 
   // Calculate total volume from all pools
@@ -393,7 +459,7 @@ export default function DexAllInOne() {
   const tokenSymbols = [token0Symbol, token1Symbol, token2Symbol, token3Symbol, token4Symbol, token5Symbol, token6Symbol, token7Symbol];
 
   // Collect all pool data
-  type PoolDataTuple = readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint];
+  type PoolDataTuple = readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint];
   const allPoolData = useMemo<PoolDataTuple[]>(() => {
     return [pool0Data, pool1Data, pool2Data, pool3Data, pool4Data, pool5Data, pool6Data, pool7Data].filter(Boolean) as PoolDataTuple[];
   }, [pool0Data, pool1Data, pool2Data, pool3Data, pool4Data, pool5Data, pool6Data, pool7Data]);
@@ -530,6 +596,9 @@ export default function DexAllInOne() {
     },
   });
 
+  // Live swap fee from contract — defaults to 10 (0.1%) until first read returns.
+  const { data: swapFeeBps } = useDexRead<bigint>("swapFee");
+
   // Calculate swap output
   useEffect(() => {
     if (!poolData || !swapAmountIn || parseFloat(swapAmountIn) === 0) {
@@ -544,9 +613,16 @@ export default function DexAllInOne() {
     const isReversed = swapTokenIn.address !== t0;
     const reserveIn = isReversed ? r1 : r0;
     const reserveOut = isReversed ? r0 : r1;
-    const amountOut = amountIn * reserveOut / (reserveIn + amountIn);
+    // Mirror ZeroDex.sol exactly: fee then constant-product.
+    // Contract fee math: fee = amountIn * swapFee / 10000, then (amountIn-fee)*reserveOut/(reserveIn+amountIn-fee)
+    const feeBps = swapFeeBps ?? 10n;
+    const fee = (amountIn * feeBps) / BPS_DENOM;
+    const amountInAfterFee = amountIn - fee;
+    const amountOut = amountInAfterFee <= 0n
+      ? 0n
+      : (amountInAfterFee * reserveOut) / (reserveIn + amountInAfterFee);
     setSwapAmountOut(Number(formatUnits(amountOut, swapTokenOut?.decimals || 18)).toFixed(6));
-  }, [swapAmountIn, poolData, swapTokenIn, swapTokenOut]);
+  }, [swapAmountIn, poolData, swapTokenIn, swapTokenOut, swapFeeBps]);
 
   // Auto-refetch when new block arrives
   useEffect(() => {
@@ -661,21 +737,39 @@ export default function DexAllInOne() {
     });
   };
 
-  // Custom swap calculation
+  // Custom swap calculation — mirrors ZeroDex.sol constant-product + fee math.
+  // Uses the same helper as the main swap so the displayed estimate and the
+  // chart-derived "executed price" stay consistent.
+  const { data: customPairId } = useDexRead<`0x${string}`>(
+    "getPairId",
+    customTokenAddress && /^0x[a-fA-F0-9]{40}$/.test(customTokenAddress) && nusdAddress
+      ? [customTokenAddress as `0x${string}`, nusdAddress as `0x${string}`]
+      : undefined
+  );
+  const { data: customPoolData } = useDexRead("pools", customPairId ? [customPairId] : undefined);
+
   useEffect(() => {
-    if (!customTokenAddress || !customAmountIn || parseFloat(customAmountIn) === 0) {
+    if (!customTokenAddress || !customAmountIn || parseFloat(customAmountIn) === 0 || !customPoolData) {
       setCustomAmountOut("");
       return;
     }
     const tokenIn = customDirection === "token_to_nusd" ? customTokenAddress : nusdAddress!;
     const tokenOut = customDirection === "token_to_nusd" ? nusdAddress! : customTokenAddress;
-    // Use same calculation logic as main swap
+    const pd = customPoolData as PoolDataTuple;
+    const t0 = pd[0];
+    const r0 = pd[2];
+    const r1 = pd[3];
+    const reserveIn = tokenIn.toLowerCase() === t0.toLowerCase() ? r0 : r1;
+    const reserveOut = tokenIn.toLowerCase() === t0.toLowerCase() ? r1 : r0;
     const amountIn = parseUnits(customAmountIn, 18);
-    const pairId = keccak256(encodePacked(["address", "address"], [tokenIn < tokenOut ? tokenIn as `0x${string}` : tokenOut as `0x${string}`, tokenIn < tokenOut ? tokenOut as `0x${string}` : tokenIn as `0x${string}`]));
-    // For now estimate with 1% fee formula
-    const estimatedOut = amountIn * 99n / 100n;
-    setCustomAmountOut(Number(formatUnits(estimatedOut, 18)).toFixed(6));
-  }, [customAmountIn, customDirection, customTokenAddress, nusdAddress]);
+    const feeBps = swapFeeBps ?? 10n;
+    const fee = (amountIn * feeBps) / BPS_DENOM;
+    const amountInAfterFee = amountIn - fee;
+    const amountOut = amountInAfterFee <= 0n
+      ? 0n
+      : (amountInAfterFee * reserveOut) / (reserveIn + amountInAfterFee);
+    setCustomAmountOut(Number(formatUnits(amountOut, 18)).toFixed(6));
+  }, [customAmountIn, customDirection, customTokenAddress, customPoolData, nusdAddress, swapFeeBps]);
 
   const handleAddLiquidity = () => {
     if (!isConnected || !ensureCorrectChain()) return;
@@ -736,8 +830,22 @@ export default function DexAllInOne() {
 
   const handleFarmRemove = () => {
     if (!isConnected || !ensureCorrectChain()) return;
-    if (!farmLpAmount || !farmPairId) return;
-    const amount = parseUnits(farmLpAmount, 18);
+    if (!farmLpAmount || !farmPairId || !farmUserLP) return;
+    let amount: bigint;
+    try {
+      amount = parseUnits(farmLpAmount, 18);
+    } catch {
+      toast.error("Invalid amount", "Enter a valid LP amount");
+      return;
+    }
+    if (amount <= 0n) {
+      toast.error("Invalid amount", "LP amount must be greater than 0");
+      return;
+    }
+    if (amount > farmUserLP) {
+      toast.error("Insufficient LP", `You only have ${formatNum(farmUserLP)} LP`);
+      return;
+    }
     removeLiquidity(farmPairId, amount);
     toast.info("Removing Liquidity", "Please confirm transaction...");
   };
@@ -887,31 +995,37 @@ export default function DexAllInOne() {
 
       <main className="w-full mx-auto px-4 sm:px-6 xl:px-8 py-6 max-w-[100rem]">
         {/* Stats */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 2xl:grid-cols-4 gap-3 md:gap-4 mb-4 md:mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-2 2xl:grid-cols-4 gap-3 md:gap-4 mb-4 md:mb-6">
           <StatCard label="TVL" value={formatUSD(stats.totalNUSDLocked)} icon="◫" />
           <StatCard label="Total Volume" value={formatUSD(totalVolume)} icon="◈" />
           <StatCard label="Pools" value={String(allPools?.length || 0)} icon="◫" />
-          <StatCard label="Your Rewards" value={pendingReward ? formatUSD(pendingReward) : "$0.00"} icon="★" color="emerald" />
+          <StatCard label="Total Reward Pool" value={totalRewardPool ? formatUSD(totalRewardPool) : "$0.00"} icon="✦" color="amber" />
         </div>
 
         {/* Tabs */}
-        <div className="grid grid-cols-2 gap-2 mb-4 md:mb-6">
-          {[
-            { id: "swap", label: "SWAP", colorClass: "pixel-btn-soft-indigo" },
-            { id: "addpool", label: "ADD POOL", colorClass: "pixel-btn-soft-rose" },
-          ].map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as typeof activeTab)}
-              className={`py-2 sm:py-3 font-bold text-xs sm:text-sm transition-all pixel-btn-soft ${
-                activeTab === tab.id
-                  ? tab.colorClass
-                  : "pixel-btn-soft-secondary"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+        <div className="grid grid-cols-3 gap-2 mb-4 md:mb-6">
+          <button
+            onClick={() => setActiveTab("swap")}
+            className={`py-2 sm:py-3 font-bold text-xs sm:text-sm transition-all pixel-btn-soft ${
+              activeTab === "swap" ? "pixel-btn-soft-indigo" : "pixel-btn-soft-secondary"
+            }`}
+          >
+            SWAP
+          </button>
+          <button
+            onClick={() => setActiveTab("create")}
+            className={`py-2 sm:py-3 font-bold text-xs sm:text-sm transition-all pixel-btn-soft ${
+              activeTab === "create" ? "pixel-btn-soft-rose" : "pixel-btn-soft-secondary"
+            }`}
+          >
+            CREATE POOL
+          </button>
+          <Link
+            href="/0xfactory"
+            className="py-2 sm:py-3 font-bold text-xs sm:text-sm transition-all pixel-btn-soft pixel-btn-soft-secondary text-center"
+          >
+            CREATE TOKEN
+          </Link>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
@@ -1030,6 +1144,25 @@ export default function DexAllInOne() {
                       <span className="text-indigo-400 font-bold">{swapTokenIn.symbol} → {swapTokenOut.symbol}</span>
                     </div>
                     <div className="flex justify-between">
+                      <span className="text-[#64748B]">Rate</span>
+                      {(() => {
+                        const pd = poolData as PoolDataTuple;
+                        const pool = castPoolData(pd);
+                        if (!pool) return <span className="text-white">-</span>;
+                        const rate = humanRate(
+                          swapTokenIn.address,
+                          pool,
+                          swapTokenIn.decimals,
+                          swapTokenOut.decimals
+                        );
+                        return (
+                          <span className="text-white">
+                            1 {swapTokenIn.symbol} ≈ {rate.toFixed(6)} {swapTokenOut.symbol}
+                          </span>
+                        );
+                      })()}
+                    </div>
+                    <div className="flex justify-between">
                       <span className="text-[#64748B]">Price Impact</span>
                       {(() => {
                         const amountInWei = parseUnits(swapAmountIn || "0", swapTokenIn.decimals);
@@ -1052,7 +1185,9 @@ export default function DexAllInOne() {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-[#64748B]">Fee</span>
-                      <span className="text-white">1%</span>
+                      <span className="text-white">
+                        {swapFeeBps !== undefined ? `${Number(swapFeeBps) / 100}%` : "0.1%"}
+                      </span>
                     </div>
                   </div>
                 )}
@@ -1164,7 +1299,7 @@ export default function DexAllInOne() {
               </>
             )}
 
-            {activeTab === "addpool" && (
+            {activeTab === "create" && (
               <>
                 <h2 className="text-lg font-bold text-white mb-2" style={{ fontFamily: "var(--font-departure)" }}>Create New Pool</h2>
                 
@@ -1551,7 +1686,7 @@ export default function DexAllInOne() {
                 disabled={!farmPending || farmPending === 0n}
                 className="w-full py-3 pixel-btn-soft pixel-btn-soft-amber"
               >
-                CLAIM ({farmPending ? formatUSD(farmPending) : "$0"})
+                CLAIM REWARD
               </button>
             </div>
           </div>

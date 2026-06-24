@@ -137,11 +137,11 @@ export default function DocsPage() {
               <div className="space-y-3">
                 <div className="flex items-center gap-3">
                   <span className="text-white/40 text-xs w-12">DEX:</span>
-                  <code className="text-indigo-400 text-xs font-mono">0xeFbC4aa3cB41476f986F047Da74f59DFaCBd7257</code>
+                  <code className="text-indigo-400 text-xs font-mono">0xd808DBF8b8d1Cd9ea9C5449336C764cCbC67D4B7</code>
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-white/40 text-xs w-12">NUSD:</span>
-                  <code className="text-indigo-400 text-xs font-mono">0xC1F96C07D3EAbd25b080522aE85DaaA978192EC0</code>
+                  <code className="text-indigo-400 text-xs font-mono">0x6ffB02fa705A0DB3c8EbB31A63EdFE62c103363D</code>
                 </div>
               </div>
             </div>
@@ -201,7 +201,7 @@ export default function DocsPage() {
               </p>
               <div className="flex items-center gap-2">
                 <span className="text-white/40 text-xs">CA:</span>
-                <code className="text-indigo-400 text-xs font-mono">0xC1F96C07D3EAbd25b080522aE85DaaA978192EC0</code>
+                <code className="text-indigo-400 text-xs font-mono">0x6ffB02fa705A0DB3c8EbB31A63EdFE62c103363D</code>
               </div>
             </div>
           </section>
@@ -235,7 +235,7 @@ export default function DocsPage() {
               <h3 className="text-white/80 text-xs tracking-widest uppercase mb-4">Contract Address</h3>
               <div className="flex items-center gap-3">
                 <span className="text-white/40 text-xs">Factory:</span>
-                <code className="text-indigo-400 text-xs font-mono">0xace39F54fF39A9f31125E09F85008183EECD98B8</code>
+                <code className="text-indigo-400 text-xs font-mono">0x0704A6F0ddE78Dd3879f8Cc2ed1d47713f3291b8</code>
               </div>
             </div>
 

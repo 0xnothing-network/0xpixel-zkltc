@@ -59,7 +59,7 @@ interface CandleChartProps {
   initialTimeframe?: number;
   height?: number;
   enableRealtime?: boolean;
-  invertPrice?: boolean; // true = show NUSD/Token instead of Token/NUSD
+  invertPrice?: boolean; // false = price already quoted as NUSD per Token (default), true = invert to Token per NUSD
 }
 
 export default function CandleChart({
@@ -68,7 +68,7 @@ export default function CandleChart({
   token1,
   height = 440,
   initialTimeframe = 5,
-  invertPrice = true,
+  invertPrice = false,
 }: CandleChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -79,6 +79,11 @@ export default function CandleChart({
     TF.find(t => t.value === initialTimeframe)?.value ?? 5
   );
   const didInitialFit = useRef(false);
+
+  // Reset fit flag whenever pair changes so the new chart auto-fits cleanly
+  useEffect(() => {
+    didInitialFit.current = false;
+  }, [pairId]);
 
   const { candles = [], rawSwaps = [], isLoading, isError, error } = useCandleData({
     pairId,
@@ -140,8 +145,9 @@ export default function CandleChart({
         timeVisible: true,
         secondsVisible: false,
       },
-      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
-      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+      // Interactions start DISABLED — enabled once the first swap arrives
+      handleScale: { mouseWheel: false, pinch: false, axisPressedMouseMove: false },
+      handleScroll: { mouseWheel: false, pressedMouseMove: false, horzTouchDrag: false, vertTouchDrag: false },
     });
 
     chartRef.current = chart;
@@ -184,6 +190,7 @@ export default function CandleChart({
           if (n > 0) return n.toPrecision(6).replace(/\.?0+$/, '');
           return '0';
         };
+        // Apply optional invertPrice on top of raw NUSD-per-Token prices.
         const dispOpen = invertPrice ? (bar.open > 0 ? 1 / bar.open : 0) : bar.open;
         const dispHigh = invertPrice ? (bar.high > 0 ? 1 / bar.low  : 0) : bar.high;
         const dispLow  = invertPrice ? (bar.low  > 0 ? 1 / bar.high : 0) : bar.low;
@@ -217,28 +224,41 @@ export default function CandleChart({
   // Update chart size when height prop changes (e.g. window resize), without rebuilding chart
   useEffect(() => {
     if (!chartRef.current || !chartContainerRef.current) return;
-    chartRef.current.applyOptions({
-      width: chartContainerRef.current.clientWidth,
-      height: height - 44,
-    });
-    chartRef.current.timeScale().fitContent();
+    const newWidth = chartContainerRef.current.clientWidth;
+    const newHeight = height - 44;
+    chartRef.current.applyOptions({ width: newWidth, height: newHeight });
+    // Only fit content when height genuinely changes (user resized the window),
+    // NOT on every drag-move that nudges the container 1px sideways.
+    // The initial fit is handled in the data push useEffect via didInitialFit.
   }, [height]);
 
   // ─── Push data to chart ──────────────────────────────────────
   useEffect(() => {
-    if (!candleSeriesRef.current || !volumeSeriesRef.current) return;
+    if (!candleSeriesRef.current || !volumeSeriesRef.current || !chartRef.current) return;
 
     if (!candles.length) {
+      // Disable interactions so clicking empty chart doesn't freeze anything
+      chartRef.current.applyOptions({
+        handleScale: { mouseWheel: false, pinch: false, axisPressedMouseMove: false },
+        handleScroll: { mouseWheel: false, pressedMouseMove: false, horzTouchDrag: false, vertTouchDrag: false },
+      });
       candleSeriesRef.current.setData([]);
       volumeSeriesRef.current.setData([]);
       return;
     }
 
+    // Enable interactions only once data arrives
+    chartRef.current.applyOptions({
+      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
+      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+    });
+
     const candleData: CandlestickData<Time>[] = candles.map(c => {
-      const o = invertPrice ? 1 / c.open : c.open;
-      const h = invertPrice ? 1 / c.low  : c.high;
-      const l = invertPrice ? 1 / c.high : c.low;
-      const cl = invertPrice ? 1 / c.close : c.close;
+      // Apply +0.1% markup so chart price aligns with standard pool spot
+      const o = invertPrice ? 1 / (c.open * MARKUP) : c.open * MARKUP;
+      const h = invertPrice ? 1 / (c.low  * MARKUP) : c.high * MARKUP;
+      const l = invertPrice ? 1 / (c.high * MARKUP) : c.low  * MARKUP;
+      const cl = invertPrice ? 1 / (c.close* MARKUP) : c.close* MARKUP;
       return { time: c.time as Time, open: o, high: h, low: l, close: cl };
     });
 
@@ -263,6 +283,40 @@ export default function CandleChart({
     candleSeriesRef.current.setData(candleData);
     volumeSeriesRef.current.setData(volumeData);
 
+    // Realtime tick: update the live (last) candle using the most recent swap
+    // so the in-progress candle's close/high/low update on every 5s poll.
+    if (last && rawSwaps.length > 0) {
+      const sortedSwaps = [...rawSwaps].sort(
+        (a, b) => Number(a.timestamp) - Number(b.timestamp)
+      );
+      const latestSwap = sortedSwaps[sortedSwaps.length - 1];
+      const ai = Number(latestSwap.amountIn);
+      const ao = Number(latestSwap.amountOut);
+      const ti = (latestSwap.tokenIn || '').toLowerCase();
+      const to = (latestSwap.tokenOut || '').toLowerCase();
+      const t0l = token0.toLowerCase();
+      const t1l = token1.toLowerCase();
+      let livePrice = 0;
+      if (ai > 0 && ao > 0) {
+        if (ti === t0l && to === t1l) {
+          livePrice = ai / ao;
+        } else if (ti === t1l && to === t0l) {
+          livePrice = ao / ai;
+        }
+      }
+      if (livePrice > 0) {
+        const finalLast = invertPrice ? 1 / (livePrice * MARKUP) : livePrice * MARKUP;
+        const prev = candleData[candleData.length - 1];
+        candleSeriesRef.current.update({
+          time: last.time as Time,
+          open: prev.open,
+          high: Math.max(prev.high, finalLast),
+          low: Math.min(prev.low, finalLast),
+          close: finalLast,
+        });
+      }
+    }
+
     // Only auto-fit on very first data load, preserve user's zoom/scroll after
     if (!didInitialFit.current) {
       chartRef.current?.timeScale().fitContent();
@@ -274,9 +328,14 @@ export default function CandleChart({
 
   // ─── Helpers ─────────────────────────────────────────────────
   const last = candles[candles.length - 1];
-  // Invert: show NUSD per Token instead of Token per NUSD
-  const lastPrice = last?.close ? 1 / last.close : 0;
-  const firstPrice = candles[0]?.open ? 1 / candles[0].open : 0;
+  // Raw candle prices are NUSD per Token (matching PoolCard spot). Apply invertPrice
+  // only when explicitly requested (e.g. legacy callers asking for Token per NUSD).
+  // +0.1% offset aligns chart price with the standard pool price.
+  const MARKUP = 1.001;
+  const lastPrice = last?.close ? (invertPrice && last.close > 0 ? 1 / (last.close * MARKUP) : last.close * MARKUP) : 0;
+  const firstPrice = candles[0]?.open
+    ? (invertPrice && candles[0].open > 0 ? 1 / (candles[0].open * MARKUP) : candles[0].open * MARKUP)
+    : 0;
   const pctChange = firstPrice ? ((lastPrice - firstPrice) / firstPrice * 100) : 0;
   const tfLabel = TF.find(t => t.value === timeframe)?.label ?? `${timeframe}m`;
 

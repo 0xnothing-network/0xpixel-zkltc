@@ -9,7 +9,7 @@ import { formatUnits } from "viem";
 import { LITVM_CHAIN_ID } from "@/lib/chainSwitch";
 import { useToast } from "@/components/Toast";
 
-const FACTORY_ADDRESS = "0xace39F54fF39A9f31125E09F85008183EECD98B8";
+const FACTORY_ADDRESS = "0x0704A6F0ddE78Dd3879f8Cc2ed1d47713f3291b8";
 
 const FACTORY_ABI = [
   {
@@ -164,8 +164,33 @@ export default function FactoryPage() {
   }, [txSuccess, isWaitingTx]);
 
   if (!mounted) return (
-    <div className="min-h-screen bg-[#0F0F23] flex items-center justify-center">
-      <div className="text-white">Loading...</div>
+    <div className="min-h-screen bg-[#0F0F23] flex flex-col items-center justify-center gap-5">
+      <div className="relative">
+        <span
+          className="text-3xl animate-pulse"
+          style={{ fontFamily: "var(--font-departure)", color: "#a78bfa" }}
+        >
+          ◈
+        </span>
+        <span
+          className="text-3xl animate-pulse"
+          style={{ fontFamily: "var(--font-departure)", color: "#818cf8", animationDelay: "0.2s" }}
+        >
+          ◈
+        </span>
+        <span
+          className="text-3xl animate-pulse"
+          style={{ fontFamily: "var(--font-departure)", color: "#6366f1", animationDelay: "0.4s" }}
+        >
+          ◈
+        </span>
+      </div>
+      <div
+        className="text-sm tracking-widest animate-pulse"
+        style={{ fontFamily: "var(--font-departure)", color: "#64748B" }}
+      >
+        LOADING...
+      </div>
     </div>
   );
 

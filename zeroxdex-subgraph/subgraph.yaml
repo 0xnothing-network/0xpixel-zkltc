@@ -6,9 +6,9 @@ dataSources:
     name: ZeroXDex
     network: liteforge
     source:
-      address: "0xeFbC4aa3cB41476f986F047Da74f59DFaCBd7257"
+      address: "0xd808DBF8b8d1Cd9ea9C5449336C764cCbC67D4B7"
       abi: ZeroXDex
-      startBlock: 22116541
+      startBlock: 22591764
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7

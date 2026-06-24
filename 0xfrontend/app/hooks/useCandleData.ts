@@ -151,9 +151,16 @@ export function useCandleData({
 
 /**
  * Groups raw swap events into OHLC candles.
- * Price convention: N per NUSD (N is the quote token)
- * - NUSD (t0) → Token (t1): price = amountOut / amountIn
- * - Token (t1) → NUSD (t0): price = amountIn / amountOut
+ *
+ * Price convention: NUSD per Token (NUSD is the quote, Token is the base).
+ * This matches the on-chain `getPrice(tokenIn=Token, tokenOut=NUSD) * reserveNUSD / reserveToken`
+ * and the PoolCard spot display.
+ *
+ * - NUSD (t0) → Token (t1): user spends NUSD, receives Token.
+ *     1 NUSD buys (amountOut / amountIn) Token, so price (NUSD per Token)
+ *     = amountIn / amountOut.
+ * - Token (t1) → NUSD (t0): user spends Token, receives NUSD.
+ *     1 Token is worth (amountOut / amountIn) NUSD, so price = amountOut / amountIn.
  */
 function buildCandles(swaps: SwapEvent[], intervalMinutes: number, t0: string, t1: string): CandleData[] {
   if (!swaps || swaps.length === 0) return [];
@@ -161,12 +168,6 @@ function buildCandles(swaps: SwapEvent[], intervalMinutes: number, t0: string, t
   const interval = intervalMinutes * 60;
   const candles: CandleData[] = [];
   let current: CandleData | null = null;
-
-  // The subgraph emits amountIn AFTER the 1% sender-side fee was deducted.
-  // Both chart and swap UI use (amountIn, amountOut) from the same subgraph event,
-  // so the raw ratio amountOut/amountIn gives the executed price — consistent
-  // with what the swap UI estimates when using the same event data.
-  // No separate fee reversal needed here.
 
   // Subgraph query returns swaps sorted asc by timestamp, but guard with sort anyway.
   const sorted = [...swaps].sort(
@@ -181,14 +182,14 @@ function buildCandles(swaps: SwapEvent[], intervalMinutes: number, t0: string, t
 
     if (amountIn <= 0 || amountOut <= 0) continue;
 
-    // NUSD (t0) / Token (t1) pair: price = Token per 1 NUSD.
-    // NUSD→Token (t0→t1): price = amountOut / amountIn (Token received per NUSD spent).
-    // Token→NUSD (t1→t0): price = amountIn / amountOut (Token received per NUSD spent).
+    // Price = NUSD per 1 Token.
     let price: number;
     if (ti === t0 && to === t1) {
-      price = amountOut / amountIn;
-    } else if (ti === t1 && to === t0) {
+      // NUSD → Token: price = NUSD spent / Token received
       price = amountIn / amountOut;
+    } else if (ti === t1 && to === t0) {
+      // Token → NUSD: price = NUSD received / Token spent
+      price = amountOut / amountIn;
     } else {
       continue;
     }

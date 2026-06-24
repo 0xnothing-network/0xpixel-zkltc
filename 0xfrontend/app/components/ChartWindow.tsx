@@ -142,21 +142,22 @@ export default function ChartWindow({
 
   const fs = isFullscreen;
 
-  return (
-    <div
-      ref={windowRef}
-      style={{
-        position: 'fixed',
-        left: fs ? 0 : pos.x,
-        top: fs ? 0 : pos.y,
-        width: fs ? '100vw' : size.w,
-        height: fs ? `${fsHeight}px` : isMinimized ? 36 : size.h,
-        zIndex: fs ? 99999 : 9999,
-        display: 'flex',
-        flexDirection: 'column',
-        background: COLORS.bg,
-      }}
-    >
+return (
+    <>
+      <div
+        ref={windowRef}
+        style={{
+          position: 'fixed',
+          left: fs ? 0 : pos.x,
+          top: fs ? 0 : pos.y,
+          width: fs ? '100vw' : size.w,
+          height: fs ? `${fsHeight}px` : isMinimized ? 36 : size.h,
+          zIndex: fs ? 99999 : 9999,
+          display: 'flex',
+          flexDirection: 'column',
+          background: COLORS.bg,
+        }}
+      >
       {/* ── Titlebar ── */}
       <div
         onMouseDown={onTitleMouseDown}
@@ -280,5 +281,6 @@ export default function ChartWindow({
         return <div key={dir} style={style} onMouseDown={e => onEdgeMouseDown(e, dir)} />;
       })}
     </div>
+    </>
   );
 }

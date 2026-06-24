@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useAccount, useReadContract } from "wagmi";
 import { useDexWrite, NATIVE_TOKEN, Token, useTokenBalance, useDexRead, useAllPools } from "@/lib/use0xDex";
-import { DEX_ADDRESS } from "@/lib/0xDexContract";
+import { DEX_ADDRESS } from "@/lib/0xDexAbi";
 import { formatUnits, parseUnits, keccak256, toBytes, encodePacked } from "viem";
 import { useToast } from "@/components/Toast";
 import { useChainId } from "wagmi";
@@ -19,7 +19,7 @@ const DEX_NAV = [
 const KNOWN_TOKENS: Token[] = [
   NATIVE_TOKEN,
   {
-    address: "0xC1F96C07D3EAbd25b080522aE85DaaA978192EC0",
+    address: "0x6ffB02fa705A0DB3c8EbB31A63EdFE62c103363D",
     symbol: "NUSD",
     decimals: 18,
     name: "NUSD Stablecoin",
@@ -103,13 +103,15 @@ export default function PoolsPage() {
   // Build pool options from allPools
   const poolOptions = useMemo(() => {
     if (!allPools || !nusdAddress) return [];
-    return allPools.map(token => {
-      const pairId = keccak256PairId(token, nusdAddress);
+    return allPools.map(({ pairId, token0, token1 }) => {
+      const displayToken = token0 === nusdAddress ? token1 : token0;
+      const label = `${displayToken === "0x0000000000000000000000000000000000000000" ? "zkLTC" : "NUSD"} / NUSD`;
       return {
-        token0: token,
-        token1: nusdAddress,
+        token0,
+        token1,
+        displayToken,
         pairId,
-        label: `${token === "0x0000000000000000000000000000000000000000" ? "zkLTC" : "NUSD"} / NUSD`,
+        label,
       };
     });
   }, [allPools, nusdAddress]);

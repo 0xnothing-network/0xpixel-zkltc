@@ -2,27 +2,33 @@
  * Custom hook for real-time swap event monitoring
  * Uses wagmi's useWatchContractEvent to listen for Swapped events
  * Automatically invalidates candlestick data queries when new swaps occur
+ *
+ * NOTE: The 0xDex contract (ZeroDex) emits Swapped with:
+ *   user (indexed), tokenIn, tokenOut, amountIn, amountOut, fee
+ * — this differs from a typical UniswapV2 Swap event.
  */
 'use client';
 
 import { useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useWatchContractEvent } from 'wagmi';
-import { ZeroXDexAbi } from '@/abi/ZeroXDex';
+import { ZeroXDexAbi, ZEROXDEX_ADDRESS } from '@/abi/ZeroXDex';
 
 // ============================================================
-// TYPES
+// TYPES — match 0xDex.sol Swapped event signature exactly
 // ============================================================
+
+export interface SwappedEventArgs {
+  user: `0x${string}`;
+  tokenIn: `0x${string}`;
+  tokenOut: `0x${string}`;
+  amountIn: bigint;
+  amountOut: bigint;
+  fee: bigint;
+}
 
 export interface SwappedEvent {
-  args: {
-    sender: `0x${string}`;
-    amount0In: bigint;
-    amount1Out: bigint;
-    price: bigint;
-    to?: `0x${string}`;
-    pair?: `0x${string}`;
-  };
+  args: SwappedEventArgs;
   blockNumber: bigint;
   blockHash: `0x${string}`;
   transactionHash: `0x${string}`;
@@ -30,11 +36,9 @@ export interface SwappedEvent {
 }
 
 export interface UseRealtimeSwapsParams {
-  /** ZeroXDex contract address */
-  contractAddress: `0x${string}`;
-  /** Trading pair ID to filter events (optional) */
-  pairId?: string;
-  /** Callback function when a new swap is detected */
+  /** 0xDex contract address. Defaults to ZEROXDEX_ADDRESS (0xd808...D4B7) */
+  contractAddress?: `0x${string}`;
+  /** Optional callback when a new swap is detected */
   onSwap?: (event: SwappedEvent) => void;
   /** Enable real-time monitoring */
   enabled?: boolean;
@@ -59,12 +63,11 @@ const CANDLE_QUERY_KEYS = ['candle-data'];
 // ============================================================
 
 /**
- * Monitors real-time swap events from the ZeroXDex contract
+ * Monitors real-time swap events from the 0xDex contract
  * Automatically invalidates cached candlestick data to trigger chart updates
  */
 export function useRealtimeSwaps({
-  contractAddress,
-  pairId,
+  contractAddress = ZEROXDEX_ADDRESS,
   onSwap,
   enabled = true,
 }: UseRealtimeSwapsParams): UseRealtimeSwapsReturn {
@@ -79,25 +82,23 @@ export function useRealtimeSwaps({
    * - Calls optional callback
    * - Invalidates candlestick queries to trigger refetch
    */
-  const handleSwapEvent = useCallback((log: SwappedEvent) => {
-    // Filter by pairId if specified
-    if (pairId && log.args.pair && log.args.pair.toLowerCase() !== pairId.toLowerCase()) {
-      return;
-    }
+  const handleSwapEvent = useCallback(
+    (log: SwappedEvent) => {
+      latestSwapRef.current = log;
 
-    latestSwapRef.current = log;
+      // Notify external handlers
+      if (onSwap) {
+        onSwap(log);
+      }
 
-    // Notify external handlers
-    if (onSwap) {
-      onSwap(log);
-    }
-
-    // Invalidate all candle data queries to trigger background refetch
-    queryClient.invalidateQueries({
-      queryKey: CANDLE_QUERY_KEYS,
-      refetchType: 'active',
-    });
-  }, [pairId, onSwap, queryClient]);
+      // Invalidate all candle data queries to trigger background refetch
+      queryClient.invalidateQueries({
+        queryKey: CANDLE_QUERY_KEYS,
+        refetchType: 'active',
+      });
+    },
+    [onSwap, queryClient],
+  );
 
   // Set up the contract event watcher
   useWatchContractEvent({
@@ -127,8 +128,7 @@ export function useRealtimeSwaps({
  * Use when you don't need to track individual swap events
  */
 export function useSwapEventInvalidator({
-  contractAddress,
-  pairId,
+  contractAddress = ZEROXDEX_ADDRESS,
   enabled = true,
 }: Omit<UseRealtimeSwapsParams, 'onSwap'>): { isWatching: boolean } {
   const queryClient = useQueryClient();
@@ -137,20 +137,10 @@ export function useSwapEventInvalidator({
     address: contractAddress,
     abi: ZeroXDexAbi,
     eventName: 'Swapped',
-    onLogs: (logs) => {
-      logs.forEach((log) => {
-        const swapLog = log as unknown as SwappedEvent;
-
-        // Filter by pairId if specified
-        if (pairId && swapLog.args.pair &&
-            swapLog.args.pair.toLowerCase() !== pairId.toLowerCase()) {
-          return;
-        }
-
-        // Invalidate candle queries on new swap
-        queryClient.invalidateQueries({
-          queryKey: CANDLE_QUERY_KEYS,
-        });
+    onLogs: () => {
+      // Invalidate candle queries on new swap
+      queryClient.invalidateQueries({
+        queryKey: CANDLE_QUERY_KEYS,
       });
     },
     enabled,
