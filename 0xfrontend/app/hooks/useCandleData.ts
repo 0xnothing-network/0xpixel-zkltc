@@ -118,9 +118,9 @@ export function useCandleData({
         throw new Error(`GraphQL errors: ${JSON.stringify(json.errors)}`);
       }
 
-      const allSwaps = json.data?.swaps || [];
+      const allSwaps: SwapEvent[] = json.data?.swaps || [];
       // Filter client-side to ensure exact match (subgraph may return loosely matched)
-      return allSwaps.filter((s: any) => {
+      return allSwaps.filter((s) => {
         const ti = (s.tokenIn || '').toLowerCase();
         const to = (s.tokenOut || '').toLowerCase();
         return (ti === t0 && to === t1) || (ti === t1 && to === t0);
