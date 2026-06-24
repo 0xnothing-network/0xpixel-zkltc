@@ -1,0 +1,55 @@
+type Swap @entity {
+  id: ID!
+  user: Bytes!
+  tokenIn: Bytes!
+  tokenOut: Bytes!
+  amountIn: BigInt!
+  amountOut: BigInt!
+  fee: BigInt!
+  timestamp: BigInt!
+  blockNumber: BigInt
+}
+
+type Pool @entity {
+  id: ID!
+  token0: Bytes!
+  token1: Bytes!
+  reserve0: BigInt!
+  reserve1: BigInt!
+  totalLP: BigInt!
+}
+
+type LiquidityAdded @entity {
+  id: ID!
+  user: Bytes!
+  pairId: Bytes!
+  amount0: BigInt!
+  amount1: BigInt!
+  lpMinted: BigInt!
+  timestamp: BigInt!
+}
+
+type LiquidityRemoved @entity {
+  id: ID!
+  user: Bytes!
+  pairId: Bytes!
+  lpBurned: BigInt!
+  amount0: BigInt!
+  amount1: BigInt!
+  timestamp: BigInt!
+}
+
+type PoolCreated @entity {
+  id: ID!
+  pairId: Bytes!
+  token0: Bytes!
+  token1: Bytes!
+  timestamp: BigInt!
+}
+
+type RewardClaimed @entity {
+  id: ID!
+  user: Bytes!
+  amount: BigInt!
+  timestamp: BigInt!
+}

@@ -1,0 +1,37 @@
+specVersion: 0.0.5
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum
+    name: ZeroXDex
+    network: liteforge
+    source:
+      address: "0xeFbC4aa3cB41476f986F047Da74f59DFaCBd7257"
+      abi: ZeroXDex
+      startBlock: 22116541
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/mapping.ts
+      entities:
+        - Swap
+        - Pool
+        - LiquidityAdded
+        - LiquidityRemoved
+        - PoolCreated
+        - RewardClaimed
+      abis:
+        - name: ZeroXDex
+          file: ./abis/ZeroXDex.json
+      eventHandlers:
+        - event: Swapped(indexed address,address,address,uint256,uint256,uint256)
+          handler: handleSwapped
+        - event: LiquidityAdded(indexed address,indexed bytes32,uint256,uint256,uint256)
+          handler: handleLiquidityAdded
+        - event: LiquidityRemoved(indexed address,indexed bytes32,uint256,uint256,uint256)
+          handler: handleLiquidityRemoved
+        - event: PoolCreated(indexed bytes32,address,address)
+          handler: handlePoolCreated
+        - event: RewardClaimed(indexed address,uint256)
+          handler: handleRewardClaimed

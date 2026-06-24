@@ -338,6 +338,142 @@ input[type="range"]::-webkit-slider-thumb:hover {
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+/* Pixel button — softer corner variant (3px clip, not 5px) */
+.pixel-btn-soft {
+  position: relative;
+  font-family: var(--font-departure), 'Departure Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  padding: 10px 20px;
+  background: var(--surface-elevated);
+  color: var(--muted-light);
+  border-radius: 0;
+  clip-path: polygon(
+    0 3px, 3px 3px, 3px 0,
+    calc(100% - 3px) 0, calc(100% - 3px) 3px, 100% 3px,
+    100% calc(100% - 3px), calc(100% - 3px) calc(100% - 3px), calc(100% - 3px) 100%,
+    3px 100%, 3px calc(100% - 3px), 0 calc(100% - 3px)
+  );
+  box-shadow:
+    0 0 0 1px var(--border-color, rgba(255,255,255,0.06)),
+    3px 3px 0 0 var(--shadow-color, #0a0a18);
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+}
+
+.pixel-btn-soft:hover:not(:disabled) {
+  color: #fff;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.1),
+    3px 3px 0 0 var(--shadow-color, #0a0a18);
+}
+
+.pixel-btn-soft:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  color: var(--muted);
+}
+
+/* Pixel button soft — color variants */
+.pixel-btn-soft-indigo {
+  --border-color: rgba(99, 102, 241, 0.4);
+  --shadow-color: rgba(99, 102, 241, 0.25);
+  background: linear-gradient(180deg, #6366F1 0%, #4F46E5 100%);
+  color: #fff;
+}
+
+.pixel-btn-soft-indigo:hover:not(:disabled) {
+  background: linear-gradient(180deg, #818CF8 0%, #6366F1 100%);
+  box-shadow:
+    0 0 0 1px rgba(99, 102, 241, 0.6),
+    3px 3px 0 0 rgba(99, 102, 241, 0.3),
+    0 0 12px rgba(99, 102, 241, 0.3);
+}
+
+.pixel-btn-soft-emerald {
+  --border-color: rgba(16, 185, 129, 0.4);
+  --shadow-color: rgba(16, 185, 129, 0.25);
+  background: linear-gradient(180deg, #10B981 0%, #059669 100%);
+  color: #fff;
+}
+
+.pixel-btn-soft-emerald:hover:not(:disabled) {
+  background: linear-gradient(180deg, #34D399 0%, #10B981 100%);
+  box-shadow:
+    0 0 0 1px rgba(16, 185, 129, 0.6),
+    3px 3px 0 0 rgba(16, 185, 129, 0.3),
+    0 0 12px rgba(16, 185, 129, 0.3);
+}
+
+.pixel-btn-soft-amber {
+  --border-color: rgba(245, 158, 11, 0.4);
+  --shadow-color: rgba(245, 158, 11, 0.2);
+  background: linear-gradient(180deg, #F59E0B 0%, #D97706 100%);
+  color: #1a1a2e;
+}
+
+.pixel-btn-soft-amber:hover:not(:disabled) {
+  background: linear-gradient(180deg, #FBBF24 0%, #F59E0B 100%);
+  box-shadow:
+    0 0 0 1px rgba(245, 158, 11, 0.6),
+    3px 3px 0 0 rgba(245, 158, 11, 0.3),
+    0 0 24px rgba(245, 158, 11, 0.4);
+}
+
+.pixel-btn-soft-rose {
+  --border-color: rgba(244, 63, 94, 0.4);
+  --shadow-color: rgba(244, 63, 94, 0.2);
+  background: linear-gradient(180deg, #F43F5E 0%, #E11D48 100%);
+  color: #fff;
+}
+
+.pixel-btn-soft-rose:hover:not(:disabled) {
+  background: linear-gradient(180deg, #FB7185 0%, #F43F5E 100%);
+  box-shadow:
+    0 0 0 1px rgba(244, 63, 94, 0.6),
+    3px 3px 0 0 rgba(244, 63, 94, 0.3),
+    0 0 12px rgba(244, 63, 94, 0.3);
+}
+
+.pixel-btn-soft-secondary {
+  --border-color: rgba(255, 255, 255, 0.08);
+  --shadow-color: rgba(0, 0, 0, 0.5);
+  background: var(--surface-elevated);
+  color: var(--muted-light);
+}
+
+.pixel-btn-soft-secondary:hover:not(:disabled) {
+  background: var(--surface-elevated);
+  color: #fff;
+  --border-color: rgba(255, 255, 255, 0.15);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.12),
+    3px 3px 0 0 rgba(0, 0, 0, 0.5),
+    0 0 12px rgba(255, 255, 255, 0.05);
+}
+
+/* Pixel button soft — small size */
+.pixel-btn-soft-sm {
+  padding: 6px 12px;
+  font-size: 9px;
+}
+
+/* Pixel button soft — icon only */
+.pixel-btn-soft-icon {
+  padding: 6px;
+  font-size: 0;
+}
+
+/* Pixel button — full width */
+.pixel-btn-soft-full {
+  width: 100%;
+}
+
 /* ============================================
    Pixel Navigation System
    ============================================ */

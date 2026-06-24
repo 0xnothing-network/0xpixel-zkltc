@@ -303,25 +303,23 @@ export default function PoolsPage() {
         <div className="flex gap-2 mb-6">
           <button
             onClick={() => setActiveTab("add")}
-            className={`flex-1 py-3 rounded-lg font-bold text-sm transition-all ${
+            className={`flex-1 py-3 font-bold text-sm transition-all pixel-btn-soft ${
               activeTab === "add"
-                ? "bg-gradient-to-r from-indigo-500 to-purple-500 text-white"
-                : "bg-[#1A1A2E] text-[#64748B] hover:text-white border border-[#2D2D44]"
+                ? "pixel-btn-soft-indigo"
+                : "pixel-btn-soft-secondary"
             }`}
-            style={{ fontFamily: "var(--font-departure)" }}
           >
-            + ADD LIQUIDITY
+            ADD LIQUIDITY
           </button>
           <button
             onClick={() => setActiveTab("remove")}
-            className={`flex-1 py-3 rounded-lg font-bold text-sm transition-all ${
+            className={`flex-1 py-3 font-bold text-sm transition-all pixel-btn-soft ${
               activeTab === "remove"
-                ? "bg-gradient-to-r from-emerald-500 to-teal-500 text-white"
-                : "bg-[#1A1A2E] text-[#64748B] hover:text-white border border-[#2D2D44]"
+                ? "pixel-btn-soft-emerald"
+                : "pixel-btn-soft-secondary"
             }`}
-            style={{ fontFamily: "var(--font-departure)" }}
           >
-            - REMOVE LIQUIDITY
+            REMOVE LIQUIDITY
           </button>
         </div>
 
@@ -460,8 +458,7 @@ export default function PoolsPage() {
                   </p>
                   <button
                     onClick={handleApprove}
-                    className="w-full py-2 rounded-lg bg-amber-500/20 text-amber-400 font-bold text-sm hover:bg-amber-500/30 transition-colors"
-                    style={{ fontFamily: "var(--font-departure)" }}
+                    className="w-full py-2 pixel-btn-soft pixel-btn-soft-amber"
                   >
                     APPROVE {tokenA?.symbol}
                   </button>
@@ -472,17 +469,12 @@ export default function PoolsPage() {
               <button
                 onClick={handleAddLiquidity}
                 disabled={!isValidAdd || !mounted || !isConnected}
-                className="w-full py-4 rounded-xl font-bold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{
-                  fontFamily: "var(--font-departure)",
-                  background: isValidAdd && mounted && isConnected
-                    ? "linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)"
-                    : undefined,
-                  boxShadow: isValidAdd && mounted && isConnected ? "0 0 20px rgba(99, 102, 241, 0.4)" : undefined,
-                }}
+                className={`w-full py-4 font-bold text-white pixel-btn-soft pixel-btn-soft-full ${
+                  isValidAdd && mounted && isConnected ? "pixel-btn-soft-indigo" : "pixel-btn-soft-secondary"
+                }`}
               >
-                {!mounted || !isConnected 
-                  ? "Connect Wallet"
+                {!mounted || !isConnected
+                  ? "CONNECT WALLET"
                   : poolExists === false
                     ? "Pool Not Available"
                     : needsApproval && !hasAllowance
@@ -553,21 +545,15 @@ export default function PoolsPage() {
               <button
                 onClick={handleRemoveLiquidity}
                 disabled={!lpAmount || !mounted || !isConnected || !pairId}
-                className="w-full py-4 rounded-xl font-bold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{
-                  fontFamily: "var(--font-departure)",
-                  background: lpAmount && mounted && isConnected
-                    ? "linear-gradient(135deg, #10B981 0%, #059669 100%)"
-                    : undefined,
-                  boxShadow: lpAmount && mounted && isConnected ? "0 0 20px rgba(16, 185, 129, 0.4)" : undefined,
-                }}
+                className={`w-full py-4 font-bold text-white pixel-btn-soft pixel-btn-soft-full ${
+                  lpAmount && mounted && isConnected ? "pixel-btn-soft-emerald" : "pixel-btn-soft-secondary"
+                }`}
               >
-                {!mounted || !isConnected 
-                  ? "Connect Wallet"
-                  : !lpAmount 
-                    ? "Enter LP Amount"
-                    : "Remove Liquidity"
-              }
+                {!mounted || !isConnected
+                  ? "CONNECT WALLET"
+                  : !lpAmount
+                    ? "ENTER LP AMOUNT"
+                    : "REMOVE LIQUIDITY"}
               </button>
             </div>
           </div>

@@ -1,8 +1,11 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Suspense } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import dynamic from "next/dynamic";
+import ChartWindow from "@/app/components/ChartWindow";
+
 import { useAccount, useReadContract, useConnect, useDisconnect, useBlockNumber, useWriteContract, useSwitchChain } from "wagmi";
 import { erc20Abi, maxUint256 } from "viem";
 import { useDexStats, useUserPendingReward, useAllPools, useDexRead, useDexWrite, NATIVE_TOKEN, useTokenBalance, useTokenAllowance, useDexOwner, Token, useDexAutoRefresh } from "@/lib/use0xDex";
@@ -82,9 +85,10 @@ function StatCard({ label, value, icon, color = "indigo" }: { label: string; val
   );
 }
 
-function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, lpTotal, rank, onSelect, tokenSymbol, tokenDecimals = 18 }: {
+function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, lpTotal, rank, onSelect, onViewChart, tokenSymbol, tokenDecimals = 18 }: {
   token0: `0x${string}`; token1: `0x${string}`; reserve0: bigint; reserve1: bigint; volume24h: bigint; totalVolume: bigint; lpTotal: bigint; rank: number;
   onSelect?: (data: { token: `0x${string}`, nusd: `0x${string}`, reserve0: bigint, reserve1: bigint }) => void;
+  onViewChart?: () => void;
   tokenSymbol?: string;
   tokenDecimals?: number;
 }) {
@@ -121,7 +125,7 @@ function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, 
       onClick={handleClick}
     >
       {/* Top Row: Rank, Symbol, Price */}
-      <div className="flex justify-between items-center mb-3">
+        <div className="flex justify-between items-center mb-3">
         <div className="flex items-center gap-2">
           <span className="text-xs text-[#64748B] bg-[#2D2D44] px-2 py-0.5 rounded">#{rank}</span>
           <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center text-white text-xs font-bold">L$</div>
@@ -132,6 +136,14 @@ function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, 
             ${pricePerToken > 0 ? pricePerToken.toFixed(6) : "0"}
           </span>
         </div>
+        {onViewChart && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onViewChart(); }}
+            className="pixel-btn-soft pixel-btn-soft-indigo pixel-btn-soft-sm"
+          >
+            CHART
+          </button>
+        )}
       </div>
       
       {/* Stats Row */}
@@ -248,6 +260,10 @@ export default function DexAllInOne() {
   // Pool Modal state
   const [selectedPoolModal, setSelectedPoolModal] = useState<{token: `0x${string}`, nusd: `0x${string}`, reserve0: bigint, reserve1: bigint} | null>(null);
   const [poolModalTab, setPoolModalTab] = useState<"swap" | "add" | "remove">("swap");
+
+  // Chart state - select a pair to view chart
+  const [selectedChartPair, setSelectedChartPair] = useState<string | null>(null);
+  const [showChart, setShowChart] = useState(false);
 
   // Data
   const stats = useDexStats();
@@ -846,18 +862,16 @@ export default function DexAllInOne() {
             {isConnected && address ? (
               <button
                 onClick={() => disconnect()}
-                className="px-3 py-1.5 rounded-lg bg-[#2D2D44] text-white text-xs font-bold hover:bg-[#3D3D54] transition-colors"
-                style={{ fontFamily: "var(--font-departure)" }}
+                className="pixel-btn-soft pixel-btn-soft-secondary pixel-btn-soft-sm"
               >
                 {address.slice(0, 6)}...{address.slice(-4)}
               </button>
             ) : (
               <button
                 onClick={() => connectors[0] && connect({ connector: connectors[0] })}
-                className="px-4 py-2 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-500 text-white text-sm font-bold hover:opacity-90 transition-opacity"
-                style={{ fontFamily: "var(--font-departure)" }}
+                className="pixel-btn-soft pixel-btn-soft-indigo pixel-btn-soft-sm"
               >
-                Connect
+                CONNECT
               </button>
             )}
           </div>
@@ -876,21 +890,17 @@ export default function DexAllInOne() {
         {/* Tabs */}
         <div className="flex gap-2 mb-6">
           {[
-            { id: "swap", label: "⇄ SWAP", color: "indigo" },
-            { id: "addpool", label: "+ ADD POOL", color: "rose" },
+            { id: "swap", label: "SWAP", colorClass: "pixel-btn-soft-indigo" },
+            { id: "addpool", label: "ADD POOL", colorClass: "pixel-btn-soft-rose" },
           ].map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as typeof activeTab)}
-              className={`flex-1 py-3 rounded-lg font-bold text-sm transition-all ${
+              className={`flex-1 py-3 font-bold text-sm transition-all pixel-btn-soft ${
                 activeTab === tab.id
-                  ? tab.color === "emerald" ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
-                  : tab.color === "amber" ? "bg-amber-500/20 text-amber-400 border border-amber-500/40"
-                  : tab.color === "rose" ? "bg-rose-500/20 text-rose-400 border border-rose-500/40"
-                  : "bg-indigo-500/20 text-indigo-400 border border-indigo-500/40"
-                  : "bg-[#1A1A2E] text-[#64748B] border border-[#2D2D44] hover:text-white"
+                  ? tab.colorClass
+                  : "pixel-btn-soft-secondary"
               }`}
-              style={{ fontFamily: "var(--font-departure)" }}
             >
               {tab.label}
             </button>
@@ -946,7 +956,30 @@ export default function DexAllInOne() {
                         setSwapAmountOut("");
                       }
                     }}
-                    className="w-10 h-10 rounded-full bg-indigo-500 border-4 border-[#1A1A2E] flex items-center justify-center text-white font-bold hover:bg-indigo-400 transition-all"
+                    style={{
+                      width: 36,
+                      height: 36,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: 14,
+                      color: '#d8d8ff',
+                      background: 'linear-gradient(180deg, #6366F1 0%, #4F46E5 100%)',
+                      border: 'none',
+                      cursor: 'pointer',
+                      clipPath: 'polygon(0 3px, 3px 3px, 3px 0, calc(100% - 3px) 0, calc(100% - 3px) 3px, 100% 3px, 100% calc(100% - 3px), calc(100% - 3px) calc(100% - 3px), calc(100% - 3px) 100%, 3px 100%, 3px calc(100% - 3px), 0 calc(100% - 3px))',
+                      boxShadow: '0 0 0 1px rgba(99,102,241,0.4), 3px 3px 0 0 rgba(99,102,241,0.25)',
+                      transition: 'all 0.15s cubic-bezier(0.4, 0, 0.2, 1)',
+                      fontFamily: 'var(--font-departure)',
+                    }}
+                    onMouseEnter={e => {
+                      (e.target as HTMLElement).style.background = 'linear-gradient(180deg, #818CF8 0%, #6366F1 100%)';
+                      (e.target as HTMLElement).style.boxShadow = '0 0 0 1px rgba(99,102,241,0.6), 3px 3px 0 0 rgba(99,102,241,0.3), 0 0 12px rgba(99,102,241,0.3)';
+                    }}
+                    onMouseLeave={e => {
+                      (e.target as HTMLElement).style.background = 'linear-gradient(180deg, #6366F1 0%, #4F46E5 100%)';
+                      (e.target as HTMLElement).style.boxShadow = '0 0 0 1px rgba(99,102,241,0.4), 3px 3px 0 0 rgba(99,102,241,0.25)';
+                    }}
                   >
                     ⇅
                   </button>
@@ -1019,7 +1052,7 @@ export default function DexAllInOne() {
 
                 {/* Approval */}
                 {needsSwapApproval && (
-                  <button onClick={handleSwapApprove} className="w-full mb-3 py-4 rounded-xl bg-amber-500 text-amber-900 font-bold text-sm hover:bg-amber-400" style={{ fontFamily: "var(--font-departure)", boxShadow: "0 0 20px rgba(245, 158, 11, 0.3)" }}>
+                  <button onClick={handleSwapApprove} className="w-full mb-3 pixel-btn-soft pixel-btn-soft-amber">
                     APPROVE {swapTokenIn.symbol}
                   </button>
                 )}
@@ -1028,10 +1061,11 @@ export default function DexAllInOne() {
                 <button
                   onClick={handleFixedSwap}
                   disabled={!swapAmountIn || !poolData || !swapTokenIn || needsSwapApproval}
-                  className="w-full py-4 rounded-xl font-bold text-white bg-gradient-to-r from-indigo-500 to-purple-500 disabled:opacity-50"
-                  style={{ fontFamily: "var(--font-departure)", boxShadow: "0 0 20px rgba(99, 102, 241, 0.3)" }}
+                  className={`w-full py-4 font-bold text-white pixel-btn-soft pixel-btn-soft-full ${
+                    needsSwapApproval ? "pixel-btn-soft-secondary" : "pixel-btn-soft-indigo"
+                  }`}
                 >
-                  {!isConnected ? "Connect Wallet" : !swapAmountIn ? "Enter Amount" : !poolData ? "No Pool Found" : needsSwapApproval ? `Approve ${swapTokenIn.symbol}` : "Swap"}
+                  {!isConnected ? "CONNECT WALLET" : !swapAmountIn ? "ENTER AMOUNT" : !poolData ? "NO POOL FOUND" : needsSwapApproval ? `APPROVE ${swapTokenIn.symbol}` : "SWAP"}
                 </button>
               </>
             )}
@@ -1105,7 +1139,7 @@ export default function DexAllInOne() {
 
                 {/* Approval */}
                 {needsPoolApproval && (
-                  <button onClick={() => handleApprove(poolToken)} className="w-full mb-3 py-4 rounded-xl bg-amber-500 text-amber-900 font-bold text-sm hover:bg-amber-400" style={{ fontFamily: "var(--font-departure)", boxShadow: "0 0 20px rgba(245, 158, 11, 0.3)" }}>
+                  <button onClick={() => handleApprove(poolToken)} className="w-full mb-3 pixel-btn-soft pixel-btn-soft-amber">
                     APPROVE {poolToken.symbol}
                   </button>
                 )}
@@ -1114,10 +1148,11 @@ export default function DexAllInOne() {
                 <button
                   onClick={handleAddLiquidity}
                   disabled={!poolAmountToken || !poolAmountNUSD || needsPoolApproval}
-                  className="w-full py-4 rounded-xl font-bold text-white bg-gradient-to-r from-emerald-500 to-teal-500 disabled:opacity-50"
-                  style={{ fontFamily: "var(--font-departure)", boxShadow: "0 0 20px rgba(16, 185, 129, 0.3)" }}
+                  className={`w-full py-4 font-bold text-white pixel-btn-soft pixel-btn-soft-full ${
+                    needsPoolApproval ? "pixel-btn-soft-secondary" : "pixel-btn-soft-emerald"
+                  }`}
                 >
-                  {!isConnected ? "Connect Wallet" : !poolAmountToken || !poolAmountNUSD ? "Enter Amounts" : "Add Liquidity"}
+                  {!isConnected ? "CONNECT WALLET" : !poolAmountToken || !poolAmountNUSD ? "ENTER AMOUNTS" : "ADD LIQUIDITY"}
                 </button>
               </>
             )}
@@ -1249,14 +1284,11 @@ export default function DexAllInOne() {
                 <button
                   onClick={needsCreateApproval ? handleApproveCustomToken : handleCreatePool}
                   disabled={!isOwner || !createTokenA || !createAmountA || !createAmountB}
-                  className={`w-full mt-4 py-4 rounded-xl font-bold text-white disabled:opacity-50 ${
-                    needsCreateApproval 
-                      ? "bg-amber-500 hover:bg-amber-600" 
-                      : "bg-gradient-to-r from-rose-500 to-red-600"
+                  className={`w-full mt-4 py-4 font-bold text-white pixel-btn-soft pixel-btn-soft-full ${
+                    needsCreateApproval ? "pixel-btn-soft-amber" : "pixel-btn-soft-rose"
                   }`}
-                  style={{ fontFamily: "var(--font-departure)", boxShadow: needsCreateApproval ? "0 0 20px rgba(245, 158, 11, 0.3)" : "0 0 20px rgba(244, 63, 94, 0.3)" }}
                 >
-                  {!isConnected ? "Connect Wallet" : !isOwner ? "Not Owner" : !createTokenA ? "Enter Token Address" : !createAmountA || !createAmountB ? "Enter Amounts" : needsCreateApproval ? `Approve ${createTokenSymbol || "Token"} & Create Pool` : "Create Pool"}
+                  {!isConnected ? "CONNECT WALLET" : !isOwner ? "NOT OWNER" : !createTokenA ? "ENTER TOKEN ADDRESS" : !createAmountA || !createAmountB ? "ENTER AMOUNTS" : needsCreateApproval ? `APPROVE & CREATE POOL` : "CREATE POOL"}
                 </button>
               </>
             )}
@@ -1273,14 +1305,13 @@ export default function DexAllInOne() {
                   <button
                     key={filter}
                     onClick={() => setPairFilter(filter)}
-                    className={`px-2 py-1 rounded text-xs font-bold transition-all ${
+                    className={`px-2 py-1 text-xs font-bold transition-all pixel-btn-soft ${
                       pairFilter === filter
-                        ? "bg-indigo-500 text-white"
-                        : "text-[#64748B] hover:text-white"
+                        ? "pixel-btn-soft-indigo pixel-btn-soft-sm"
+                        : "pixel-btn-soft-secondary pixel-btn-soft-sm"
                     }`}
-                    style={{ fontFamily: "var(--font-departure)" }}
                   >
-                    {filter === "tvl" ? "TVL" : filter === "vol24h" ? "Vol 24h" : filter === "volAll" ? "Vol All" : "New"}
+                    {filter === "tvl" ? "TVL" : filter === "vol24h" ? "VOL 24H" : filter === "volAll" ? "VOL ALL" : "NEW"}
                   </button>
                 ))}
               </div>
@@ -1320,6 +1351,10 @@ export default function DexAllInOne() {
                           setSwapTokenOut({ address: pool.token, symbol: (tokenSymbols[poolIndex] as string) || "TOKEN", decimals: 18, name: "Token" });
                         }
                         setSwapMode("fixed");
+                      }}
+                      onViewChart={() => {
+                        setSelectedChartPair(pool.pairId);
+                        setShowChart(true);
                       }}
                     />
                   );
@@ -1451,10 +1486,9 @@ export default function DexAllInOne() {
                         decimals: 18,
                         name: "Token"
                       })}
-                      className="w-full py-3 rounded-xl bg-amber-500 text-amber-900 font-bold text-sm hover:bg-amber-400"
-                      style={{ fontFamily: "var(--font-departure)", boxShadow: "0 0 20px rgba(245, 158, 11, 0.3)" }}
+                      className="w-full py-3 pixel-btn-soft pixel-btn-soft-amber"
                     >
-                      APPROVE {(tokenSymbols[selectedFarmPool] as string) || "Token"}
+                      APPROVE {(tokenSymbols[selectedFarmPool] as string) || "TOKEN"}
                     </button>
                   ) : (
                     <div className="text-xs text-emerald-400 text-center p-2 rounded-xl bg-emerald-500/10" style={{ fontFamily: "var(--font-departure)" }}>
@@ -1469,18 +1503,16 @@ export default function DexAllInOne() {
                 <button
                   onClick={handleFarmAdd}
                   disabled={!farmNUSDAmount || !farmNUSDAmount || parseFloat(farmNUSDAmount) <= 0}
-                  className="flex-1 py-3 rounded-xl bg-emerald-500 text-emerald-900 font-bold text-sm hover:bg-emerald-400 disabled:opacity-50"
-                  style={{ fontFamily: "var(--font-departure)", boxShadow: "0 0 20px rgba(16, 185, 129, 0.3)" }}
+                  className="flex-1 py-3 pixel-btn-soft pixel-btn-soft-emerald"
                 >
-                  Add Liquidity
+                  ADD LIQUIDITY
                 </button>
                 <button
                   onClick={handleFarmRemove}
                   disabled={!farmLpAmount || !farmUserLP || parseFloat(farmLpAmount) <= 0}
-                  className="flex-1 py-3 rounded-xl bg-amber-500 text-amber-900 font-bold text-sm hover:bg-amber-400 disabled:opacity-50"
-                  style={{ fontFamily: "var(--font-departure)", boxShadow: "0 0 20px rgba(245, 158, 11, 0.3)" }}
+                  className="flex-1 py-3 pixel-btn-soft pixel-btn-soft-amber"
                 >
-                  Remove LP
+                  REMOVE LP
                 </button>
               </div>
               
@@ -1510,8 +1542,7 @@ export default function DexAllInOne() {
               <button
                 onClick={handleClaim}
                 disabled={!farmPending || farmPending === 0n}
-                className="w-full py-3 rounded-xl bg-amber-500 text-amber-900 font-bold text-sm hover:bg-amber-400 disabled:opacity-50"
-                style={{ fontFamily: "var(--font-departure)", boxShadow: "0 0 20px rgba(245, 158, 11, 0.3)" }}
+                className="w-full py-3 pixel-btn-soft pixel-btn-soft-amber"
               >
                 CLAIM ({farmPending ? formatUSD(farmPending) : "$0"})
               </button>
@@ -1520,6 +1551,25 @@ export default function DexAllInOne() {
         </div>
 
       </main>
+
+      {/* ── Chart Window ── */}
+      {showChart && selectedChartPair && (() => {
+        const poolIdx = poolOptions.findIndex(p => p.pairId === selectedChartPair);
+        const sel = poolOptions[poolIdx];
+        const label = sel?.token === NATIVE_ADDRESS ? 'zkLTC' : (tokenSymbols[poolIdx] as string) || '—';
+        return (
+          <ChartWindow
+            key={selectedChartPair}
+            pairId={selectedChartPair}
+            token0={nusdAddress || ""}
+            token1={sel?.token || ""}
+            pairLabel={`${label} / NUSD`}
+            subgraphUrl={process.env.NEXT_PUBLIC_SUBGRAPH_URL || "https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.2/gn"}
+            initialTimeframe={5}
+            onClose={() => { setShowChart(false); setSelectedChartPair(null); }}
+          />
+        );
+      })()}
     </div>
   );
 }

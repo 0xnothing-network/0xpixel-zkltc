@@ -306,10 +306,10 @@ export default function SwapPage() {
                       <button
                         key={s}
                         onClick={() => setSlippage(s)}
-                        className={`px-2 py-1 rounded text-xs ${
-                          slippage === s 
-                            ? "bg-indigo-500/30 text-indigo-400" 
-                            : "bg-[#13131F] text-[#64748B] hover:text-white"
+                        className={`px-2 py-1 text-xs pixel-btn-soft ${
+                          slippage === s
+                            ? "pixel-btn-soft-indigo"
+                            : "pixel-btn-soft-secondary"
                         }`}
                       >
                         {s}%
@@ -324,14 +324,9 @@ export default function SwapPage() {
             <button
               onClick={handleSwap}
               disabled={!isValidSwap}
-              className="w-full py-4 rounded-xl font-bold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{
-                fontFamily: "var(--font-departure)",
-                background: isValidSwap 
-                  ? "linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)" 
-                  : undefined,
-                boxShadow: isValidSwap ? "0 0 20px rgba(99, 102, 241, 0.4)" : undefined,
-              }}
+              className={`w-full py-4 font-bold text-white pixel-btn-soft pixel-btn-soft-full ${
+                isValidSwap ? "pixel-btn-soft-indigo" : "pixel-btn-soft-secondary"
+              }`}
             >
               {!mounted || !isConnected 
                 ? "Connect Wallet"

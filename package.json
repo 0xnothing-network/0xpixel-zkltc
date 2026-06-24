@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "@tanstack/react-query": "^5.101.1",
+    "lightweight-charts": "^4.2.3",
+    "viem": "^2.53.1",
+    "wagmi": "^3.6.18"
+  }
+}
