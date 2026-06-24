@@ -109,7 +109,6 @@ export default function CandleChart({
         fontSize: 9,
         fontFamily: "'Press Start 2P', monospace",
         attributionLogo: false,
-        watermark: { visible: false },
       },
       grid: {
         vertLines: { color: COLORS.grid },
