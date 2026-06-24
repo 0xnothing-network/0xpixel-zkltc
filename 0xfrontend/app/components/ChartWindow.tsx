@@ -41,6 +41,24 @@ export default function ChartWindow({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [fsHeight, setFsHeight] = useState(900);
+  const [isMobile, setIsMobile] = useState(false);
+
+  // Detect mobile viewport and set initial position/size
+  useEffect(() => {
+    const checkMobile = () => {
+      const mobile = window.innerWidth < 640;
+      setIsMobile(mobile);
+      if (mobile) {
+        const w = Math.min(window.innerWidth - 16, 420);
+        const h = Math.min(window.innerHeight - 80, 480);
+        setPos({ x: (window.innerWidth - w) / 2, y: 40 });
+        setSize({ w, h });
+      }
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
   const dragging = useRef(false);
   const dragOffset = useRef({ x: 0, y: 0 });
   const resizing = useRef(false);

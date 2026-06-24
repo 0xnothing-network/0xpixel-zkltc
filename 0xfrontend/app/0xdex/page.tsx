@@ -58,6 +58,13 @@ function formatUSD(value: bigint, decimals = 18) {
   return `$${num.toFixed(2)}`;
 }
 
+function formatUSDFloat(num: number) {
+  if (num >= 1e9) return `$${(num / 1e9).toFixed(2)}B`;
+  if (num >= 1e6) return `$${(num / 1e6).toFixed(2)}M`;
+  if (num >= 1e3) return `$${(num / 1e3).toFixed(2)}K`;
+  return `$${num.toFixed(2)}`;
+}
+
 function formatNum(value: bigint, decimals = 18) {
   const num = Number(formatUnits(value, decimals));
   if (num >= 1e6) return `${(num / 1e6).toFixed(2)}M`;
@@ -73,11 +80,11 @@ function StatCard({ label, value, icon, color = "indigo" }: { label: string; val
       <div className="relative">
         <div className="flex items-center gap-2 mb-2">
           <span className="text-sm opacity-60">{icon}</span>
-          <span className="text-xs uppercase tracking-wider text-[#64748B]" style={{ fontFamily: "var(--font-departure)" }}>
+          <span className="text-[10px] md:text-xs uppercase tracking-wider text-[#64748B]" style={{ fontFamily: "var(--font-departure)" }}>
             {label}
           </span>
         </div>
-        <div className="text-xl font-bold text-white" style={{ fontFamily: "var(--font-departure)" }}>
+        <div className="text-2xl xl:text-3xl font-bold text-white truncate" style={{ fontFamily: "var(--font-departure)" }}>
           {value}
         </div>
       </div>
@@ -121,7 +128,7 @@ function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, 
 
   return (
     <div
-      className="p-4 rounded-xl bg-[#13131F] border border-[#2D2D44] hover:border-indigo-500/50 transition-all cursor-pointer"
+      className="p-4 xl:p-5 rounded-xl bg-[#13131F] border border-[#2D2D44] hover:border-indigo-500/50 transition-all cursor-pointer"
       onClick={handleClick}
     >
       {/* Top Row: Rank, Symbol, Price */}
@@ -147,29 +154,29 @@ function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, 
       </div>
       
       {/* Stats Row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-2">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 lg:gap-3 mt-2">
         <div className="bg-[#1A1A2E]/50 rounded-lg p-2">
           <div className="text-[10px] text-[#64748B] uppercase">TVL</div>
-          <div className="text-xs font-bold text-white" style={{ fontFamily: "var(--font-departure)" }}>
-            ${tvlUSD.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+          <div className="text-xs font-bold text-white truncate" style={{ fontFamily: "var(--font-departure)" }}>
+            {formatUSDFloat(tvlUSD)}
           </div>
         </div>
         <div className="bg-[#1A1A2E]/50 rounded-lg p-2">
           <div className="text-[10px] text-[#64748B] uppercase">LP Shares</div>
-          <div className="text-xs font-bold text-amber-400" style={{ fontFamily: "var(--font-departure)" }}>
+          <div className="text-xs font-bold text-amber-400 truncate" style={{ fontFamily: "var(--font-departure)" }}>
             {formatNum(lpTotal)}
           </div>
         </div>
         <div className="bg-[#1A1A2E]/50 rounded-lg p-2">
           <div className="text-[10px] text-[#64748B] uppercase">24h Volume</div>
-          <div className="text-xs font-bold text-indigo-400" style={{ fontFamily: "var(--font-departure)" }}>
-            ${(volume24h > 0n ? Number(formatUnits(volume24h, 18)) : 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+          <div className="text-xs font-bold text-indigo-400 truncate" style={{ fontFamily: "var(--font-departure)" }}>
+            {formatUSD(volume24h)}
           </div>
         </div>
         <div className="bg-[#1A1A2E]/50 rounded-lg p-2">
           <div className="text-[10px] text-[#64748B] uppercase">Total Volume</div>
-          <div className="text-xs font-bold text-purple-400" style={{ fontFamily: "var(--font-departure)" }}>
-            ${(totalVolume > 0n ? Number(formatUnits(totalVolume, 18)) : 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+          <div className="text-xs font-bold text-purple-400 truncate" style={{ fontFamily: "var(--font-departure)" }}>
+            {formatUSD(totalVolume)}
           </div>
         </div>
       </div>
@@ -852,13 +859,13 @@ export default function DexAllInOne() {
     <div className="min-h-screen bg-[#0F0F23]">
       {/* Header */}
       <header className="sticky top-0 z-50 bg-[#1A1A2E]/90 backdrop-blur-xl border-b border-[#2D2D44]">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div className="w-full mx-auto px-4 sm:px-6 xl:px-8 py-2 sm:py-3 max-w-[100rem] flex items-center justify-between gap-2">
           <Link href="/" className="flex items-center gap-2">
             <Image src="/NUSD_LOGO.jpg" alt="0xDex" width={32} height={32} className="w-8 h-8 rounded-full" />
             <span className="text-white font-bold" style={{ fontFamily: "var(--font-departure)" }}>0xDex</span>
           </Link>
           <div className="flex items-center gap-3">
-            <div className="text-xs text-[#64748B]">LitVM LiteForge</div>
+            <div className="text-xs text-[#64748B] hidden sm:block">LitVM LiteForge</div>
             {isConnected && address ? (
               <button
                 onClick={() => disconnect()}
@@ -878,9 +885,9 @@ export default function DexAllInOne() {
         </div>
       </header>
 
-      <main className="max-w-[100rem] mx-auto px-4 py-6">
+      <main className="w-full mx-auto px-4 sm:px-6 xl:px-8 py-6 max-w-[100rem]">
         {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-4 2xl:grid-cols-4 gap-3 md:gap-4 mb-4 md:mb-6">
           <StatCard label="TVL" value={formatUSD(stats.totalNUSDLocked)} icon="◫" />
           <StatCard label="Total Volume" value={formatUSD(totalVolume)} icon="◈" />
           <StatCard label="Pools" value={String(allPools?.length || 0)} icon="◫" />
@@ -888,7 +895,7 @@ export default function DexAllInOne() {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-2 mb-6">
+        <div className="grid grid-cols-2 gap-2 mb-4 md:mb-6">
           {[
             { id: "swap", label: "SWAP", colorClass: "pixel-btn-soft-indigo" },
             { id: "addpool", label: "ADD POOL", colorClass: "pixel-btn-soft-rose" },
@@ -896,7 +903,7 @@ export default function DexAllInOne() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as typeof activeTab)}
-              className={`flex-1 py-3 font-bold text-sm transition-all pixel-btn-soft ${
+              className={`py-2 sm:py-3 font-bold text-xs sm:text-sm transition-all pixel-btn-soft ${
                 activeTab === tab.id
                   ? tab.colorClass
                   : "pixel-btn-soft-secondary"
@@ -907,9 +914,9 @@ export default function DexAllInOne() {
           ))}
         </div>
 
-        <div className="grid lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
           {/* Left Panel - Swap */}
-          <div className="bg-[#1A1A2E]/90 border border-[#2D2D44] rounded-2xl p-5">
+          <div className="bg-[#1A1A2E]/90 border border-[#2D2D44] rounded-2xl p-5 xl:p-6">
             {activeTab === "swap" && (
               <>
                 <h2 className="text-lg font-bold text-white mb-4" style={{ fontFamily: "var(--font-departure)" }}>Swap</h2>
@@ -928,7 +935,7 @@ export default function DexAllInOne() {
                       value={swapAmountIn}
                       onChange={(e) => setSwapAmountIn(e.target.value)}
                       placeholder="0.0"
-                      className="w-full bg-transparent text-2xl font-bold text-white outline-none"
+                      className="w-full bg-transparent text-xl sm:text-2xl xl:text-3xl font-bold text-white outline-none"
                       style={{ fontFamily: "var(--font-departure)" }}
                     />
                     <div className="mt-2 flex justify-between items-center">
@@ -999,7 +1006,7 @@ export default function DexAllInOne() {
                       value={swapAmountOut}
                       readOnly
                       placeholder="0.0"
-                      className="w-full bg-transparent text-2xl font-bold text-white outline-none"
+                      className="w-full bg-transparent text-xl sm:text-2xl xl:text-3xl font-bold text-white outline-none"
                       style={{ fontFamily: "var(--font-departure)" }}
                     />
                     <div className="mt-2 flex justify-between items-center">
@@ -1106,7 +1113,7 @@ export default function DexAllInOne() {
                       value={poolAmountToken}
                       onChange={(e) => setPoolAmountToken(e.target.value)}
                       placeholder="0.0"
-                      className="flex-1 bg-[#13131F] p-3 rounded-lg text-lg font-bold text-white outline-none border border-[#2D2D44] focus:border-emerald-500"
+                      className="flex-1 bg-[#13131F] p-3 rounded-lg text-base md:text-lg font-bold text-white outline-none border border-[#2D2D44] focus:border-emerald-500"
                       style={{ fontFamily: "var(--font-departure)" }}
                     />
                     <select
@@ -1132,7 +1139,7 @@ export default function DexAllInOne() {
                     value={poolAmountNUSD}
                     onChange={(e) => setPoolAmountNUSD(e.target.value)}
                     placeholder="0.0"
-                    className="w-full bg-[#13131F] p-3 rounded-lg text-lg font-bold text-white outline-none border border-[#2D2D44] focus:border-emerald-500"
+                    className="w-full bg-[#13131F] p-3 rounded-lg text-base md:text-lg font-bold text-white outline-none border border-[#2D2D44] focus:border-emerald-500"
                     style={{ fontFamily: "var(--font-departure)" }}
                   />
                 </div>
@@ -1202,7 +1209,7 @@ export default function DexAllInOne() {
                     value={createAmountA}
                     onChange={(e) => setCreateAmountA(e.target.value)}
                     placeholder="0.0"
-                    className="w-full bg-[#13131F] px-4 py-3 rounded-lg text-lg font-bold text-white outline-none border border-[#2D2D44] focus:border-rose-500 transition-colors"
+                    className="w-full bg-[#13131F] px-4 py-3 rounded-lg text-base md:text-lg font-bold text-white outline-none border border-[#2D2D44] focus:border-rose-500 transition-colors"
                     style={{ fontFamily: "var(--font-departure)" }}
                   />
                   {createTokenBalance !== undefined && (
@@ -1248,7 +1255,7 @@ export default function DexAllInOne() {
                     value={createAmountB}
                     onChange={(e) => setCreateAmountB(e.target.value)}
                     placeholder="0.0"
-                    className="w-full bg-[#13131F] px-4 py-3 rounded-lg text-lg font-bold text-white outline-none border border-[#2D2D44] focus:border-rose-500 transition-colors"
+                    className="w-full bg-[#13131F] px-4 py-3 rounded-lg text-base md:text-lg font-bold text-white outline-none border border-[#2D2D44] focus:border-rose-500 transition-colors"
                     style={{ fontFamily: "var(--font-departure)" }}
                   />
                   {balanceNUSD !== undefined && (
@@ -1296,11 +1303,11 @@ export default function DexAllInOne() {
 
           {/* Middle Panel - Top Pairs */}
           <div>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-bold text-white" style={{ fontFamily: "var(--font-departure)" }}>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 mb-4">
+              <h2 className="text-base sm:text-lg font-bold text-white shrink-0" style={{ fontFamily: "var(--font-departure)" }}>
                 Top Pairs ({poolOptions.length})
               </h2>
-              <div className="flex gap-1 bg-[#13131F] p-1 rounded-lg">
+              <div className="flex gap-1 bg-[#13131F] p-1 rounded-lg ml-auto">
                 {(["tvl", "vol24h", "volAll", "new"] as const).map((filter) => (
                   <button
                     key={filter}
@@ -1370,7 +1377,7 @@ export default function DexAllInOne() {
           {/* Right Panel - Farm */}
           <div>
             {/* Farm Panel */}
-            <div className="bg-[#1A1A2E]/90 border border-amber-500/30 rounded-2xl p-5">
+            <div className="bg-[#1A1A2E]/90 border border-amber-500/30 rounded-2xl p-5 xl:p-6">
               <h2 className="text-lg font-bold text-amber-400 mb-1" style={{ fontFamily: "var(--font-departure)" }}>
                 Liquidity Mining
               </h2>
@@ -1441,7 +1448,7 @@ export default function DexAllInOne() {
                   value={farmNUSDAmount}
                   onChange={(e) => setFarmNUSDAmount(e.target.value)}
                   placeholder="0.0"
-                  className="w-full bg-[#13131F] p-3 rounded-xl text-lg font-bold text-white outline-none border border-[#2D2D44] focus:border-amber-500"
+                  className="w-full bg-[#13131F] p-3 rounded-xl text-base md:text-lg font-bold text-white outline-none border border-[#2D2D44] focus:border-amber-500"
                   style={{ fontFamily: "var(--font-departure)" }}
                 />
               </div>
@@ -1533,7 +1540,7 @@ export default function DexAllInOne() {
                   value={farmLpAmount}
                   onChange={(e) => setFarmLpAmount(e.target.value)}
                   placeholder="0.0"
-                  className="w-full bg-[#13131F] p-3 rounded-xl text-lg font-bold text-white outline-none border border-[#2D2D44] focus:border-amber-500"
+                  className="w-full bg-[#13131F] p-3 rounded-xl text-base md:text-lg font-bold text-white outline-none border border-[#2D2D44] focus:border-amber-500"
                   style={{ fontFamily: "var(--font-departure)" }}
                 />
               </div>
