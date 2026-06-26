@@ -363,6 +363,20 @@ export default function FactoryPage() {
           )}
         </div>
 
+        {/* Your Tokens */}
+        {mounted && isConnected && myTokens && myTokens.length > 0 && (
+          <div className="bg-[#1A1A2E] p-6 border border-[#2D2D44] mb-8 animate-fadeInUp-delay-3" style={{ clipPath: "polygon(0 8px, 8px 8px, 8px 0, calc(100% - 8px) 0, calc(100% - 8px) 8px, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 8px calc(100% - 8px), 0 calc(100% - 8px))" }}>
+            <h2 className="text-lg font-bold text-white mb-5 flex items-center gap-2" style={{ fontFamily: "var(--font-departure)" }}>
+              <span className="text-emerald-400">◆</span> Your Tokens
+            </h2>
+            <div className="space-y-2">
+              {[...myTokens].reverse().map((token, i) => (
+                <TokenRow key={token} token={token} index={i} />
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Recent Tokens */}
         {allTokens && allTokens.length > 0 && (
           <div className="bg-[#1A1A2E] p-6 border border-[#2D2D44] animate-fadeInUp-delay-3" style={{ clipPath: "polygon(0 8px, 8px 8px, 8px 0, calc(100% - 8px) 0, calc(100% - 8px) 8px, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 8px calc(100% - 8px), 0 calc(100% - 8px))" }}>
@@ -460,7 +474,7 @@ function TokenRow({ token, index }: { token: string; index: number }) {
           )}
         </button>
         <a
-          href={`https://litVM.litescan.io/address/${token}`}
+          href={`https://liteforge.explorer.caldera.xyz/token/${token}`}
           target="_blank"
           rel="noopener noreferrer"
           className="pixel-btn pixel-btn-sm pixel-btn-secondary opacity-0 group-hover:opacity-100 transition-opacity"

@@ -8,7 +8,7 @@ import ChartWindow from "@/app/components/ChartWindow";
 
 import { useAccount, useReadContract, useConnect, useDisconnect, useBlockNumber, useWriteContract, useSwitchChain } from "wagmi";
 import { erc20Abi, maxUint256 } from "viem";
-import { useDexStats, useAllPools, useDexRead, useDexWrite, NATIVE_TOKEN, useTokenBalance, useTokenAllowance, useDexOwner, Token } from "@/lib/use0xDex";
+import { useDexStats, useAllPools, useDexRead, useDexWrite, NATIVE_TOKEN, useTokenBalance, useTokenAllowance, Token } from "@/lib/use0xDex";
 import { DEX_ADDRESS, NATIVE_ADDRESS } from "@/lib/0xDexAbi";
 import { NUSD_ADDRESS, NUSD_ABI } from "@/lib/NUSDContract";
 import { formatUnits, parseUnits, keccak256, encodePacked } from "viem";
@@ -304,9 +304,6 @@ export default function DexAllInOne() {
   const [poolAmountNUSD, setPoolAmountNUSD] = useState("");
   const [pairFilter, setPairFilter] = useState<"tvl" | "vol24h" | "volAll" | "new">("tvl");
 
-  // Check if user is owner
-  const { isOwner, owner } = useDexOwner();
-  
   // Admin state
   const [createTokenA, setCreateTokenA] = useState("");
   const [createTokenB, setCreateTokenB] = useState("");
@@ -913,15 +910,11 @@ export default function DexAllInOne() {
     });
   };
 
-  // Create Pool uses addLiquidity (only owner can create new pools)
+  // Anyone can create a pool by adding initial liquidity to a new pair
   const handleCreatePool = () => {
     if (!isConnected || !ensureCorrectChain()) return;
-    if (!isOwner) {
-      toast.error("Permission denied", "Only contract owner can create new pools");
-      return;
-    }
     if (!createTokenA || !createAmountA || !createAmountB) return;
-    
+
     const tokenA = createTokenA.trim() as `0x${string}`;
     const tokenB = nusdAddress!;
     const amountA = parseUnits(createAmountA, tokenDecimals || 18);
@@ -1302,14 +1295,7 @@ export default function DexAllInOne() {
             {activeTab === "create" && (
               <>
                 <h2 className="text-lg font-bold text-white mb-2" style={{ fontFamily: "var(--font-departure)" }}>Create New Pool</h2>
-                
-                {/* Owner Warning */}
-                {!isOwner && (
-                  <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-400">
-                    Only the contract owner can create new pools. Owner: {owner ? `${owner.slice(0, 10)}...` : "Loading..."}
-                  </div>
-                )}
-                
+
                 {/* Pool Token Address */}
                 <div className="mb-3">
                   <div className="flex justify-between mb-2">
@@ -1425,12 +1411,12 @@ export default function DexAllInOne() {
                 {/* Create Pool Button */}
                 <button
                   onClick={needsCreateApproval ? handleApproveCustomToken : handleCreatePool}
-                  disabled={!isOwner || !createTokenA || !createAmountA || !createAmountB}
+                  disabled={!createTokenA || !createAmountA || !createAmountB}
                   className={`w-full mt-4 py-4 font-bold text-white pixel-btn-soft pixel-btn-soft-full ${
                     needsCreateApproval ? "pixel-btn-soft-amber" : "pixel-btn-soft-rose"
                   }`}
                 >
-                  {!isConnected ? "CONNECT WALLET" : !isOwner ? "NOT OWNER" : !createTokenA ? "ENTER TOKEN ADDRESS" : !createAmountA || !createAmountB ? "ENTER AMOUNTS" : needsCreateApproval ? `APPROVE & CREATE POOL` : "CREATE POOL"}
+                  {!isConnected ? "CONNECT WALLET" : !createTokenA ? "ENTER TOKEN ADDRESS" : !createAmountA || !createAmountB ? "ENTER AMOUNTS" : needsCreateApproval ? `APPROVE & CREATE POOL` : "CREATE POOL"}
                 </button>
               </>
             )}
