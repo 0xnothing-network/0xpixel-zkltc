@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import CandleChart from './CandleChart';
+import CandleChart, { TfValue } from './CandleChart';
 
 interface ChartWindowProps {
   pairId: string;
@@ -9,7 +9,7 @@ interface ChartWindowProps {
   token1: string;
   pairLabel?: string;
   subgraphUrl?: string;
-  initialTimeframe?: number;
+  initialTimeframe?: TfValue;
   onClose: () => void;
 }
 
@@ -31,7 +31,7 @@ export default function ChartWindow({
   token1,
   pairLabel,
   subgraphUrl,
-  initialTimeframe = 5,
+  initialTimeframe = 1440,
   onClose,
 }: ChartWindowProps) {
   const windowRef = useRef<HTMLDivElement>(null);
@@ -69,9 +69,10 @@ export default function ChartWindow({
   const onTitleMouseDown = useCallback((e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('.titlebar-btn')) return;
     dragging.current = true;
+    // Use current pos from closure — refs avoid stale closures and re-render cascading
     dragOffset.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
     e.preventDefault();
-  }, [pos]);
+  }, [pos]); // pos only for initial value, ref keeps it fresh
 
   // ── Resize from edges ───────────────────────────────────────
   const onEdgeMouseDown = useCallback((e: React.MouseEvent, dir: string) => {
@@ -80,7 +81,7 @@ export default function ChartWindow({
     resizing.current = true;
     resizeDir.current = dir;
     resizeStart.current = { x: e.clientX, y: e.clientY, w: size.w, h: size.h, px: pos.x, py: pos.y };
-  }, [size, pos]);
+  }, [size, pos]); // same — initial values from closure, refs for live access
 
   // ── Minimize ───────────────────────────────────────────────
   const toggleMinimize = useCallback(() => {
@@ -209,7 +210,7 @@ return (
             }}
             title="Minimize"
           >
-            {isMinimized ? '+' : '—'}
+            {isMinimized ? '+' : '-'}
           </button>
           <button
             className="titlebar-btn"
@@ -239,7 +240,7 @@ return (
             fontSize: 7, color: COLORS.accent, letterSpacing: '0.08em',
           }}
         >
-          {pairLabel || `${token0?.slice(0, 6)}... / ${token1?.slice(0, 6)}...`} — NOTHING
+          {pairLabel || `${token0?.slice(0, 6)}... / ${token1?.slice(0, 6)}...`}
         </span>
 
         <span
@@ -260,7 +261,7 @@ return (
           token1={token1}
           subgraphUrl={subgraphUrl}
           initialTimeframe={initialTimeframe}
-          height={(fs ? fsHeight : size.h) - 36}
+          height={Math.max(200, (fs ? fsHeight : size.h) - 60)}
           enableRealtime={true}
         />
       </div>

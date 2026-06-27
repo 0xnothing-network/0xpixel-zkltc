@@ -5,7 +5,7 @@
   "scripts": {
     "codegen": "graph codegen",
     "build": "graph build",
-    "deploy": "graph deploy zeroxdex --node https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.0/gn",
+    "deploy": "graph deploy zeroxdex --node https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.4/gn",
     "create-local": "graph create --node http://127.0.0.1:8020 zeroxdex-subgraph",
     "remove-local": "graph remove --node http://127.0.0.1:8020 zeroxdex-subgraph",
     "deploy-local": "graph deploy --node http://127.0.0.1:8020 --ipfs http://127.0.0.1:5001 zeroxdex-subgraph"

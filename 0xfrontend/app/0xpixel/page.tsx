@@ -48,7 +48,7 @@ function CanvasSkeleton() {
       className="aspect-square w-full max-w-[640px] rounded-2xl bg-[#0F0F23] border border-[#2D2D44] flex items-center justify-center animate-pulse"
       style={{ backgroundImage: "linear-gradient(45deg,#1A1A2E 25%,transparent 25%,transparent 75%,#1A1A2E 75%),linear-gradient(45deg,#1A1A2E 25%,transparent 25%,transparent 75%,#1A1A2E 75%)", backgroundSize: "16px 16px", backgroundPosition: "0 0,8px 8px" }}
     >
-      <div className="w-10 h-10 border-3 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+      <div className="w-10 h-10 border-3 border-[#8888ff] border-t-transparent rounded-full animate-spin" />
     </div>
   );
 }
@@ -116,9 +116,9 @@ export default function PixelPage() {
               "radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99,102,241,0.15) 0%, transparent 60%)",
           }}
         />
-        <div className="absolute top-20 left-1/4 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl animate-pulse" />
+        <div className="absolute top-20 left-1/4 w-96 h-96 bg-[#8888ff]/10 rounded-full blur-3xl animate-pulse" />
         <div
-          className="absolute bottom-10 right-1/4 w-64 h-64 bg-purple-500/10 rounded-full blur-3xl animate-pulse"
+          className="absolute bottom-10 right-1/4 w-64 h-64 bg-[#8888ff]/10 rounded-full blur-3xl animate-pulse"
           style={{ animationDelay: "1s" }}
         />
 
@@ -128,7 +128,7 @@ export default function PixelPage() {
             style={{ fontFamily: "var(--font-departure)" }}
           >
             Create your{" "}
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#8888ff] to-[#AAAADD]">
               pixel masterpiece
             </span>
           </h1>

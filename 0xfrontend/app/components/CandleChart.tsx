@@ -1,27 +1,25 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { createChart, ColorType, CrosshairMode, IChartApi, ISeriesApi, CandlestickData, Time } from 'lightweight-charts';
-import { useCandleData } from '@/app/hooks/useCandleData';
+import { useCandleData, SwapEvent, CandleData } from '@/app/hooks/useCandleData';
+import { useRealtimePrice } from '@/lib/use0xDex';
 
 const TF = [
-  { label: '1m', value: 1 },
-  { label: '5m', value: 5 },
-  { label: '15m', value: 15 },
   { label: '1h', value: 60 },
   { label: '4h', value: 240 },
+  { label: '12h', value: 720 },
   { label: '1D', value: 1440 },
-  { label: '1W', value: 10080 },
-  { label: '1M', value: 43200 },
+  { label: '7D', value: 10080 },
+  { label: '30D', value: 43200 },
 ] as const;
 
-type TfValue = typeof TF[number]['value'];
+export type TfValue = typeof TF[number]['value'];
 
 const COLORS = {
   bg: '#0a0a12',
   panelBg: '#0d0d18',
   border: '#2a2a4a',
-  borderBright: '#4a4a7a',
   text: '#7878b0',
   textBright: '#d8d8ff',
   grid: '#1a1a2e',
@@ -30,24 +28,15 @@ const COLORS = {
   accent: '#8888ff',
   toolbarBg: '#0d0d18',
   toolbarBtn: '#1a1a2e',
-  toolbarBtnHover: '#2a2a4a',
   toolbarBtnActive: '#6a6aff',
 };
 
 function formatPrice(v: number) {
+  if (!isFinite(v) || v <= 0) return '--';
   if (v >= 1000) return v.toFixed(2);
   if (v >= 1) return v.toFixed(4);
   if (v >= 0.0001) return v.toFixed(6).replace(/\.?0+$/, '');
-  if (v > 0) return v.toPrecision(6).replace(/\.?0+$/, '');
-  return '0';
-}
-
-interface OHLCV {
-  time: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
+  return v.toPrecision(6).replace(/\.?0+$/, '');
 }
 
 interface CandleChartProps {
@@ -56,10 +45,58 @@ interface CandleChartProps {
   token1: string;
   contractAddress?: `0x${string}`;
   subgraphUrl?: string;
-  initialTimeframe?: number;
+  initialTimeframe?: TfValue;
   height?: number;
   enableRealtime?: boolean;
-  invertPrice?: boolean; // false = price already quoted as NUSD per Token (default), true = invert to Token per NUSD
+  invertPrice?: boolean;
+  fullscreen?: boolean;   // fill viewport instead of fixed height
+}
+
+// ── Build volume map ──────────────────────────────────────────────
+function buildVolumeMap(rawSwaps: SwapEvent[], intervalMinutes: number): Map<number, number> {
+  const map = new Map<number, number>();
+  const bucket = intervalMinutes * 60;
+  for (let i = 0; i < rawSwaps.length; i++) {
+    const s = rawSwaps[i];
+    const ct = Math.floor(Number(s.timestamp) / bucket) * bucket;
+    map.set(ct, (map.get(ct) ?? 0) + Number(s.amountOut));
+  }
+  return map;
+}
+
+// ── Convert candles → chart data ────────────────────────────────
+function toChartData(
+  candles: CandleData[],
+  volumeMap: Map<number, number>,
+  invertPrice: boolean,
+): { candleData: CandlestickData<Time>[]; volumeData: { time: Time; value: number; color: string }[] } {
+  const n = candles.length;
+  const candleData: CandlestickData<Time>[] = new Array(n);
+  const volumeData: { time: Time; value: number; color: string }[] = new Array(n);
+
+  for (let i = 0; i < n; i++) {
+    const c = candles[i];
+    const isUp = invertPrice ? c.close < c.open : c.close >= c.open;
+
+    let o: number, h: number, l: number, cl: number;
+    if (invertPrice) {
+      o  = c.open  > 0 ? 1 / c.open  : c.open;
+      h  = c.high  > 0 ? 1 / c.low   : c.high;
+      l  = c.low   > 0 ? 1 / c.high  : c.low;
+      cl = c.close > 0 ? 1 / c.close : c.close;
+    } else {
+      o = c.open; h = c.high; l = c.low; cl = c.close;
+    }
+
+    candleData[i] = { time: c.time as Time, open: o, high: h, low: l, close: cl };
+    volumeData[i] = {
+      time: c.time as Time,
+      value: volumeMap.get(c.time) ?? 0,
+      color: isUp ? '#00ff8820' : '#ff446620',
+    };
+  }
+
+  return { candleData, volumeData };
 }
 
 export default function CandleChart({
@@ -67,47 +104,176 @@ export default function CandleChart({
   token0,
   token1,
   height = 440,
-  initialTimeframe = 5,
+  initialTimeframe = 1440,
   invertPrice = false,
+  fullscreen = false,
 }: CandleChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+
   const [isClient, setIsClient] = useState(false);
   const [timeframe, setTimeframe] = useState<TfValue>(
-    TF.find(t => t.value === initialTimeframe)?.value ?? 5
+    TF.find(t => t.value === initialTimeframe)?.value ?? 1440
   );
-  const didInitialFit = useRef(false);
+  const [hasData, setHasData] = useState(false);
 
-  // Reset fit flag whenever pair changes so the new chart auto-fits cleanly
-  useEffect(() => {
-    didInitialFit.current = false;
-  }, [pairId]);
+  // Stable refs
+  const fitDoneRef = useRef(false);
+  const lastPairRef = useRef('');
+  const lastTfRef = useRef(0);
+  const rafRef = useRef<number | null>(null);
+  const dataInitializedRef = useRef(false);
+  const pendingRef = useRef<{
+    candleData: CandlestickData<Time>[];
+    volumeData: { time: Time; value: number; color: string }[];
+    fit?: boolean;
+  } | null>(null);
+  const isNewDataRef = useRef(false);
 
-  const { candles = [], rawSwaps = [], isLoading, isError, error } = useCandleData({
+  // ── Candle data ────────────────────────────────────────────────
+  const { candles = [], rawSwaps = [], isLoading } = useCandleData({
     pairId,
     token0,
     token1,
     intervalMinutes: timeframe,
   });
 
-  useEffect(() => { setIsClient(true); }, []);
+  // ── Realtime price ────────────────────────────────────────────
+  const { latestPrice: realtimePrice } = useRealtimePrice(
+    token0 as `0x${string}` | undefined,
+    token1 as `0x${string}` | undefined,
+  );
 
-  // ─── Init chart ───────────────────────────────────────────────
+  // ── Client-side check ─────────────────────────────────────────
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
+
+  // ── Viewport tracking (for fullscreen mode) ─────────────────
+  const [viewportH, setViewportH] = useState<number>(height);
+  useEffect(() => {
+    if (!fullscreen) return;
+    const update = () => setViewportH(window.innerHeight);
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, [fullscreen]);
+
+  // ── Flush ref: always sees latest pendingRef ──────────────────
+  const flushRef = useRef<() => void>(() => {});
+
+  // ── Data effect: build pending + schedule flush ────────────────
+  useEffect(() => {
+    flushRef.current = () => {
+      rafRef.current = null;
+      if (!chartRef.current || !candleSeriesRef.current || !volumeSeriesRef.current) return;
+      if (!pendingRef.current) return;
+
+      const { candleData, volumeData, fit } = pendingRef.current;
+      if (!candleData?.length) return;
+      pendingRef.current = null;
+
+      candleSeriesRef.current.setData(candleData);
+      if (volumeData?.length) {
+        volumeSeriesRef.current.setData(volumeData);
+      }
+
+      // Pin margins tightly so candles fill the chart area with no black gap.
+      // Auto-scale still runs, but we forbid it from adding empty padding.
+      chartRef.current.priceScale('right').applyOptions({
+        autoScale: true,
+        scaleMargins: { top: 0.02, bottom: 0.02 },
+      });
+
+      if (fit && !fitDoneRef.current) {
+        chartRef.current.timeScale().fitContent();
+        fitDoneRef.current = true;
+      }
+
+      dataInitializedRef.current = true;
+      setHasData(true);
+    };
+
+    if (!candles.length) return;
+
+    const isNewPair = lastPairRef.current !== pairId || lastTfRef.current !== timeframe;
+    if (isNewPair) {
+      lastPairRef.current = pairId;
+      lastTfRef.current = timeframe;
+      fitDoneRef.current = false;
+      isNewDataRef.current = true;
+      dataInitializedRef.current = false;
+      lastTimeframeRef.current = null;
+    }
+
+    const vm = buildVolumeMap(rawSwaps, timeframe);
+    const result = toChartData(candles, vm, invertPrice);
+
+    pendingRef.current = {
+      candleData: result.candleData,
+      volumeData: result.volumeData,
+      fit: isNewDataRef.current,
+    };
+    isNewDataRef.current = false;
+
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(flushRef.current);
+  }, [candles, rawSwaps, invertPrice, pairId, timeframe]);
+
+  // ── Realtime candle update ──────────────────────────────────────
+  const lastTimeframeRef = useRef<TfValue | null>(null);
+  useEffect(() => {
+    if (!candleSeriesRef.current || !candles.length || !dataInitializedRef.current) return;
+    if (lastTimeframeRef.current !== null && lastTimeframeRef.current !== timeframe) return;
+    const last = candles[candles.length - 1];
+    if (!last) return;
+    lastTimeframeRef.current = timeframe;
+
+    const livePrice = realtimePrice?.price ?? last.close;
+    const dispLive = invertPrice && livePrice > 0 ? 1 / livePrice : livePrice;
+    const o = invertPrice && last.open > 0 ? 1 / last.open : last.open;
+    const l = invertPrice && last.low > 0 ? 1 / last.high : last.low;
+    const h = invertPrice && last.high > 0 ? 1 / last.low : last.high;
+
+    if (dataInitializedRef.current) {
+      candleSeriesRef.current?.update({
+        time: last.time as Time,
+        open: o,
+        high: Math.max(h, dispLive),
+        low: Math.min(l, dispLive),
+        close: dispLive,
+      });
+    }
+  }, [realtimePrice?.price, candles, invertPrice, timeframe]);
+
+  // ── Re-fit on height prop change (fullscreen toggle) ──────────
+  useEffect(() => {
+    if (!chartRef.current || !chartContainerRef.current) return;
+    const r = requestAnimationFrame(() => {
+      if (!chartRef.current || !chartContainerRef.current) return;
+      chartRef.current.applyOptions({
+        width: chartContainerRef.current.clientWidth,
+        height: chartContainerRef.current.clientHeight || Math.max(100, height - 52),
+      });
+      chartRef.current.timeScale().fitContent();
+    });
+    return () => cancelAnimationFrame(r);
+  }, [height]);
+
+  // ── Chart init / destroy ──────────────────────────────────────
   useEffect(() => {
     if (!isClient || !chartContainerRef.current) return;
 
     const container = chartContainerRef.current;
-
-    if (chartRef.current) {
-      chartRef.current.remove();
-      chartRef.current = null;
-    }
+    const totalH = fullscreen ? viewportH : height;
+    const containerH = container.clientHeight || Math.max(100, totalH - 52);
+    const containerW = container.clientWidth || (fullscreen ? window.innerWidth : 400);
 
     const chart = createChart(container, {
-      width: container.clientWidth,
-      height: height - 44, // minus toolbar height
+      width: containerW,
+      height: containerH,
       layout: {
         background: { type: ColorType.Solid, color: COLORS.bg },
         textColor: COLORS.text,
@@ -121,38 +287,43 @@ export default function CandleChart({
       },
       crosshair: {
         mode: CrosshairMode.Normal,
-        vertLine: {
-          color: COLORS.text,
-          width: 1,
-          style: 2,
-          labelBackgroundColor: COLORS.toolbarBg,
-        },
-        horzLine: {
-          color: COLORS.text,
-          width: 1,
-          style: 2,
-          labelBackgroundColor: COLORS.toolbarBg,
-        },
+        vertLine: { color: COLORS.text, width: 1, style: 2, labelBackgroundColor: COLORS.toolbarBg },
+        horzLine: { color: COLORS.text, width: 1, style: 2, labelBackgroundColor: COLORS.toolbarBg },
       },
       rightPriceScale: {
         borderColor: COLORS.border,
         textColor: COLORS.text,
-        scaleMargins: { top: 0.05, bottom: 0.32 },
+        scaleMargins: { top: 0.02, bottom: 0.02 },
         visible: true,
+        alignLabels: true,
       },
       timeScale: {
         borderColor: COLORS.border,
         timeVisible: true,
         secondsVisible: false,
+        rightOffset: 0,
+        barSpacing: 6,
+        minBarSpacing: 1,
+        fixLeftEdge: false,
+        fixRightEdge: false,
+        shiftVisibleRangeOnNewBar: true,
       },
-      // Interactions start DISABLED — enabled once the first swap arrives
-      handleScale: { mouseWheel: false, pinch: false, axisPressedMouseMove: false },
-      handleScroll: { mouseWheel: false, pressedMouseMove: false, horzTouchDrag: false, vertTouchDrag: false },
+      handleScale: {
+        mouseWheel: true,
+        pinch: true,
+        axisPressedMouseMove: true,
+        axisDoubleClickReset: true,
+      },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
+      },
+      kineticScroll: { mouse: true, touch: true },
     });
 
     chartRef.current = chart;
-
-    // Candlestick series
     const candleSeries = chart.addCandlestickSeries({
       upColor: COLORS.bullish,
       downColor: COLORS.bearish,
@@ -165,183 +336,113 @@ export default function CandleChart({
     });
     candleSeriesRef.current = candleSeries;
 
-    // Volume histogram (bottom 20%)
     const volumeSeries = chart.addHistogramSeries({
       color: '#00ff8830',
       priceFormat: { type: 'volume' },
       priceScaleId: 'volume',
     });
     chart.priceScale('volume').applyOptions({
-      scaleMargins: { top: 0.8, bottom: 0 },
+      scaleMargins: { top: 0.88, bottom: 0 },
+      visible: false,
     });
     volumeSeriesRef.current = volumeSeries;
 
-    // Crosshair subscription for OHLCV bar
-    chart.subscribeCrosshairMove((param) => {
-      const ohlcvBar = document.getElementById('ohlcv-bar');
-      if (!ohlcvBar || !param.time) { return; }
+    // ── OHLCV bar ───────────────────────────────────────────────
+    const crosshairHandler = (() => {
+      const lastUpdateRef = { current: 0 };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (param: any) => {
+        const ohlcvBar = document.getElementById('ohlcv-bar');
+        if (!ohlcvBar) return;
+        const now = Date.now();
+        if (now - lastUpdateRef.current < 50) return;
+        lastUpdateRef.current = now;
 
-      const bar = param.seriesData.get(candleSeries) as CandlestickData<Time> | undefined;
-        if (bar) {
-        const fmt = (n: number) => {
-          if (n >= 1000) return n.toFixed(2);
-          if (n >= 1) return n.toFixed(4);
-          if (n >= 0.0001) return n.toFixed(6).replace(/\.?0+$/, '');
-          if (n > 0) return n.toPrecision(6).replace(/\.?0+$/, '');
-          return '0';
-        };
-        // Apply optional invertPrice on top of raw NUSD-per-Token prices.
-        const dispOpen = invertPrice ? (bar.open > 0 ? 1 / bar.open : 0) : bar.open;
-        const dispHigh = invertPrice ? (bar.high > 0 ? 1 / bar.low  : 0) : bar.high;
-        const dispLow  = invertPrice ? (bar.low  > 0 ? 1 / bar.high : 0) : bar.low;
-        const dispClose= invertPrice ? (bar.close> 0 ? 1 / bar.close: 0) : bar.close;
+        const bar = param?.seriesData?.get(candleSeries) as CandlestickData<Time> | undefined;
+        if (!bar || !param?.time) {
+          ohlcvBar.innerHTML = '';
+          return;
+        }
+
+        const fmt = (n: number) => formatPrice(n);
+
+        let dispOpen: number, dispHigh: number, dispLow: number, dispClose: number;
+        if (invertPrice) {
+          dispOpen  = bar.open  > 0 ? 1 / bar.open  : bar.open;
+          dispHigh  = bar.high > 0 ? Math.max(1 / bar.low, 1 / bar.high) : bar.high;
+          dispLow   = bar.low  > 0 ? Math.min(1 / bar.high, 1 / bar.low)  : bar.low;
+          dispClose = bar.close > 0 ? 1 / bar.close : bar.close;
+        } else {
+          dispOpen = bar.open; dispHigh = bar.high; dispLow = bar.low; dispClose = bar.close;
+        }
+
         const change = dispOpen ? ((dispClose - dispOpen) / dispOpen * 100) : 0;
         const sign = change >= 0 ? '+' : '';
-        ohlcvBar.innerHTML =
-          `<span style="font-family:\'Press Start 2P\',monospace;font-size:6px;color:${COLORS.text}">O</span><span style="font-family:\'Press Start 2P\',monospace;font-size:6px;color:${COLORS.textBright}">${fmt(dispOpen)}</span>` +
-          `<span style="font-family:\'Press Start 2P\',monospace;font-size:6px;color:${COLORS.text};margin-left:6px">H</span><span style="font-family:\'Press Start 2P\',monospace;font-size:6px;color:${COLORS.bullish}">${fmt(dispHigh)}</span>` +
-          `<span style="font-family:\'Press Start 2P\',monospace;font-size:6px;color:${COLORS.text};margin-left:6px">L</span><span style="font-family:\'Press Start 2P\',monospace;font-size:6px;color:${COLORS.bearish}">${fmt(dispLow)}</span>` +
-          `<span style="font-family:\'Press Start 2P\',monospace;font-size:6px;color:${COLORS.text};margin-left:6px">C</span><span style="font-family:\'Press Start 2P\',monospace;font-size:6px;color:${COLORS.textBright}">${fmt(dispClose)}</span>` +
-          `<span style="font-family:\'Press Start 2P\',monospace;font-size:6px;margin-left:8px;color:${change >= 0 ? COLORS.bullish : COLORS.bearish}">${sign}${change.toFixed(2)}%</span>`;
-      }
-    });
 
-    // Resize observer
+        ohlcvBar.innerHTML =
+          `<span style="color:${COLORS.text}">O</span>` +
+          `<span style="color:${COLORS.textBright}">${fmt(dispOpen)}</span>` +
+          `<span style="color:${COLORS.text};margin-left:6px">H</span>` +
+          `<span style="color:${COLORS.bullish}">${fmt(dispHigh)}</span>` +
+          `<span style="color:${COLORS.text};margin-left:6px">L</span>` +
+          `<span style="color:${COLORS.bearish}">${fmt(dispLow)}</span>` +
+          `<span style="color:${COLORS.text};margin-left:6px">C</span>` +
+          `<span style="color:${COLORS.textBright}">${fmt(dispClose)}</span>` +
+          `<span style="margin-left:8px;color:${change >= 0 ? COLORS.bullish : COLORS.bearish}">${sign}${change.toFixed(2)}%</span>`;
+      };
+    })();
+
+    chart.subscribeCrosshairMove(crosshairHandler);
+
+    // ── ResizeObserver ────────────────────────────────────────
     const ro = new ResizeObserver(() => {
       if (container && chartRef.current) {
-        chartRef.current.applyOptions({ width: container.clientWidth });
+        chartRef.current.applyOptions({
+          width: container.clientWidth,
+          height: container.clientHeight || Math.max(100, height - 44),
+        });
       }
     });
     ro.observe(container);
 
     return () => {
       ro.disconnect();
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+      chart.unsubscribeCrosshairMove(crosshairHandler);
       chart.remove();
       chartRef.current = null;
     };
-  }, [isClient, pairId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isClient, fullscreen, viewportH]);
 
-  // Update chart size when height prop changes (e.g. window resize), without rebuilding chart
-  useEffect(() => {
-    if (!chartRef.current || !chartContainerRef.current) return;
-    const newWidth = chartContainerRef.current.clientWidth;
-    const newHeight = height - 44;
-    chartRef.current.applyOptions({ width: newWidth, height: newHeight });
-    // Only fit content when height genuinely changes (user resized the window),
-    // NOT on every drag-move that nudges the container 1px sideways.
-    // The initial fit is handled in the data push useEffect via didInitialFit.
-  }, [height]);
-
-  // ─── Push data to chart ──────────────────────────────────────
-  useEffect(() => {
-    if (!candleSeriesRef.current || !volumeSeriesRef.current || !chartRef.current) return;
-
-    if (!candles.length) {
-      // Disable interactions so clicking empty chart doesn't freeze anything
-      chartRef.current.applyOptions({
-        handleScale: { mouseWheel: false, pinch: false, axisPressedMouseMove: false },
-        handleScroll: { mouseWheel: false, pressedMouseMove: false, horzTouchDrag: false, vertTouchDrag: false },
-      });
-      candleSeriesRef.current.setData([]);
-      volumeSeriesRef.current.setData([]);
-      return;
-    }
-
-    // Enable interactions only once data arrives
-    chartRef.current.applyOptions({
-      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
-      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
-    });
-
-    const candleData: CandlestickData<Time>[] = candles.map(c => {
-      // Apply +0.1% markup so chart price aligns with standard pool spot
-      const o = invertPrice ? 1 / (c.open * MARKUP) : c.open * MARKUP;
-      const h = invertPrice ? 1 / (c.low  * MARKUP) : c.high * MARKUP;
-      const l = invertPrice ? 1 / (c.high * MARKUP) : c.low  * MARKUP;
-      const cl = invertPrice ? 1 / (c.close* MARKUP) : c.close* MARKUP;
-      return { time: c.time as Time, open: o, high: h, low: l, close: cl };
-    });
-
-    // Build synthetic volume from swap amounts per candle
-    const swapMap = new Map<number, number>();
-    for (const swap of rawSwaps) {
-      const t = Number(swap.timestamp);
-      const candleTime = Math.floor(t / (timeframe * 60)) * (timeframe * 60);
-      const prev = swapMap.get(candleTime) ?? 0;
-      swapMap.set(candleTime, prev + Number(swap.amountOut));
-    }
-
-    const volumeData = candles.map(c => {
-      const isUp = invertPrice ? c.close < c.open : c.close >= c.open;
-      return {
-        time: c.time as Time,
-        value: swapMap.get(c.time) ?? 0,
-        color: isUp ? '#00ff8820' : '#ff446620',
-      };
-    });
-
-    candleSeriesRef.current.setData(candleData);
-    volumeSeriesRef.current.setData(volumeData);
-
-    // Realtime tick: update the live (last) candle using the most recent swap
-    // so the in-progress candle's close/high/low update on every 5s poll.
-    if (last && rawSwaps.length > 0) {
-      const sortedSwaps = [...rawSwaps].sort(
-        (a, b) => Number(a.timestamp) - Number(b.timestamp)
-      );
-      const latestSwap = sortedSwaps[sortedSwaps.length - 1];
-      const ai = Number(latestSwap.amountIn);
-      const ao = Number(latestSwap.amountOut);
-      const ti = (latestSwap.tokenIn || '').toLowerCase();
-      const to = (latestSwap.tokenOut || '').toLowerCase();
-      const t0l = token0.toLowerCase();
-      const t1l = token1.toLowerCase();
-      let livePrice = 0;
-      if (ai > 0 && ao > 0) {
-        if (ti === t0l && to === t1l) {
-          livePrice = ai / ao;
-        } else if (ti === t1l && to === t0l) {
-          livePrice = ao / ai;
-        }
-      }
-      if (livePrice > 0) {
-        const finalLast = invertPrice ? 1 / (livePrice * MARKUP) : livePrice * MARKUP;
-        const prev = candleData[candleData.length - 1];
-        candleSeriesRef.current.update({
-          time: last.time as Time,
-          open: prev.open,
-          high: Math.max(prev.high, finalLast),
-          low: Math.min(prev.low, finalLast),
-          close: finalLast,
-        });
-      }
-    }
-
-    // Only auto-fit on very first data load, preserve user's zoom/scroll after
-    if (!didInitialFit.current) {
-      chartRef.current?.timeScale().fitContent();
-      didInitialFit.current = true;
-    }
-    // Recompute when rawSwaps reference changes (5s poll) or invert flips
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candles, timeframe, pairId, invertPrice]);
-
-  // ─── Helpers ─────────────────────────────────────────────────
-  const last = candles[candles.length - 1];
-  // Raw candle prices are NUSD per Token (matching PoolCard spot). Apply invertPrice
-  // only when explicitly requested (e.g. legacy callers asking for Token per NUSD).
-  // +0.1% offset aligns chart price with the standard pool price.
-  const MARKUP = 1.001;
-  const lastPrice = last?.close ? (invertPrice && last.close > 0 ? 1 / (last.close * MARKUP) : last.close * MARKUP) : 0;
+  // ── Price stats ───────────────────────────────────────────────
+  const lastCandle = candles[candles.length - 1];
+  const lastPrice = lastCandle?.close
+    ? (invertPrice && lastCandle.close > 0 ? 1 / lastCandle.close : lastCandle.close)
+    : 0;
   const firstPrice = candles[0]?.open
-    ? (invertPrice && candles[0].open > 0 ? 1 / (candles[0].open * MARKUP) : candles[0].open * MARKUP)
+    ? (invertPrice && candles[0].open > 0 ? 1 / candles[0].open : candles[0].open)
     : 0;
   const pctChange = firstPrice ? ((lastPrice - firstPrice) / firstPrice * 100) : 0;
-  const tfLabel = TF.find(t => t.value === timeframe)?.label ?? `${timeframe}m`;
+
+  // Memoize skeleton bars so they don't re-randomize on every render
+  const skeletonBars = useMemo(() => Array.from({ length: 6 }, (_, i) => ({
+    width: 40 + (i * 17) % 50,
+    marginLeft: i % 2 === 0 ? 0 : (i * 11) % 20,
+  })), []);
 
   if (!isClient) {
     return (
-      <div style={{ height, background: COLORS.bg }} className="flex items-center justify-center">
+      <div
+        style={{
+          height,
+          background: COLORS.bg,
+          border: `1px solid ${COLORS.border}`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
         <span style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 8, color: COLORS.text }}>
           LOADING...
         </span>
@@ -351,24 +452,31 @@ export default function CandleChart({
 
   return (
     <div
-      className="w-full overflow-hidden border"
       style={{
-        height,
+        height: fullscreen ? viewportH : height,
+        width: fullscreen ? '100vw' : '100%',
         background: COLORS.bg,
-        borderColor: COLORS.border,
-        boxShadow: `inset 0 0 0 2px ${COLORS.border}, inset 0 0 0 4px ${COLORS.bg}`,
+        border: fullscreen ? 'none' : `1px solid ${COLORS.border}`,
+        boxShadow: fullscreen ? 'none' : `inset 0 0 0 2px ${COLORS.border}, inset 0 0 0 4px ${COLORS.bg}`,
+        position: 'relative',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
       }}
     >
       {/* ── Toolbar ── */}
       <div
-        className="flex items-center px-2 gap-1"
         style={{
           height: 32,
           background: COLORS.toolbarBg,
           borderBottom: `2px solid ${COLORS.border}`,
+          display: 'flex',
+          alignItems: 'center',
+          padding: '0 8px',
+          gap: 4,
+          flexShrink: 0,
         }}
       >
-        {/* Symbol label */}
         <span
           style={{
             fontFamily: "'Press Start 2P', monospace",
@@ -377,63 +485,46 @@ export default function CandleChart({
             letterSpacing: '0.05em',
           }}
         >
-          {token0 ? `${token0.slice(0, 6)}...${token0.slice(-4)}` : '——'} / {token1 ? `${token1.slice(0, 6)}...${token1.slice(-4)}` : '——'}
+          {token0 ? `${token0.slice(0, 6)}...${token0.slice(-4)}` : '--'} /{' '}
+          {token1 ? `${token1.slice(0, 6)}...${token1.slice(-4)}` : '--'}
         </span>
 
-        {/* Price + change */}
-        {last && (
+        {lastCandle && (
           <>
-            <span
-              style={{
-                fontFamily: "'Press Start 2P', monospace",
-                fontSize: 7,
-                color: COLORS.textBright,
-              }}
-            >
+            <span style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 7, color: COLORS.textBright }}>
               {formatPrice(lastPrice)}
             </span>
-            <span
-              style={{
-                fontFamily: "'Press Start 2P', monospace",
-                fontSize: 7,
-                color: pctChange >= 0 ? COLORS.bullish : COLORS.bearish,
-              }}
-            >
+            <span style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 7, color: pctChange >= 0 ? COLORS.bullish : COLORS.bearish }}>
               {pctChange >= 0 ? '+' : ''}{pctChange.toFixed(2)}%
             </span>
           </>
         )}
 
-        {/* Spacer */}
-        <div className="flex-1" />
+        <div style={{ flex: 1 }} />
 
-        {/* Timeframe buttons */}
-        <div className="flex items-center gap-[2px]">
-          {TF.map(tf => (
-            <button
-              key={tf.value}
-              onClick={() => setTimeframe(tf.value)}
-              style={{
-                fontFamily: "'Press Start 2P', monospace",
-                fontSize: 6,
-                background: timeframe === tf.value ? COLORS.toolbarBtnActive : COLORS.toolbarBtn,
-                color: timeframe === tf.value ? '#000' : COLORS.text,
-                border: `1px solid ${timeframe === tf.value ? COLORS.accent : COLORS.border}`,
-                padding: '3px 5px',
-                cursor: 'pointer',
-                transition: 'none',
-              }}
-            >
-              {tf.label}
-            </button>
-          ))}
-        </div>
+        {TF.map(tf => (
+          <button
+            key={tf.value}
+            onClick={() => setTimeframe(tf.value)}
+            style={{
+              fontFamily: "'Press Start 2P', monospace",
+              fontSize: 6,
+              background: timeframe === tf.value ? COLORS.toolbarBtnActive : COLORS.toolbarBtn,
+              color: timeframe === tf.value ? '#000' : COLORS.text,
+              border: `1px solid ${timeframe === tf.value ? COLORS.accent : COLORS.border}`,
+              padding: '3px 5px',
+              cursor: 'pointer',
+            }}
+          >
+            {tf.label}
+          </button>
+        ))}
 
-        {/* Loading dot */}
         {isLoading && (
           <div
             style={{
-              width: 6, height: 6,
+              width: 6,
+              height: 6,
               background: COLORS.accent,
               animation: 'pixelBlink 0.5s steps(1) infinite',
             }}
@@ -445,7 +536,6 @@ export default function CandleChart({
       {/* ── OHLCV bar ── */}
       <div
         id="ohlcv-bar"
-        className="flex items-center px-3"
         style={{
           height: 20,
           background: COLORS.panelBg,
@@ -453,31 +543,80 @@ export default function CandleChart({
           fontFamily: "'Press Start 2P', monospace",
           fontSize: 6,
           color: COLORS.text,
+          display: 'flex',
+          alignItems: 'center',
+          padding: '0 12px',
+          gap: 2,
+          flexShrink: 0,
         }}
-      >
-        <span style={{ color: COLORS.bullish }}>H</span>
-        <span style={{ color: COLORS.textBright, marginLeft: 2 }}>{last ? formatPrice(invertPrice && last.high > 0 ? 1 / last.low : last.high) : '——'}</span>
-        <span style={{ color: COLORS.border, margin: '0 6px' }}>|</span>
-        <span style={{ color: COLORS.bearish }}>L</span>
-        <span style={{ color: COLORS.textBright, marginLeft: 2 }}>{last ? formatPrice(invertPrice && last.low > 0 ? 1 / last.high : last.low) : '——'}</span>
-        <span style={{ color: COLORS.border, margin: '0 6px' }}>|</span>
-        <span style={{ color: COLORS.text }}>VOL</span>
-        <span style={{ color: COLORS.textBright, marginLeft: 2 }}>{last ? Number(last.high).toExponential(1) : '——'}</span>
-      </div>
+      />
 
       {/* ── Chart area ── */}
-      <div ref={chartContainerRef} className="w-full" style={{ flex: 1, height: `calc(100% - 52px)` }} />
+      <div
+        ref={chartContainerRef}
+        style={{ flex: 1, minHeight: 0, width: '100%' }}
+      />
 
-      {/* ── Error / empty state ── */}
-      {isError && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/60 font-mono text-xs text-red-400">
-          Error: {error?.message}
+      {/* ── Loading overlay ── */}
+      {isLoading && !hasData && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 52,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: COLORS.bg,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 12,
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 192 }}>
+            {skeletonBars.map((bar, i) => (
+              <div
+                key={i}
+                style={{
+                  height: 12,
+                  background: `linear-gradient(90deg, #1a1a2e 25%, #2a2a4a 50%, #1a1a2e 75%)`,
+                  backgroundSize: '200% 100%',
+                  animation: 'shimmer 1.2s infinite',
+                  width: bar.width,
+                  marginLeft: bar.marginLeft,
+                  borderRadius: 2,
+                }}
+              />
+            ))}
+          </div>
+          <span style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 6, color: COLORS.text }}>
+            LOADING...
+          </span>
         </div>
       )}
-      {!isLoading && !isError && candles.length === 0 && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center font-mono text-xs" style={{ color: COLORS.text }}>
-          <span>No chart data for {tfLabel}</span>
-          <span className="text-[#2D2D44] mt-1">Swap on this pair to generate candles</span>
+
+      {/* ── Empty state ── */}
+      {!isLoading && !hasData && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 52,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontFamily: "'Press Start 2P', monospace",
+            fontSize: 6,
+            color: COLORS.text,
+            gap: 4,
+          }}
+        >
+          <span>NO DATA</span>
+          <span style={{ color: '#2D2D44', fontSize: 5 }}>Swap on this pair to generate candles</span>
         </div>
       )}
     </div>

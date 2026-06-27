@@ -6,15 +6,29 @@ import {
   useWriteContract,
   useAccount,
   useBalance,
+  useWatchContractEvent,
 } from "wagmi";
 import { erc20Abi, formatUnits, parseUnits } from "viem";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import {
   DEX_ABI,
   DEX_ADDRESS,
   NATIVE_ADDRESS,
   PoolInfo,
 } from "./0xDexAbi";
+
+// ============================================================
+// Debounce utility
+// ============================================================
+
+function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  useEffect(() => {
+    const handler = setTimeout(() => setDebouncedValue(value), delay);
+    return () => clearTimeout(handler);
+  }, [value, delay]);
+  return debouncedValue;
+}
 
 const MaxUint256 =
   115792089237316195423570985008687907853269984665640564039457584007913129639935n;
@@ -320,9 +334,14 @@ export function usePoolPriceInfo(pairId: `0x${string}` | undefined) {
 }
 
 export function useSpotPrice(tokenIn: `0x${string}` | undefined, tokenOut: `0x${string}` | undefined) {
-  return useDexRead<bigint>(
+  const result = useDexRead<bigint>(
     "getPrice",
     tokenIn && tokenOut ? [tokenIn, tokenOut] : undefined,
+  );
+
+  return useMemo(
+    () => ({ ...result }),
+    [result],
   );
 }
 
@@ -347,10 +366,12 @@ export function useUserNUSDLocked() {
 }
 
 export function useDexStats() {
-  const { data: totalNUSDLocked } = useDexRead<bigint>("totalNUSDLocked");
-  const { data: totalRewardPool } = useDexRead<bigint>("totalRewardPool");
-  const { data: accRewardPerNUSD } = useDexRead<bigint>("accRewardPerNUSD");
-  const { data: swapFee } = useDexRead<bigint>("swapFee");
+  const { data: totalNUSDLocked, isLoading: loadingNUSD } = useDexRead<bigint>("totalNUSDLocked");
+  const { data: totalRewardPool, isLoading: loadingReward } = useDexRead<bigint>("totalRewardPool");
+  const { data: accRewardPerNUSD, isLoading: loadingAcc } = useDexRead<bigint>("accRewardPerNUSD");
+  const { data: swapFee, isLoading: loadingFee } = useDexRead<bigint>("swapFee");
+
+  const isLoading = loadingNUSD || loadingReward || loadingAcc || loadingFee;
 
   return useMemo(
     () => ({
@@ -358,8 +379,9 @@ export function useDexStats() {
       totalRewardPool: totalRewardPool ?? 0n,
       accRewardPerNUSD: accRewardPerNUSD ?? 0n,
       swapFee: swapFee ?? 0n,
+      loading: isLoading,
     }),
-    [totalNUSDLocked, totalRewardPool, accRewardPerNUSD, swapFee],
+    [totalNUSDLocked, totalRewardPool, accRewardPerNUSD, swapFee, isLoading],
   );
 }
 
@@ -400,7 +422,7 @@ export function useSwapQuote(
     tokenOut?.address,
   );
 
-  return useMemo(() => {
+  const quote = useMemo(() => {
     if (!pool || !tokenIn || !tokenOut || amountInFormatted === 0n) return null;
     if (pool.reserve0 === 0n || pool.reserve1 === 0n) return null;
 
@@ -417,7 +439,6 @@ export function useSwapQuote(
 
     let priceImpact = 0;
     if (reserveIn > 0n) {
-      // impact = amountIn / reserveIn * 100 (approximate)
       const impactBp = Number((amountInFormatted * 10000n) / reserveIn);
       priceImpact = impactBp / 100;
     }
@@ -429,5 +450,165 @@ export function useSwapQuote(
       fee,
       pairId: pairId!,
     };
-  }, [pool, amountInFormatted, tokenIn, tokenOut, swapFeeBps, pairId]);
+  }, [amountInFormatted, tokenIn, tokenOut, pool]);
+
+  return quote;
+}
+
+// ============================================================
+// Realtime price from contract events — instant, no subgraph delay
+// ============================================================
+
+export interface RealtimePrice {
+  price: number;       // NUSD per Token (matches chart convention)
+  rawAmountIn: string;
+  rawAmountOut: string;
+  timestamp: number;
+}
+
+interface SwappedEvent {
+  args: {
+    user: `0x${string}`;
+    tokenIn: `0x${string}`;
+    tokenOut: `0x${string}`;
+    amountIn: bigint;
+    amountOut: bigint;
+    fee: bigint;
+  } | undefined;
+  blockNumber: bigint;
+}
+
+/**
+ * Watch live Swapped events on the DEX contract and derive the realtime price.
+ * Updates instantly when any swap occurs — no subgraph delay.
+ *
+ * Price is always quoted as token0_per_token1 (Token per NUSD when token0=NUSD).
+ *
+ * @param token0  First token address (e.g. NUSD)
+ * @param token1  Second token address (e.g. zkLTC)
+ * @param lookback Number of recent events to keep in history (default 50)
+ */
+export function useRealtimePrice(
+  token0: `0x${string}` | undefined,
+  token1: `0x${string}` | undefined,
+  lookback = 50,
+) {
+  const [events, setEvents] = useState<SwappedEvent[]>(() => {
+    // Restore from sessionStorage cache immediately (instant on mount)
+    if (typeof window !== 'undefined' && token0 && token1) {
+      const t0 = token0.toLowerCase();
+      const t1 = token1.toLowerCase();
+      const ck = `rtprice:${t0}:${t1}`;
+      try {
+        const cached = sessionStorage.getItem(ck);
+        if (cached) {
+          const parsed = JSON.parse(cached) as SwappedEvent[];
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed;
+          }
+        }
+      } catch {}
+    }
+    return [];
+  });
+
+  useWatchContractEvent({
+    address: DEX_ADDRESS,
+    abi: DEX_ABI,
+    eventName: "Swapped",
+    onLogs: (logs) => {
+      setEvents((prev) => {
+        const updated = [
+          ...logs.map((log) => ({
+            args: log.args as SwappedEvent["args"],
+            blockNumber: log.blockNumber,
+          })),
+          ...prev,
+        ].slice(0, lookback);
+
+        // Persist to sessionStorage for instant restore on next mount
+        if (token0 && token1 && updated.length > 0) {
+          const t0 = token0.toLowerCase();
+          const t1 = token1.toLowerCase();
+          const ck = `rtprice:${t0}:${t1}`;
+          try {
+            sessionStorage.setItem(ck, JSON.stringify(updated.slice(0, 20)));
+          } catch {}
+        }
+
+        return updated;
+      });
+    },
+  });
+
+  // Derive the latest price from the newest event involving these two tokens
+  const latest = useMemo<RealtimePrice | null>(() => {
+    if (!token0 || !token1) return null;
+    const t0 = token0.toLowerCase();
+    const t1 = token1.toLowerCase();
+    const event = events.find(
+      (e) =>
+        e.args &&
+        ((e.args.tokenIn.toLowerCase() === t0 && e.args.tokenOut.toLowerCase() === t1) ||
+          (e.args.tokenIn.toLowerCase() === t1 && e.args.tokenOut.toLowerCase() === t0)),
+    );
+    if (!event?.args) return null;
+    const { tokenIn, tokenOut, amountIn, amountOut } = event.args;
+    const ai = Number(amountIn);
+    const ao = Number(amountOut);
+    if (ai <= 0 || ao <= 0) return null;
+
+    // Price always = token1_per_token0 regardless of swap direction
+    // Forward (token0→token1): price = ao/ai
+    // Reverse (token1→token0): price = ai/ao
+    let price: number;
+    if (tokenIn.toLowerCase() === t0) {
+      price = ai > 0 ? ao / ai : 0; // forward: token0 in, token1 out
+    } else {
+      price = ao > 0 ? ai / ao : 0; // reverse: token1 in, token0 out
+    }
+    if (!isFinite(price) || price <= 0) return null;
+    return {
+      price,
+      rawAmountIn: amountIn.toString(),
+      rawAmountOut: amountOut.toString(),
+      timestamp: Number(event.blockNumber),
+    };
+  }, [events, token0, token1]);
+
+  return { latestPrice: latest, recentEvents: events };
+}
+
+/**
+ * Subscribe to realtime price updates for a token pair and call onUpdate
+ * whenever the price changes (with optional throttle in ms).
+ */
+export function useRealtimePriceCallback(
+  token0: `0x${string}` | undefined,
+  token1: `0x${string}` | undefined,
+  onUpdate: (price: number) => void,
+  throttleMs = 100,
+) {
+  const { latestPrice } = useRealtimePrice(token0, token1);
+  const lastUpdateRef = useRef(0);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!latestPrice) return;
+    const now = Date.now();
+    if (now - lastUpdateRef.current < throttleMs) {
+      // Throttle: cancel pending and schedule new
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      timeoutRef.current = setTimeout(() => {
+        lastUpdateRef.current = Date.now();
+        onUpdate(latestPrice.price);
+      }, throttleMs);
+    } else {
+      lastUpdateRef.current = now;
+      onUpdate(latestPrice.price);
+    }
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, [latestPrice, throttleMs, onUpdate]);
 }

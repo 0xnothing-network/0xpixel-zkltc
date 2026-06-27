@@ -44,7 +44,7 @@ function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, 
     <div className="p-4 rounded-xl bg-[#13131F] border border-[#2D2D44] hover:border-[#3D3D54] transition-colors">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center text-white text-xs font-bold">
+          <div className="w-8 h-8 rounded-full bg-[#8888ff]/20 border border-[#8888ff]/40 flex items-center justify-center text-[#8888ff] text-xs font-bold">
             {token0Symbol[0]}{token1Symbol[0]}
           </div>
           <span className="font-bold text-white" style={{ fontFamily: "var(--font-departure)" }}>
@@ -237,7 +237,7 @@ export default function PoolsPage() {
       <header className="sticky top-0 z-50 bg-[#1A1A2E]/90 backdrop-blur-xl border-b border-[#2D2D44]">
         <div className="max-w-7xl mx-auto px-5 py-3.5 flex items-center justify-between gap-4">
           <Link href="/" className="flex items-center gap-2.5 group">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center text-white font-bold">
+            <div className="w-9 h-9 rounded-full bg-[#8888ff]/20 border border-[#8888ff]/40 flex items-center justify-center text-[#8888ff] font-bold">
               ◈
             </div>
             <span
@@ -255,7 +255,7 @@ export default function PoolsPage() {
                 href={link.href}
                 className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
                   link.href === "/0xdex/pools"
-                    ? "bg-indigo-500/20 text-indigo-400 border border-indigo-500/40"
+                    ? "bg-[#8888ff]/20 text-[#8888ff] border border-[#8888ff]/40"
                     : "text-[#64748B] hover:text-white hover:bg-white/5"
                 }`}
                 style={{ fontFamily: "var(--font-departure)" }}
@@ -327,7 +327,7 @@ export default function PoolsPage() {
 
         {activeTab === "add" ? (
           <div className="relative">
-            <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-purple-500/10 rounded-2xl blur-xl" />
+            <div className="absolute inset-0 bg-[#8888ff]/5 rounded-2xl blur-xl" />
             
             <div className="relative bg-[#1A1A2E]/90 border border-[#2D2D44] rounded-2xl p-5 backdrop-blur-sm">
               <h2 className="text-lg font-bold text-white mb-4" style={{ fontFamily: "var(--font-departure)" }}>
@@ -392,7 +392,7 @@ export default function PoolsPage() {
                   {!!balanceA && !!tokenA && (
                     <button
                       onClick={() => setAmountA(formatUnits(balanceA, tokenA.decimals).slice(0, 8))}
-                      className="text-xs text-indigo-400 hover:text-indigo-300"
+                      className="text-xs text-[#8888ff] hover:text-[#AAAADD]"
                       style={{ fontFamily: "var(--font-departure)" }}
                     >
                       Balance: {formatUnits(balanceA, tokenA.decimals).slice(0, 8)}
@@ -416,7 +416,7 @@ export default function PoolsPage() {
               
               {/* Plus Divider */}
               <div className="relative h-0 flex justify-center my-2">
-                <div className="relative -mt-4 w-10 h-10 rounded-full bg-[#1A1A2E] border-4 border-[#0F0F23] flex items-center justify-center text-lg font-bold text-indigo-400">
+                <div className="relative -mt-4 w-10 h-10 rounded-full bg-[#1A1A2E] border-4 border-[#0F0F23] flex items-center justify-center text-lg font-bold text-[#8888ff]">
                   +
                 </div>
               </div>
@@ -430,7 +430,7 @@ export default function PoolsPage() {
                   {!!balanceB && !!tokenB && (
                     <button
                       onClick={() => setAmountB(formatUnits(balanceB, tokenB.decimals).slice(0, 8))}
-                      className="text-xs text-indigo-400 hover:text-indigo-300"
+                      className="text-xs text-[#8888ff] hover:text-[#AAAADD]"
                       style={{ fontFamily: "var(--font-departure)" }}
                     >
                       Balance: {formatUnits(balanceB, tokenB.decimals).slice(0, 8)}
@@ -568,7 +568,7 @@ export default function PoolsPage() {
           </h3>
           <ul className="space-y-2 text-xs text-[#64748B]">
             <li className="flex items-start gap-2">
-              <span className="text-indigo-400">1.</span>
+              <span className="text-[#8888ff]">1.</span>
               Only existing pools (with NUSD pair) can receive liquidity
             </li>
             <li className="flex items-start gap-2">
@@ -610,7 +610,7 @@ function PoolTopCard({ index, token0, token1 }: { index: number; token0: `0x${st
     <div className="p-4 rounded-xl bg-[#13131F] border border-[#2D2D44]">
       <div className="flex items-center gap-2 mb-3">
         <span className="text-xs text-[#64748B]">#{index + 1}</span>
-        <div className="w-6 h-6 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center text-white text-xs font-bold">
+        <div className="w-6 h-6 rounded-full bg-[#8888ff]/20 border border-[#8888ff]/40 flex items-center justify-center text-[#8888ff] text-xs font-bold">
           {token0Symbol[0]}{token1Symbol[0]}
         </div>
         <span className="font-medium text-white text-sm" style={{ fontFamily: "var(--font-departure)" }}>

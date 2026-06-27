@@ -1,10 +1,14 @@
 "use client";
 
-import { useState, useEffect, useMemo, Suspense } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import dynamic from "next/dynamic";
-import ChartWindow from "@/app/components/ChartWindow";
+import CandleChart from "@/app/components/CandleChart";
+
+const ChartWindow = dynamic(() => import("@/app/components/ChartWindow"), {
+  ssr: false,
+});
 
 import { useAccount, useReadContract, useConnect, useDisconnect, useBlockNumber, useWriteContract, useSwitchChain } from "wagmi";
 import { erc20Abi, maxUint256 } from "viem";
@@ -13,6 +17,71 @@ import { DEX_ADDRESS, NATIVE_ADDRESS } from "@/lib/0xDexAbi";
 import { NUSD_ADDRESS, NUSD_ABI } from "@/lib/NUSDContract";
 import { formatUnits, parseUnits, keccak256, encodePacked } from "viem";
 import { useToast } from "@/components/Toast";
+import { useGSAP } from "@gsap/react";
+import { gsapPixelStagger } from "@/lib/gsap-animations";
+import { prewarmPools } from "@/app/lib/chartPrewarm";
+
+// ============================================================
+// Pixel Skeleton Component - Dark theme shimmer loader
+// ============================================================
+function PixelSkeleton({ className = "" }: { className?: string }) {
+  return (
+    <div
+      className={`bg-[#1a1a2a] border border-[#2a2a4a] ${className}`}
+      style={{
+        backgroundImage: `linear-gradient(90deg, #1a1a2a 0%, #2a2a4a 50%, #1a1a2a 100%)`,
+        backgroundSize: '200% 100%',
+        animation: 'shimmer 1.5s infinite',
+      }}
+    />
+  );
+}
+
+function PoolCardSkeleton() {
+  return (
+    <div className="p-4 xl:p-5 bg-[#13131F] border border-[#2D2D44]">
+      <div className="flex justify-between items-center mb-3">
+        <div className="flex items-center gap-2">
+          <PixelSkeleton className="w-8 h-4" />
+          <PixelSkeleton className="w-7 h-7 rounded-full" />
+          <PixelSkeleton className="w-20 h-5" />
+          <PixelSkeleton className="w-16 h-4" />
+        </div>
+        <PixelSkeleton className="w-14 h-6" />
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 lg:gap-3 mt-2">
+        <div className="bg-[#1A1A2E]/50 p-2">
+          <PixelSkeleton className="w-8 h-3 mb-1" />
+          <PixelSkeleton className="w-16 h-4" />
+        </div>
+        <div className="bg-[#1A1A2E]/50 p-2">
+          <PixelSkeleton className="w-12 h-3 mb-1" />
+          <PixelSkeleton className="w-14 h-4" />
+        </div>
+        <div className="bg-[#1A1A2E]/50 p-2">
+          <PixelSkeleton className="w-14 h-3 mb-1" />
+          <PixelSkeleton className="w-12 h-4" />
+        </div>
+        <div className="bg-[#1A1A2E]/50 p-2">
+          <PixelSkeleton className="w-16 h-3 mb-1" />
+          <PixelSkeleton className="w-14 h-4" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatSkeleton() {
+  return (
+    <div className="bg-gradient-to-br from-[#1A1A2E] to-[#13131F] border border-[#2D2D44] p-4">
+      <div className="flex items-center gap-2 mb-2">
+        <PixelSkeleton className="w-4 h-4" />
+        <PixelSkeleton className="w-16 h-3" />
+      </div>
+      <PixelSkeleton className="w-24 h-6" />
+    </div>
+  );
+}
 
 // Type definitions
 interface PoolData {
@@ -45,48 +114,6 @@ function castPoolData(data: unknown): PoolData | null {
 // ============================================================
 
 const BPS_DENOM = 10000n; // matches `swapFee / 10000` in 0xDex.sol
-
-/**
- * Estimate output of a constant-product swap with the same fee math as the contract.
- *   fee = amountIn * swapFeeBps / 10000
- *   amountInAfterFee = amountIn - fee
- *   amountOut = amountInAfterFee * reserveOut / (reserveIn + amountInAfterFee)
- *
- * Pass `swapFeeBps` directly from contract `swapFee()` (default 10 = 0.1%).
- */
-function estimateAmountOut(
-  amountIn: bigint,
-  reserveIn: bigint,
-  reserveOut: bigint,
-  swapFeeBps: bigint
-): bigint {
-  if (amountIn <= 0n || reserveIn <= 0n || reserveOut <= 0n) return 0n;
-  const fee = (amountIn * swapFeeBps) / BPS_DENOM;
-  const amountInAfterFee = amountIn - fee;
-  if (amountInAfterFee <= 0n) return 0n;
-  return (amountInAfterFee * reserveOut) / (reserveIn + amountInAfterFee);
-}
-
-/**
- * Spot price consistent with `getPrice(tokenIn, tokenOut)` on-chain,
- * scaled by 1e18 (matching contract return value).
- * price = (reserve of tokenIn side) / (reserve of tokenOut side), scaled by 1e18.
- */
-function spotPriceScaled(
-  tokenIn: `0x${string}`,
-  pool: PoolData,
-  tokenInDecimals: number,
-  tokenOutDecimals: number
-): number {
-  const reserveIn =
-    tokenIn.toLowerCase() === pool.token0.toLowerCase() ? pool.reserve0 : pool.reserve1;
-  const reserveOut =
-    tokenIn.toLowerCase() === pool.token0.toLowerCase() ? pool.reserve1 : pool.reserve0;
-  if (reserveIn === 0n || reserveOut === 0n) return 0;
-  // Scale: reserveIn / reserveOut * (10^tokenOutDecimals / 10^tokenInDecimals)
-  const scale = 10 ** (tokenOutDecimals - tokenInDecimals);
-  return (Number(reserveIn) / Number(reserveOut)) * scale;
-}
 
 /**
  * Display helper: "1 TokenIn = X TokenOut" with proper decimal scaling.
@@ -144,7 +171,7 @@ function StatCard({ label, value, icon, color = "indigo" }: { label: string; val
     ? "from-emerald-500/10 to-teal-500/10"
     : color === "amber"
     ? "from-amber-500/10 to-orange-500/10"
-    : "from-indigo-500/10 to-purple-500/10";
+    : "from-[#8888ff]/10 to-[#8888ff]/05";
   return (
     <div className="relative overflow-hidden rounded-lg bg-gradient-to-br from-[#1A1A2E] to-[#13131F] border border-[#2D2D44] p-4">
       <div className={`absolute top-0 right-0 w-16 h-16 bg-gradient-to-br ${gradient} rounded-bl-full`} />
@@ -182,13 +209,11 @@ function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, 
   const reserveNUSD = isToken0NUSD ? reserve0 : (isToken1NUSD ? reserve1 : reserve0);
   const displaySymbol = tokenSymbol || (isOtherNative ? "zkLTC" : otherToken.slice(0, 8) + "...");
 
-  // Calculate price: NUSD per Token (correct direction for "N/$NUSD" display)
+  // Calculate price: NUSD per Token
   // Since pool has equal value on both sides: reserveNUSD * price = reserveOther
   // So: price (NUSD per Token) = reserveNUSD / reserveOther
-  // +0.1% markup matches the chart's standard price (consistent with CandleChart.tsx)
-  const PRICE_MARKUP = 1.001;
   const pricePerToken = reserveNUSD > 0n && reserveOther > 0n
-    ? (Number(formatUnits(reserveNUSD, 18)) / Number(formatUnits(reserveOther, tokenDecimals))) * PRICE_MARKUP
+    ? Number(formatUnits(reserveNUSD, 18)) / Number(formatUnits(reserveOther, tokenDecimals))
     : 0;
 
   const handleClick = () => {
@@ -201,14 +226,14 @@ function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, 
 
   return (
     <div
-      className="p-4 xl:p-5 rounded-xl bg-[#13131F] border border-[#2D2D44] hover:border-indigo-500/50 transition-all cursor-pointer"
+      className="pool-card-item p-4 xl:p-5 rounded-xl bg-[#13131F] border border-[#2D2D44] hover:border-[#8888ff]/50 transition-all cursor-pointer"
       onClick={handleClick}
     >
       {/* Top Row: Rank, Symbol, Price */}
         <div className="flex justify-between items-center mb-3">
         <div className="flex items-center gap-2">
           <span className="text-xs text-[#64748B] bg-[#2D2D44] px-2 py-0.5 rounded">#{rank}</span>
-          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center text-white text-xs font-bold">L$</div>
+          <div className="w-7 h-7 rounded-full bg-[#8888ff]/20 border border-[#8888ff]/40 flex items-center justify-center text-[#8888ff] text-xs font-bold">L$</div>
           <span className="font-bold text-white text-sm" style={{ fontFamily: "var(--font-departure)" }}>
             {displaySymbol}/$NUSD
           </span>
@@ -242,13 +267,13 @@ function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, 
         </div>
         <div className="bg-[#1A1A2E]/50 rounded-lg p-2">
           <div className="text-[10px] text-[#64748B] uppercase">24h Volume</div>
-          <div className="text-xs font-bold text-indigo-400 truncate" style={{ fontFamily: "var(--font-departure)" }}>
+          <div className="text-xs font-bold text-[#8888ff] truncate" style={{ fontFamily: "var(--font-departure)" }}>
             {formatUSD(volume24h)}
           </div>
         </div>
         <div className="bg-[#1A1A2E]/50 rounded-lg p-2">
           <div className="text-[10px] text-[#64748B] uppercase">Total Volume</div>
-          <div className="text-xs font-bold text-purple-400 truncate" style={{ fontFamily: "var(--font-departure)" }}>
+          <div className="text-xs font-bold text-[#8888ff] truncate" style={{ fontFamily: "var(--font-departure)" }}>
             {formatUSD(totalVolume)}
           </div>
         </div>
@@ -256,6 +281,16 @@ function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, 
     </div>
   );
 }
+
+// ============================================================
+// Shimmer Animation Style
+// ============================================================
+const shimmerStyle = `
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+`;
 
 export default function DexAllInOne() {
   const { address, isConnected, chainId } = useAccount();
@@ -266,6 +301,18 @@ export default function DexAllInOne() {
   const toast = useToast();
   const { addLiquidity, removeLiquidity, swap, claimReward } = useDexWrite();
   const LITVM_CHAIN_ID = 4441;
+  const poolListRef = useRef<HTMLDivElement>(null);
+
+  // Pixel-style stagger entry for pool cards
+  useGSAP(
+    () => {
+      if (!poolListRef.current) return;
+      const cards = poolListRef.current.querySelectorAll(".pool-card-item");
+      if (cards.length === 0) return;
+      gsapPixelStagger(cards, { stagger: 0.05, delay: 0.1 });
+    },
+    { scope: poolListRef }
+  );
 
   // State
   const [mounted, setMounted] = useState(false);
@@ -277,7 +324,6 @@ export default function DexAllInOne() {
   const [farmLpAmount, setFarmLpAmount] = useState("");
   const [farmUserLP, setFarmUserLP] = useState<bigint | undefined>();
   const [farmPending, setFarmPending] = useState<bigint | undefined>();
-  const [farmEstimatedLP, setFarmEstimatedLP] = useState<number>(0);
 
   // Auto-switch to LitVM when connected to wrong chain
   useEffect(() => {
@@ -347,6 +393,17 @@ export default function DexAllInOne() {
   const { data: allPools, refetch: refetchAllPoolsData } = useAllPools();
   const { data: nusdAddress, refetch: refetchNusd } = useDexRead<`0x${string}`>("NUSD");
   const { data: totalRewardPool } = useDexRead<bigint>("totalRewardPool");
+
+  // Pre-warm chart cache for top pool pairs (async, fire-and-forget)
+  useEffect(() => {
+    if (!allPools || !nusdAddress) return;
+    const poolsForPrewarm = allPools.slice(0, 5).map(p => ({
+      pairId: p.pairId,
+      token: p.token0 === nusdAddress ? p.token1 : p.token0,
+      nusd: nusdAddress,
+    }));
+    prewarmPools(poolsForPrewarm, 5);
+  }, [allPools, nusdAddress]);
 
   // Check allowance for create pool token
   const { data: createTokenAllowance, refetch: refetchAllowance } = useTokenAllowance(
@@ -942,22 +999,24 @@ export default function DexAllInOne() {
   if (!mounted) return (
     <div className="min-h-screen bg-[#0F0F23] flex flex-col items-center justify-center">
       <div className="relative">
-        <div className="w-16 h-16 border-4 border-purple-500/30 border-t-purple-500 animate-spin rounded-full" />
-        <div className="absolute inset-0 w-16 h-16 border-4 border-indigo-500/20 border-t-indigo-500 animate-spin rounded-full" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }} />
+        <div className="w-16 h-16 border-4 border-[#8888ff]/30 border-t-[#8888ff] animate-spin rounded-full" />
+        <div className="absolute inset-0 w-16 h-16 border-4 border-[#8888ff]/20 border-t-[#8888ff] animate-spin rounded-full" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }} />
       </div>
-      <div className="mt-6 text-lg text-purple-400 animate-pulse" style={{ fontFamily: "var(--font-departure)" }}>
+      <div className="mt-6 text-lg text-[#8888ff] animate-pulse" style={{ fontFamily: "var(--font-departure)" }}>
         LOADING
       </div>
       <div className="flex gap-1 mt-2">
-        <span className="w-2 h-2 bg-purple-500 animate-bounce" style={{ animationDelay: '0ms' }} />
-        <span className="w-2 h-2 bg-indigo-500 animate-bounce" style={{ animationDelay: '150ms' }} />
-        <span className="w-2 h-2 bg-purple-500 animate-bounce" style={{ animationDelay: '300ms' }} />
+        <span className="w-2 h-2 bg-[#8888ff] animate-bounce" style={{ animationDelay: '0ms' }} />
+        <span className="w-2 h-2 bg-[#8888ff] animate-bounce" style={{ animationDelay: '150ms' }} />
+        <span className="w-2 h-2 bg-[#8888ff] animate-bounce" style={{ animationDelay: '300ms' }} />
       </div>
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-[#0F0F23]">
+    <>
+      <style>{shimmerStyle}</style>
+      <div className="min-h-screen bg-[#0F0F23]">
       {/* Header */}
       <header className="sticky top-0 z-50 bg-[#1A1A2E]/90 backdrop-blur-xl border-b border-[#2D2D44]">
         <div className="w-full mx-auto px-4 sm:px-6 xl:px-8 py-2 sm:py-3 max-w-[100rem] flex items-center justify-between gap-2">
@@ -989,10 +1048,21 @@ export default function DexAllInOne() {
       <main className="w-full mx-auto px-4 sm:px-6 xl:px-8 py-6 max-w-[100rem]">
         {/* Stats */}
         <div className="grid grid-cols-2 sm:grid-cols-2 2xl:grid-cols-4 gap-3 md:gap-4 mb-4 md:mb-6">
-          <StatCard label="TVL" value={formatUSD(stats.totalNUSDLocked)} icon="◫" />
-          <StatCard label="Total Volume" value={formatUSD(totalVolume)} icon="◈" />
-          <StatCard label="Pools" value={String(allPools?.length || 0)} icon="◫" />
-          <StatCard label="Total Reward Pool" value={totalRewardPool ? formatUSD(totalRewardPool) : "$0.00"} icon="✦" color="amber" />
+          {stats.loading ? (
+            <>
+              <StatSkeleton />
+              <StatSkeleton />
+              <StatSkeleton />
+              <StatSkeleton />
+            </>
+          ) : (
+            <>
+              <StatCard label="TVL" value={formatUSD(stats.totalNUSDLocked)} icon="◫" />
+              <StatCard label="Total Volume" value={formatUSD(totalVolume)} icon="◈" />
+              <StatCard label="Pools" value={String(allPools?.length || 0)} icon="◫" />
+              <StatCard label="Total Reward Pool" value={totalRewardPool ? formatUSD(totalRewardPool) : "$0.00"} icon="✦" color="amber" />
+            </>
+          )}
         </div>
 
         {/* Tabs */}
@@ -1134,7 +1204,7 @@ export default function DexAllInOne() {
                   <div className="mb-4 p-3 rounded-xl bg-[#13131F]/80 border border-[#2D2D44] text-xs space-y-1">
                     <div className="flex justify-between">
                       <span className="text-[#64748B]">Pool</span>
-                      <span className="text-indigo-400 font-bold">{swapTokenIn.symbol} → {swapTokenOut.symbol}</span>
+                      <span className="text-[#8888ff] font-bold">{swapTokenIn.symbol} → {swapTokenOut.symbol}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-[#64748B]">Rate</span>
@@ -1220,7 +1290,7 @@ export default function DexAllInOne() {
                     </div>
                     <div className="flex justify-between mt-1">
                       <span className="text-[#64748B]">1 {poolToken.symbol} =</span>
-                      <span className="text-indigo-400 font-bold">
+                      <span className="text-[#8888ff] font-bold">
                         ${poolData ? (Number(formatUnits((poolData as PoolDataTuple)[3], poolToken.decimals)) / Number(formatUnits((poolData as PoolDataTuple)[2], 18))).toFixed(6) : "0"} NUSD
                       </span>
                     </div>
@@ -1444,7 +1514,7 @@ export default function DexAllInOne() {
                 ))}
               </div>
             </div>
-            <div className="space-y-3">
+            <div className="space-y-3" ref={poolListRef}>
               {poolOptions.length > 0 ? (
                 sortedPoolIndices.slice(0, 8).map((poolIndex) => {
                   const pool = poolOptions[poolIndex];
@@ -1453,9 +1523,7 @@ export default function DexAllInOne() {
                   const token1 = pData?.[1] as `0x${string}` | undefined;
 
                   if (!pData) return (
-                    <div key={poolIndex} className="p-4 rounded-xl bg-[#13131F] border border-[#2D2D44] animate-pulse">
-                      <div className="h-6 bg-[#2D2D44] rounded w-24" />
-                    </div>
+                    <PoolCardSkeleton key={poolIndex} />
                   );
 
                   return (
@@ -1680,11 +1748,24 @@ export default function DexAllInOne() {
 
       </main>
 
+      {/* ── Pre-load chart data for top pairs (hidden) ── */}
+      {nusdAddress && poolOptions.slice(0, 3).map(pool => (
+        <div key={pool.pairId} style={{ position: 'fixed', width: 0, height: 0, overflow: 'hidden', pointerEvents: 'none' }}>
+          <CandleChart
+            pairId={pool.pairId}
+            token0={nusdAddress}
+            token1={pool.token}
+            height={0}
+            enableRealtime={false}
+          />
+        </div>
+      ))}
+
       {/* ── Chart Window ── */}
       {showChart && selectedChartPair && (() => {
         const poolIdx = poolOptions.findIndex(p => p.pairId === selectedChartPair);
         const sel = poolOptions[poolIdx];
-        const label = sel?.token === NATIVE_ADDRESS ? 'zkLTC' : (tokenSymbols[poolIdx] as string) || '—';
+        const label = sel?.token === NATIVE_ADDRESS ? 'zkLTC' : (tokenSymbols[poolIdx] as string) || '--';
         return (
           <ChartWindow
             key={selectedChartPair}
@@ -1692,12 +1773,13 @@ export default function DexAllInOne() {
             token0={nusdAddress || ""}
             token1={sel?.token || ""}
             pairLabel={`${label} / NUSD`}
-            subgraphUrl={process.env.NEXT_PUBLIC_SUBGRAPH_URL || "https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.2/gn"}
-            initialTimeframe={5}
+            subgraphUrl="/api/subgraph"
+            initialTimeframe={1440}
             onClose={() => { setShowChart(false); setSelectedChartPair(null); }}
           />
         );
       })()}
-    </div>
+      </div>
+    </>
   );
 }

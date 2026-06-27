@@ -194,7 +194,7 @@ export default function DocsPage() {
             </div>
 
             {/* NUSD Info */}
-            <div className="mt-8 p-5 bg-indigo-600/10 border border-indigo-500/20">
+            <div className="mt-8 p-5 bg-[#8888ff]/10 border border-[#8888ff]/20">
               <h4 className="text-white/80 text-xs tracking-widest uppercase mb-3">NUSD Token</h4>
               <p className="text-white/50 text-sm mb-3">
                 USDC-benchmarked stablecoin used as base currency for swaps and reward calculations.

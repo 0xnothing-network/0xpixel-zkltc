@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useAccount } from "wagmi";
-import { useDexWrite, useSwapQuote, NATIVE_TOKEN, KNOWN_TOKENS, Token, useTokenBalance, useApproveToken } from "@/lib/use0xDex";
+import { useDexWrite, useSwapQuote, usePoolByTokens, useRealtimePrice, NATIVE_TOKEN, KNOWN_TOKENS, Token, useTokenBalance, useApproveToken } from "@/lib/use0xDex";
 import { formatUnits, parseUnits } from "viem";
 import { useToast } from "@/components/Toast";
 import { useWaitForTransactionReceipt } from "wagmi";
@@ -43,7 +43,7 @@ function TokenSelector({
       >
         {selected ? (
           <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center text-white text-xs font-bold">
+            <div className="w-6 h-6 rounded-full bg-[#8888ff]/20 border border-[#8888ff]/40 flex items-center justify-center text-[#8888ff] text-xs font-bold">
               {selected.symbol[0]}
             </div>
             <span className="font-medium text-white" style={{ fontFamily: "var(--font-departure)" }}>
@@ -66,7 +66,7 @@ function TokenSelector({
               onClick={() => { onSelect(token); setOpen(false); }}
               className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[#2D2D44] transition-colors"
             >
-              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center text-white text-xs font-bold">
+              <div className="w-7 h-7 rounded-full bg-[#8888ff]/20 border border-[#8888ff]/40 flex items-center justify-center text-[#8888ff] text-xs font-bold">
                 {token.symbol[0]}
               </div>
               <div className="text-left">
@@ -98,6 +98,26 @@ export default function SwapPage() {
   const { swap, addLiquidity } = useDexWrite();
   const { data: balanceIn } = useTokenBalance(address, tokenIn);
   const quote = useSwapQuote(tokenIn, tokenOut, amountIn);
+  const { pool } = usePoolByTokens(tokenIn?.address, tokenOut?.address);
+
+  // Realtime price from contract events — instant, no subgraph delay
+  const { latestPrice: realtimePrice } = useRealtimePrice(
+    tokenIn?.address,
+    tokenOut?.address,
+  );
+
+  // Spot price from reserves (fallback / initial load)
+  const spotRate = useMemo(() => {
+    if (!pool || pool.reserve0 === 0n || pool.reserve1 === 0n) return 0;
+    const isReversed = tokenIn?.address !== pool.token0;
+    const reserveIn = isReversed ? pool.reserve1 : pool.reserve0;
+    const reserveOut = isReversed ? pool.reserve0 : pool.reserve1;
+    const scale = 10 ** ((tokenOut?.decimals ?? 18) - (tokenIn?.decimals ?? 18));
+    return (Number(reserveIn) / Number(reserveOut)) * scale;
+  }, [pool, tokenIn, tokenOut]);
+
+  // Use realtime event price when available, otherwise spot price
+  const displayRate = realtimePrice?.price ?? spotRate;
   
   useEffect(() => {
     setMounted(true);
@@ -167,7 +187,7 @@ export default function SwapPage() {
       <header className="sticky top-0 z-50 bg-[#1A1A2E]/90 backdrop-blur-xl border-b border-[#2D2D44]">
         <div className="max-w-7xl mx-auto px-5 py-3.5 flex items-center justify-between gap-4">
           <Link href="/" className="flex items-center gap-2.5 group">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center text-white font-bold">
+            <div className="w-9 h-9 rounded-full bg-[#8888ff]/20 border border-[#8888ff]/40 flex items-center justify-center text-[#8888ff] font-bold">
               ◈
             </div>
             <span
@@ -185,7 +205,7 @@ export default function SwapPage() {
                 href={link.href}
                 className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
                   link.href === "/0xdex/swap"
-                    ? "bg-indigo-500/20 text-indigo-400 border border-indigo-500/40"
+                    ? "bg-[#8888ff]/20 text-[#8888ff] border border-[#8888ff]/40"
                     : "text-[#64748B] hover:text-white hover:bg-white/5"
                 }`}
                 style={{ fontFamily: "var(--font-departure)" }}
@@ -212,7 +232,7 @@ export default function SwapPage() {
         {/* Swap Card */}
         <div className="relative">
           {/* Glow effect */}
-          <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/20 to-purple-500/20 rounded-2xl blur-xl" />
+          <div className="absolute inset-0 bg-[#8888ff]/5 rounded-2xl blur-xl" />
           
           <div className="relative bg-[#1A1A2E]/90 border border-[#2D2D44] rounded-2xl p-5 backdrop-blur-sm">
             {/* Token In */}
@@ -224,7 +244,7 @@ export default function SwapPage() {
                 {balanceIn && tokenIn && (
                   <button
                     onClick={handleMax}
-                    className="text-xs text-indigo-400 hover:text-indigo-300"
+                    className="text-xs text-[#8888ff] hover:text-[#AAAADD]"
                     style={{ fontFamily: "var(--font-departure)" }}
                   >
                     Balance: {formatUnits(balanceIn, tokenIn.decimals).slice(0, 8)}
@@ -284,7 +304,7 @@ export default function SwapPage() {
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-[#64748B]">Rate</span>
                   <span className="text-white" style={{ fontFamily: "var(--font-departure)" }}>
-                    1 {tokenIn?.symbol} = {(parseFloat(quote.amountOutFormatted) / parseFloat(amountIn)).toFixed(6)} {tokenOut?.symbol}
+                    1 {tokenIn?.symbol} ≈ {displayRate > 0 ? displayRate.toFixed(6) : "—"} {tokenOut?.symbol}
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-xs">
@@ -347,15 +367,15 @@ export default function SwapPage() {
           </h3>
           <ul className="space-y-2 text-xs text-[#64748B]">
             <li className="flex items-start gap-2">
-              <span className="text-indigo-400">1.</span>
+              <span className="text-[#8888ff]">1.</span>
               Select the token you want to swap from and to
             </li>
             <li className="flex items-start gap-2">
-              <span className="text-indigo-400">2.</span>
+              <span className="text-[#8888ff]">2.</span>
               Enter the amount you want to swap
             </li>
             <li className="flex items-start gap-2">
-              <span className="text-indigo-400">3.</span>
+              <span className="text-[#8888ff]">3.</span>
               Approve the token if needed, then confirm the swap
             </li>
           </ul>

@@ -6,7 +6,7 @@ type Swap @entity {
   amountIn: BigInt!
   amountOut: BigInt!
   fee: BigInt!
-  timestamp: BigInt!
+  timestamp: BigInt! @index
   blockNumber: BigInt
 }
 

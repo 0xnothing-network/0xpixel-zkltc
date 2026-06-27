@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   compress: true,
+  outputFileTracingRoot: __dirname,
   experimental: {
     optimizePackageImports: [
       "wagmi",

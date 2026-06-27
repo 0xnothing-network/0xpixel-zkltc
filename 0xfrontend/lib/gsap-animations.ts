@@ -270,7 +270,8 @@ export function gsapSlideUp(
 
 export function gsapStaggerUp(
   targets: gsap.TweenTarget,
-  options: gsap.TweenVars = {}
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  options: { from?: Record<string, any>; to?: Record<string, any> } = {}
 ) {
   return gsap.fromTo(
     targets,
@@ -285,6 +286,125 @@ export function gsapStaggerUp(
       ...options.to,
     }
   );
+}
+
+// ============================================================
+// Pixel-style animations (retro, blocky, grid-aligned)
+// ============================================================
+
+/** Stagger-in pool cards with a slight scale + pixel-blur feel */
+export function gsapPixelStagger(
+  targets: gsap.TweenTarget,
+  options: { stagger?: number; delay?: number } = {}
+) {
+  const { stagger = 0.06, delay = 0 } = options;
+  return gsap.fromTo(
+    targets,
+    { opacity: 0, y: 12, scale: 0.96 },
+    {
+      opacity: 1,
+      y: 0,
+      scale: 1,
+      duration: 0.35,
+      stagger,
+      delay,
+      ease: "power1.out",
+    }
+  );
+}
+
+/** Price flash — brief color pulse on a value change */
+export function gsapPriceFlash(target: gsap.TweenTarget, isUp: boolean) {
+  const color = isUp ? "#00ff88" : "#ff4466";
+  gsap.fromTo(
+    target,
+    { color },
+    { color: "#d8d8ff", duration: 0.6, ease: "power1.out" }
+  );
+}
+
+/** Retro entry — slide up from below with a slight overshoot */
+export function gsapRetroEntry(
+  targets: gsap.TweenTarget,
+  options: { delay?: number; duration?: number; y?: number } = {}
+) {
+  const { delay = 0, duration = 0.4, y = -8 } = options;
+  return gsap.fromTo(
+    targets,
+    { opacity: 0, y },
+    {
+      opacity: 1,
+      y: 0,
+      duration,
+      delay,
+      ease: "back.out(1.4)",
+    }
+  );
+}
+
+/** Glitch shake — for error / loading disruption */
+export function gsapGlitch(target: gsap.TweenTarget) {
+  const tl = gsap.timeline();
+  tl.to(target, { x: -4, duration: 0.05, ease: "none" })
+    .to(target, { x: 4, duration: 0.05, ease: "none" })
+    .to(target, { x: -2, duration: 0.05, ease: "none" })
+    .to(target, { x: 2, duration: 0.05, ease: "none" })
+    .to(target, { x: 0, duration: 0.05, ease: "none" });
+  return tl;
+}
+
+/** Pulse glow — for live / active indicators */
+export function gsapPulseGlow(target: gsap.TweenTarget, color = "#00ff88") {
+  return gsap.to(target, {
+    opacity: 0.4,
+    duration: 0.8,
+    repeat: -1,
+    yoyo: true,
+    ease: "sine.inOut",
+  });
+}
+
+/** Spin pixel — discrete rotation in 90deg steps */
+export function gsapPixelSpin(target: gsap.TweenTarget) {
+  return gsap.to(target, {
+    rotation: "+=360",
+    duration: 0.8,
+    ease: "none",
+  });
+}
+
+/** Chart bar grow — for volume or stat bars */
+export function gsapBarGrow(
+  targets: gsap.TweenTarget,
+  fromValue = 0,
+  toValue = 1
+) {
+  return gsap.fromTo(
+    targets,
+    { scaleY: fromValue, transformOrigin: "bottom center" },
+    { scaleY: toValue, duration: 0.5, ease: "power1.out" }
+  );
+}
+
+/** Scanline sweep — retro CRT scan effect */
+export function gsapScanline(
+  container: HTMLElement,
+  duration = 2
+) {
+  const line = document.createElement("div");
+  line.style.cssText = `
+    position: absolute; top: 0; left: 0; width: 100%;
+    height: 2px; background: rgba(136,136,255,0.15);
+    pointer-events: none; z-index: 10;
+  `;
+  container.style.position = "relative";
+  container.appendChild(line);
+  gsap.to(line, {
+    y: container.offsetHeight,
+    duration,
+    ease: "none",
+    onComplete: () => line.remove(),
+  });
 }
 
 export { gsap, ScrollTrigger };

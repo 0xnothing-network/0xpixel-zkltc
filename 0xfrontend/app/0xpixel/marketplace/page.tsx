@@ -175,7 +175,7 @@ function MarketplaceBody({ userAddress }: BodyProps) {
               setSort(e.target.value as SortKey);
               setPage(1);
             }}
-            className="bg-[#0F0F23] border border-[#2D2D44] text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500"
+            className="bg-[#0F0F23] border border-[#2D2D44] text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-[#8888ff]"
             style={{ fontFamily: "var(--font-departure)" }}
           >
             <option value="newest">Newest</option>
@@ -184,7 +184,7 @@ function MarketplaceBody({ userAddress }: BodyProps) {
           </select>
           <button
             onClick={handleRefresh}
-            className="px-3 py-2 bg-[#1A1A2E] border border-[#2D2D44] rounded-lg hover:border-indigo-500/50 transition-colors"
+            className="px-3 py-2 bg-[#8888ff]/10 border border-[#8888ff]/20 transition-colors"
             aria-label="Refresh"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -200,7 +200,7 @@ function MarketplaceBody({ userAddress }: BodyProps) {
           <p className="text-red-400 mb-4" style={{ fontFamily: "var(--font-departure)" }}>{error}</p>
           <button
             onClick={handleRefresh}
-            className="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg"
+            className="px-4 py-2 bg-[#8888ff] hover:bg-indigo-600 text-white rounded-lg"
             style={{ fontFamily: "var(--font-departure)" }}
           >
             Retry
@@ -238,7 +238,7 @@ function Pagination({ page, totalPages, onChange }: { page: number; totalPages: 
       <button
         onClick={() => onChange(Math.max(1, page - 1))}
         disabled={page <= 1}
-        className="px-4 py-2 bg-[#1A1A2E] border border-[#2D2D44] rounded-lg text-white disabled:opacity-50 hover:border-indigo-500/50 transition-colors"
+        className="px-4 py-2 bg-[#1A1A2E] border border-[#2D2D44] rounded-lg text-white disabled:opacity-50 hover:border-[#8888ff]/50 transition-colors"
         style={{ fontFamily: "var(--font-departure)" }}
       >
         Prev
@@ -247,7 +247,7 @@ function Pagination({ page, totalPages, onChange }: { page: number; totalPages: 
       <button
         onClick={() => onChange(Math.min(totalPages, page + 1))}
         disabled={page >= totalPages}
-        className="px-4 py-2 bg-[#1A1A2E] border border-[#2D2D44] rounded-lg text-white disabled:opacity-50 hover:border-indigo-500/50 transition-colors"
+        className="px-4 py-2 bg-[#1A1A2E] border border-[#2D2D44] rounded-lg text-white disabled:opacity-50 hover:border-[#8888ff]/50 transition-colors"
         style={{ fontFamily: "var(--font-departure)" }}
       >
         Next
@@ -268,7 +268,7 @@ function EmptyState() {
       <p className="text-[#94A3B8] mb-6" style={{ fontFamily: "var(--font-departure)" }}>Be the first to list your 0xPIXEL NFT</p>
       <a
         href="/0xpixel"
-        className="inline-block px-6 py-3 bg-indigo-500 hover:bg-indigo-600 text-white font-bold rounded-lg transition-colors"
+        className="inline-block px-6 py-3 bg-[#8888ff] hover:bg-indigo-600 text-white font-bold rounded-lg transition-colors"
         style={{ fontFamily: "var(--font-departure)" }}
       >
         Create one now
@@ -357,7 +357,7 @@ function ListingCard({
   }, [listing.listingId, writeContractAsync, toast]);
 
   return (
-    <div className="bg-[#1A1A2E] rounded-2xl border border-[#2D2D44] overflow-hidden hover:border-indigo-500/40 transition-all hover:shadow-lg hover:shadow-indigo-500/10">
+    <div className="bg-[#1A1A2E] rounded-2xl border border-[#2D2D44] overflow-hidden hover:border-[#8888ff]/40 transition-all hover:shadow-lg hover:shadow-[#8888ff]/10">
       <a
         href={getExplorerUrl(listing.tokenId)}
         target="_blank"
@@ -375,7 +375,7 @@ function ListingCard({
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
-            <div className="w-12 h-12 border-2 border-[#2D2D44] border-t-indigo-500 rounded-full animate-spin" />
+            <div className="w-12 h-12 border-2 border-[#2D2D44] border-t-[#8888ff] rounded-full animate-spin" />
           </div>
         )}
         <div className="absolute top-2 left-2 px-2 py-1 rounded-md bg-black/60 backdrop-blur text-[10px] font-bold text-white">
@@ -412,7 +412,7 @@ function ListingCard({
           <button
             onClick={() => setShowBuyModal(true)}
             disabled={busy !== null || isConfirming}
-            className="w-full py-2.5 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white text-xs font-bold transition-colors disabled:opacity-50"
+            className="w-full py-2.5 rounded-lg bg-[#8888ff] hover:bg-[#AAAADD] text-white text-xs font-bold transition-colors disabled:opacity-50"
           >
             {busy === "buy" || isConfirming ? "Buying..." : "Buy Now"}
           </button>
@@ -488,7 +488,7 @@ function BuyModal({
             <button
               onClick={onConfirm}
               disabled={busy || isConfirming}
-              className="flex-1 py-2.5 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white text-xs font-bold transition-colors disabled:opacity-50"
+              className="flex-1 py-2.5 rounded-lg bg-[#8888ff] hover:bg-[#AAAADD] text-white text-xs font-bold transition-colors disabled:opacity-50"
             >
               {isConfirming ? "Confirming..." : busy ? "Submitting..." : "Confirm"}
             </button>
