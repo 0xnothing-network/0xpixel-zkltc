@@ -1,25 +1,29 @@
 /**
- * Custom hook for candlestick (OHLC) data from Subgraph.
+ * Custom hook for candlestick (OHLC) data.
  *
- * Optimizations:
- * - sessionStorage cache: same pair+timeframe returns instantly from disk cache
- * - Parallel page fetches: all pages of the initial load are fetched simultaneously
- * - Incremental delta: polls only return new swaps since last fetch (not full re-fetch)
- * - Memoized candle build: only re-computed when swaps actually change
- * - Debounced chart-ready signal: prevents redundant re-renders
+ * Architecture (optimized for Vercel Edge):
+ *
+ *   Client → /api/candles (Edge)  ← OHLCV pre-computed on server
+ *                    ↓
+ *            Goldsky Subgraph (fetched by Edge, cached)
+ *                    ↓
+ *   Client receives ready-to-paint chart data
+ *
+ * Real-time updates:
+ *   On-chain Swapped events → optimistic candle update (instant, no wait)
+ *   Background refetch from Edge → correct candle data replaces optimistic
+ *
+ * What this replaces vs. the old approach:
+ *   ✗ fetchPage() pagination loop          → single /api/candles call
+ *   ✗ sessionStorage cache + prewarm       → Edge CDN cache
+ *   ✗ buildCandles() on client            → pre-computed on Edge
+ *   ✗ Manual delta tracking                → React Query staleTime
  */
-import { useRef, useMemo, useCallback, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-
-const SUBGRAPH_URL =
-  typeof window !== 'undefined'
-    ? '/api/subgraph'
-    : process.env.SUBGRAPH_URL ||
-      process.env.NEXT_PUBLIC_SUBGRAPH_URL ||
-      'https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.4/gn';
-
-const PAGE_SIZE = 1000;
-const MAX_SWAPS = 20_000; // cap for perf
+import { useRef, useState, useCallback, useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useWatchContractEvent } from 'wagmi';
+import { DEX_ADDRESS, DEX_ABI } from '@/lib/0xDexAbi';
+import { SwappedEvent } from '@/lib/use0xDex';
 
 export interface CandleData {
   time: number;
@@ -55,406 +59,219 @@ export interface UseCandleDataReturn {
   isError: boolean;
   error: Error | null;
   refetch: () => void;
+  latestPrice: { price: number; timestamp: number } | null;
 }
 
-function getDaysBack(intervalMinutes: number): number {
-  if (intervalMinutes <= 1) return 3;
-  if (intervalMinutes <= 5) return 7;
-  if (intervalMinutes <= 15) return 14;
-  if (intervalMinutes <= 60) return 21;
-  if (intervalMinutes <= 240) return 30;
-  if (intervalMinutes <= 1440) return 60;
-  if (intervalMinutes <= 10080) return 180;
-  return 365;
+interface CandlesResponse {
+  candles: CandleData[];
+  count: number;
+  interval: number;
 }
 
-const DELTA_QUERY = `
-  query GetDeltaSwaps($timestampGt: String!, $limit: Int!) {
-    swaps(
-      first: $limit,
-      orderBy: timestamp,
-      orderDirection: asc,
-      where: { timestamp_gt: $timestampGt }
-    ) {
-      id
-      timestamp
-      amountIn
-      amountOut
-      tokenIn
-      tokenOut
-      fee
-    }
-  }
-`;
+const QUERY_KEY = 'candles-edge';
 
-const FULL_QUERY = `
-  query GetAllSwaps($timestampGte: String!, $limit: Int!) {
-    swaps(
-      first: $limit,
-      orderBy: timestamp,
-      orderDirection: asc,
-      where: { timestamp_gte: $timestampGte }
-    ) {
-      id
-      timestamp
-      amountIn
-      amountOut
-      tokenIn
-      tokenOut
-      fee
-    }
-  }
-`;
+function priceFromEvent(e: SwappedEvent, t0: string, t1: string): number | null {
+  const args = e.args;
+  if (!args) return null;
+  const { tokenIn, tokenOut, amountIn, amountOut } = args;
+  const ti = tokenIn.toLowerCase();
+  const to = tokenOut.toLowerCase();
+  if (!((ti === t0 && to === t1) || (ti === t1 && to === t0))) return null;
 
-async function fetchPage(
-  url: string,
-  query: string,
-  variables: Record<string, string | number>,
-): Promise<SwapEvent[]> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, variables }),
-  });
-  if (!res.ok) {
-    if (res.status >= 500) throw new Error('server_error');
-    throw new Error(`Subgraph request failed: ${res.status}`);
-  }
-  const json = await res.json();
-  return (json.data?.swaps as SwapEvent[] | undefined) || [];
+  const ai = Number(amountIn);
+  const ao = Number(amountOut);
+  if (ai <= 0 || ao <= 0) return null;
+
+  if (ti === t0 && to === t1) return ai > 0 ? ao / ai : 0;
+  return ao > 0 ? ai / ao : 0;
 }
 
-/** Parallel-fetch full history: all pages fire at once */
-async function fetchFullHistory(
-  url: string,
-  t0: string,
-  t1: string,
-  timestampGte: number,
-): Promise<SwapEvent[]> {
-  // First page determines if we need more
-  const firstPage = await fetchPage(url, FULL_QUERY, {
-    timestampGte: String(timestampGte - 1),
-    limit: PAGE_SIZE,
-  });
-
-  const filtered = firstPage.filter(
-    s =>
-      (s.tokenIn.toLowerCase() === t0 && s.tokenOut.toLowerCase() === t1) ||
-      (s.tokenIn.toLowerCase() === t1 && s.tokenOut.toLowerCase() === t0),
-  );
-
-  if (firstPage.length < PAGE_SIZE && filtered.length === firstPage.length) {
-    // All swaps on this pair fit in one page → done
-    return filtered;
-  }
-
-  // Collect all pages in parallel using cursor pagination
-  const allPages: SwapEvent[][] = [];
-  const pagePromises: Promise<SwapEvent[]>[] = [];
-
-  // We'll fetch in waves of 5 parallel pages
-  const timestamps: number[] = [];
-  for (let i = 0; i < firstPage.length; i++) {
-    const s = firstPage[i];
-    const ti = s.tokenIn.toLowerCase();
-    const to = s.tokenOut.toLowerCase();
-    if ((ti === t0 && to === t1) || (ti === t1 && to === t0)) {
-      timestamps.push(Number(s.timestamp));
-    }
-  }
-
-  const maxTs = timestamps.length > 0 ? Math.max(...timestamps) : 0;
-  if (maxTs <= timestampGte) return filtered;
-
-  // Recursive fetch helper — fetch N pages from a starting timestamp
-  async function fetchPagesFrom(
-    fromTs: number,
-    count: number,
-  ): Promise<SwapEvent[][]> {
-    if (count <= 0 || allPages.length >= 50) return [];
-    const page = await fetchPage(url, FULL_QUERY, {
-      timestampGte: String(fromTs),
-      limit: PAGE_SIZE,
-    });
-    if (page.length === 0) return [];
-    const result: SwapEvent[] = [];
-    for (let i = 0; i < page.length; i++) {
-      const s = page[i];
-      const ti = s.tokenIn.toLowerCase();
-      const to = s.tokenOut.toLowerCase();
-      if ((ti === t0 && to === t1) || (ti === t1 && to === t0)) {
-        result.push(s);
-      }
-    }
-    allPages.push(result);
-    if (page.length < PAGE_SIZE) return [];
-    const last = Number(page[page.length - 1].timestamp);
-    if (last <= fromTs) return [];
-    // Fetch next page
-    const rest = await fetchPagesFrom(last, count - 1);
-    return [result, ...rest];
-  }
-
-  // Start parallel fetches for remaining pages
-  await fetchPagesFrom(timestampGte, 50);
-
-  // Merge: firstPage filtered + all accumulated pages
-  const merged: SwapEvent[] = [...filtered];
-  for (const page of allPages) {
-    for (let i = 0; i < page.length; i++) {
-      const s = page[i];
-      const ts = Number(s.timestamp);
-      // Avoid duplicates (already in filtered)
-      if (ts > maxTs) merged.push(s);
-    }
-  }
-
-  // Sort by timestamp asc, dedupe by id
-  merged.sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
-  const seen = new Set<string>();
-  return merged.filter(s => {
-    if (seen.has(s.id)) return false;
-    seen.add(s.id);
-    return true;
-  });
-}
-
-async function fetchDelta(
-  url: string,
-  t0: string,
-  t1: string,
-  timestampGt: number,
-): Promise<SwapEvent[]> {
-  const out: SwapEvent[] = [];
-  let cursor = timestampGt;
-
-  while (out.length < MAX_SWAPS) {
-    const page = await fetchPage(url, DELTA_QUERY, {
-      timestampGt: String(cursor),
-      limit: PAGE_SIZE,
-    });
-    if (page.length === 0) break;
-
-    for (let i = 0; i < page.length; i++) {
-      const s = page[i];
-      const ti = s.tokenIn.toLowerCase();
-      const to = s.tokenOut.toLowerCase();
-      if ((ti === t0 && to === t1) || (ti === t1 && to === t0)) {
-        out.push(s);
-      }
-    }
-
-    const last = page[page.length - 1];
-    const next = Number(last.timestamp);
-    if (next <= cursor || page.length < PAGE_SIZE) break;
-    cursor = next;
-  }
-
-  return out;
-}
-
-// ── Candle building (pure, no side effects) ───────────────────────
-
-export function buildCandles(
-  swaps: SwapEvent[],
+function applyOptimisticCandle(
+  candles: CandleData[],
+  price: number,
   intervalMinutes: number,
-  t0: string,
-  t1: string,
+  invertPrice: boolean,
 ): CandleData[] {
-  if (swaps.length === 0) return [];
+  if (!candles.length) return candles;
 
   const interval = intervalMinutes * 60;
-  const candles: CandleData[] = [];
-  let current: CandleData | null = null;
+  const now = Math.floor(Date.now() / 1000);
+  const candleTime = Math.floor(now / interval) * interval;
 
-  for (let i = 0; i < swaps.length; i++) {
-    const swap = swaps[i];
-    const ai = Number(swap.amountIn);
-    const ao = Number(swap.amountOut);
-    if (ai <= 0 || ao <= 0) continue;
+  const dispPrice = invertPrice && price > 0 ? 1 / price : price;
+  const last = candles[candles.length - 1];
 
-    const ti = swap.tokenIn.toLowerCase();
-    const to = swap.tokenOut.toLowerCase();
-    let price: number;
-
-    if (ti === t0 && to === t1) {
-      price = ai / ao;
-    } else if (ti === t1 && to === t0) {
-      price = ao / ai;
-    } else {
-      continue;
-    }
-
-    if (price <= 0 || !isFinite(price)) continue;
-    const ts = Number(swap.timestamp);
-    if (ts <= 0) continue;
-
-    const candleTime = Math.floor(ts / interval) * interval;
-
-    if (!current || current.time !== candleTime) {
-      if (current) candles.push(current);
-      current = { time: candleTime, open: price, high: price, low: price, close: price };
-    } else {
-      if (price > current.high) current.high = price;
-      else if (price < current.low) current.low = price;
-      current.close = price;
-    }
+  // Guard: skip if last candle has invalid time (prevents lightweight-charts crash)
+  if (last && (typeof last.time !== 'number' || !isFinite(last.time))) {
+    return candles;
   }
 
-  if (current) candles.push(current);
-  return candles;
-}
-
-// ── SessionStorage cache ──────────────────────────────────────────
-
-function cacheKey(pairId: string, t0: string, t1: string, intervalMinutes: number): string {
-  return `candles:${pairId}:${t0}:${t1}:${intervalMinutes}`;
-}
-
-function readCache(key: string): SwapEvent[] | null {
-  try {
-    const raw = sessionStorage.getItem(key);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as SwapEvent[];
-    if (!Array.isArray(parsed)) return null;
-    // Basic sanity: has at least id and timestamp
-    if (parsed.length > 0 && !parsed[0].timestamp) return null;
-    return parsed;
-  } catch {
-    return null;
+  if (last.time === candleTime) {
+    // Update the current (ongoing) candle
+    return candles.map((c, i) =>
+      i === candles.length - 1
+        ? {
+            ...c,
+            high: Math.max(c.high, dispPrice),
+            low: c.low === 0 ? dispPrice : Math.min(c.low, dispPrice),
+            close: dispPrice,
+          }
+        : c,
+    );
+  } else {
+    // New candle period — append
+    return [
+      ...candles,
+      {
+        time: candleTime,
+        open: dispPrice,
+        high: dispPrice,
+        low: dispPrice,
+        close: dispPrice,
+      },
+    ];
   }
 }
-
-function writeCache(key: string, swaps: SwapEvent[]): void {
-  try {
-    // Only store last 5000 swaps per pair to keep storage small
-    const trimmed = swaps.slice(-5000);
-    sessionStorage.setItem(key, JSON.stringify(trimmed));
-  } catch {
-    // Storage full or unavailable — silently skip
-  }
-}
-
-// ── Hook ─────────────────────────────────────────────────────────
 
 export function useCandleData({
   pairId,
   token0,
   token1,
   intervalMinutes,
-  subgraphUrl = SUBGRAPH_URL,
+  subgraphUrl = '/api/candles',
   enabled = true,
 }: UseCandleDataParams): UseCandleDataReturn {
   const t0 = token0 ? token0.toLowerCase() : '';
   const t1 = token1 ? token1.toLowerCase() : '';
-  const url = subgraphUrl || SUBGRAPH_URL;
+  const queryClient = useQueryClient();
 
-  // Per-instance mutable state
-  const lastFetchTsRef = useRef(0);          // last timestamp fetched from delta
-  const pendingDeltasRef = useRef<SwapEvent[]>([]); // optimistic new swaps not yet confirmed
-  const cacheHitRef = useRef(false);
+  // Stable cache key for sessionStorage
+  const cacheKey = `${t0}:${t1}:${intervalMinutes}`;
 
-  // Trigger re-render only when we have new confirmed swaps
-  const [swapVersion, setSwapVersion] = useState(0);
+  // Track latest price from blockchain events (single source of truth)
+  const [latestPrice, setLatestPrice] = useState<{ price: number; timestamp: number } | null>(null);
 
-  const daysBack = getDaysBack(intervalMinutes);
-  const timestampGte = Math.floor(Date.now() / 1000) - daysBack * 86400;
-  const ck = useMemo(
-    () => (t0 && t1 ? cacheKey(pairId, t0, t1, intervalMinutes) : ''),
-    [pairId, t0, t1, intervalMinutes],
-  );
+  // Optimistic candles — updated instantly from blockchain events
+  const [optimisticCandles, setOptimisticCandles] = useState<CandleData[] | null>(() => {
+    // Load from sessionStorage on first mount for instant display
+    if (typeof window !== 'undefined' && t0 && t1) {
+      try {
+        const raw = sessionStorage.getItem(`candles:${cacheKey}`);
+        if (raw) {
+          const parsed = JSON.parse(raw) as CandleData[];
+          // Guard: filter out candles with invalid time to prevent lightweight-charts crash
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed.filter((c) => typeof c?.time === 'number' && isFinite(c.time));
+          }
+        }
+      } catch {}
+    }
+    return null;
+  });
 
-  // ── Query: full history only on mount/key change ──────────────
+  // Track whether we have a confirmed (server) response
+  const confirmedRef = useRef(false);
+
+  // ── Base query: /api/candles ─────────────────────────────
   const {
-    data: fullSwaps,
-    isLoading: isFullLoading,
+    data: candlesResponse,
+    isLoading,
     isError,
     error,
     refetch,
-  } = useQuery<SwapEvent[]>({
-    queryKey: ['candle-full', pairId, t0, t1, intervalMinutes, url],
-    queryFn: async () => {
-      if (!t0 || !t1) return [];
+  } = useQuery<CandlesResponse>({
+    queryKey: [QUERY_KEY, pairId, t0, t1, intervalMinutes],
+    queryFn: async (): Promise<CandlesResponse> => {
+      if (!t0 || !t1) return { candles: [], count: 0, interval: intervalMinutes };
 
-      // Try cache first
-      const cached = readCache(ck);
-      if (cached && cached.length > 0) {
-        const cachedMax = Math.max(...cached.map(s => Number(s.timestamp)));
-        cacheHitRef.current = true;
-        lastFetchTsRef.current = cachedMax;
+      const params = new URLSearchParams({
+        token0: t0,
+        token1: t1,
+        interval: String(intervalMinutes),
+      });
 
-        // Check for new swaps from subgraph (delta from cache)
-        const delta = await fetchDelta(url, t0, t1, cachedMax);
-        if (delta.length > 0) {
-          const merged = [...cached, ...delta];
-          writeCache(ck, merged);
-          pendingDeltasRef.current = delta;
-          lastFetchTsRef.current = Math.max(...delta.map(s => Number(s.timestamp)));
-          // Signal update
-          setSwapVersion(v => v + 1);
-          return merged;
-        }
-        return cached;
+      const res = await fetch(`${subgraphUrl}?${params}`, {
+        signal: AbortSignal.timeout(15_000),
+      });
+
+      if (!res.ok) {
+        if (res.status >= 500) throw new Error('server_error');
+        throw new Error(`Candles request failed: ${res.status}`);
       }
 
-      cacheHitRef.current = false;
-      const history = await fetchFullHistory(url, t0, t1, timestampGte);
-      writeCache(ck, history);
-      if (history.length > 0) {
-        lastFetchTsRef.current = Math.max(...history.map(s => Number(s.timestamp)));
-      }
-      return history;
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      return json as CandlesResponse;
     },
-    enabled: !!url && !!enabled && !!t0 && !!t1,
-    staleTime: 30_000,   // data is fresh for 30s
-    refetchInterval: false, // manual refetch only via refetch()
+    enabled: !!enabled && !!t0 && !!t1,
+    staleTime: 30_000,
+    refetchInterval: 30_000,
     retry: 2,
     retryDelay: attempt => Math.min(500 * 2 ** attempt, 4000),
   });
 
-  // ── Delta poll: every 5s fetch only new swaps ───────────────
-  const { refetch: refetchDelta } = useQuery<SwapEvent[]>({
-    queryKey: ['candle-delta', pairId, t0, t1, intervalMinutes, url],
-    queryFn: async () => {
-      if (!t0 || !t1) return [];
-      const lastTs = lastFetchTsRef.current;
-      if (lastTs === 0) return fullSwaps || [];
+  // Sync server data into optimistic state when it arrives
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const serverCandles = candlesResponse?.candles ?? [];
+  useEffect(() => {
+    if (candlesResponse?.candles) {
+      confirmedRef.current = true;
+      // Guard: filter out candles with invalid time before storing
+      const validCandles = candlesResponse.candles.filter(
+        (c) => typeof c?.time === 'number' && isFinite(c.time),
+      );
+      setOptimisticCandles(validCandles);
+      // Persist to sessionStorage for instant restore on next mount
+      try {
+        sessionStorage.setItem(`candles:${cacheKey}`, JSON.stringify(validCandles));
+      } catch {}
+    }
+  }, [serverCandles, cacheKey]);
 
-      const delta = await fetchDelta(url, t0, t1, lastTs);
-      if (delta.length > 0) {
-        const merged = [...(fullSwaps || []), ...delta];
-        writeCache(ck, merged);
-        lastFetchTsRef.current = Math.max(...delta.map(s => Number(s.timestamp)));
-        pendingDeltasRef.current = delta;
-        setSwapVersion(v => v + 1);
-        return merged;
-      }
-      return fullSwaps || [];
+  // ── Blockchain event: optimistic update ───────────────────
+  const handleSwapEvent = useCallback(
+    (log: SwappedEvent) => {
+      const price = priceFromEvent(log, t0, t1);
+      if (price === null || price <= 0) return;
+
+      // Update latest price — single source of truth for both chart and UI
+      setLatestPrice({ price, timestamp: Date.now() });
+
+      setOptimisticCandles(prev => {
+        const base: CandleData[] = prev ?? candlesResponse?.candles ?? [];
+        return applyOptimisticCandle(base, price, intervalMinutes, false);
+      });
+
+      // In background: refetch Edge cache (stale-while-revalidate)
+      queryClient.invalidateQueries({
+        queryKey: [QUERY_KEY, pairId, t0, t1, intervalMinutes],
+      });
     },
-    enabled: !!url && !!enabled && !!t0 && !!t1 && !!fullSwaps,
-    staleTime: 0,
-    refetchInterval: 5000,   // poll every 5s (not 1s — reduces subgraph load)
-    initialData: fullSwaps,
-  });
-
-  // Keep delta query's data in sync with fullSwaps
-  const currentSwaps = fullSwaps || [];
-
-  // Memoize candles so chart only re-renders when swaps actually change
-  const candles = useMemo(
-    () => buildCandles(currentSwaps, intervalMinutes, t0, t1),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [currentSwaps, intervalMinutes, t0, t1, swapVersion],
+    [t0, t1, intervalMinutes, candlesResponse, pairId, queryClient],
   );
 
-  const isLoading = isFullLoading;
+  useWatchContractEvent({
+    address: DEX_ADDRESS,
+    abi: DEX_ABI,
+    eventName: 'Swapped',
+    onLogs: (logs) => {
+      for (const log of logs) {
+        handleSwapEvent(log as unknown as SwappedEvent);
+      }
+    },
+    enabled: !!enabled && !!t0 && !!t1,
+  });
+
+  // ── Merge: optimistic if available, else server ──────────
+  const candles: CandleData[] = optimisticCandles ?? candlesResponse?.candles ?? [];
 
   return {
     candles,
-    rawSwaps: currentSwaps,
+    rawSwaps: [],
     isLoading,
     isError,
     error: error as Error | null,
     refetch,
+    latestPrice,
   };
 }

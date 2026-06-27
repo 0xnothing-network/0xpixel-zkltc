@@ -4,7 +4,6 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import dynamic from "next/dynamic";
-import CandleChart from "@/app/components/CandleChart";
 
 const ChartWindow = dynamic(() => import("@/app/components/ChartWindow"), {
   ssr: false,
@@ -19,7 +18,6 @@ import { formatUnits, parseUnits, keccak256, encodePacked } from "viem";
 import { useToast } from "@/components/Toast";
 import { useGSAP } from "@gsap/react";
 import { gsapPixelStagger } from "@/lib/gsap-animations";
-import { prewarmPools } from "@/app/lib/chartPrewarm";
 
 // ============================================================
 // Pixel Skeleton Component - Dark theme shimmer loader
@@ -393,17 +391,6 @@ export default function DexAllInOne() {
   const { data: allPools, refetch: refetchAllPoolsData } = useAllPools();
   const { data: nusdAddress, refetch: refetchNusd } = useDexRead<`0x${string}`>("NUSD");
   const { data: totalRewardPool } = useDexRead<bigint>("totalRewardPool");
-
-  // Pre-warm chart cache for top pool pairs (async, fire-and-forget)
-  useEffect(() => {
-    if (!allPools || !nusdAddress) return;
-    const poolsForPrewarm = allPools.slice(0, 5).map(p => ({
-      pairId: p.pairId,
-      token: p.token0 === nusdAddress ? p.token1 : p.token0,
-      nusd: nusdAddress,
-    }));
-    prewarmPools(poolsForPrewarm, 5);
-  }, [allPools, nusdAddress]);
 
   // Check allowance for create pool token
   const { data: createTokenAllowance, refetch: refetchAllowance } = useTokenAllowance(
@@ -1747,19 +1734,6 @@ export default function DexAllInOne() {
         </div>
 
       </main>
-
-      {/* ── Pre-load chart data for top pairs (hidden) ── */}
-      {nusdAddress && poolOptions.slice(0, 3).map(pool => (
-        <div key={pool.pairId} style={{ position: 'fixed', width: 0, height: 0, overflow: 'hidden', pointerEvents: 'none' }}>
-          <CandleChart
-            pairId={pool.pairId}
-            token0={nusdAddress}
-            token1={pool.token}
-            height={0}
-            enableRealtime={false}
-          />
-        </div>
-      ))}
 
       {/* ── Chart Window ── */}
       {showChart && selectedChartPair && (() => {

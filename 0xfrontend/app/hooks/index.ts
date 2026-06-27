@@ -2,7 +2,7 @@
 // Hooks
 // ============================================================
 
-export { useCandleData, buildCandles } from './useCandleData';
+export { useCandleData } from './useCandleData';
 export type {
   CandleData,
   SwapEvent,

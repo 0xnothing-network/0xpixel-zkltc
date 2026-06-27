@@ -466,7 +466,7 @@ export interface RealtimePrice {
   timestamp: number;
 }
 
-interface SwappedEvent {
+export interface SwappedEvent {
   args: {
     user: `0x${string}`;
     tokenIn: `0x${string}`;

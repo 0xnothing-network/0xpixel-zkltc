@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import CandleChart, { TfValue } from './CandleChart';
+import CandleChart from './CandleChart';
+import type { TfValue } from './CandleChart';
 
 interface ChartWindowProps {
   pairId: string;
