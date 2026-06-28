@@ -1,5 +1,6 @@
 import {
   Swap,
+  Candle,
   Pool,
   LiquidityAdded,
   LiquidityRemoved,
@@ -13,14 +14,84 @@ import {
   PoolCreated as PoolCreatedEvent,
   RewardClaimed as RewardClaimedEvent,
 } from '../generated/ZeroXDex/ZeroXDex';
-import { BigInt } from '@graphprotocol/graph-ts';
+import { BigDecimal, BigInt, Bytes, crypto } from '@graphprotocol/graph-ts';
+
+const ZERO_BI = BigInt.fromI32(0);
+const ONE_BI = BigInt.fromI32(1);
+const CANDLE_INTERVALS = [60, 240, 720, 1440, 10080, 43200];
+
+function pairIdForTokens(tokenA: Bytes, tokenB: Bytes): Bytes {
+  const first = tokenA.toHexString() < tokenB.toHexString() ? tokenA : tokenB;
+  const second = tokenA.toHexString() < tokenB.toHexString() ? tokenB : tokenA;
+  return Bytes.fromByteArray(crypto.keccak256(first.concat(second)));
+}
+
+function token0ForPair(tokenA: Bytes, tokenB: Bytes): Bytes {
+  return tokenA.toHexString() < tokenB.toHexString() ? tokenA : tokenB;
+}
+
+function toDecimal(value: BigInt): BigDecimal {
+  return value.toBigDecimal();
+}
+
+function spotPriceFromPool(pool: Pool): BigDecimal | null {
+  if (pool.reserve0.le(ZERO_BI) || pool.reserve1.le(ZERO_BI)) return null;
+  return toDecimal(pool.reserve0).div(toDecimal(pool.reserve1));
+}
+
+function updateCandle(
+  pairId: Bytes,
+  intervalMinutes: i32,
+  timestamp: BigInt,
+  price: BigDecimal,
+  tokenIn: Bytes,
+  tokenOut: Bytes,
+  amountIn: BigInt,
+  amountOut: BigInt,
+): void {
+  const intervalSeconds = BigInt.fromI32(intervalMinutes * 60);
+  const bucket = timestamp.div(intervalSeconds).times(intervalSeconds);
+  const id = pairId.toHexString() + '-' + intervalMinutes.toString() + '-' + bucket.toString();
+  let candle = Candle.load(id);
+
+  if (candle === null) {
+    candle = new Candle(id);
+    candle.pairId = pairId;
+    candle.interval = intervalMinutes;
+    candle.timestamp = bucket;
+    candle.open = price;
+    candle.high = price;
+    candle.low = price;
+    candle.close = price;
+    candle.volumeToken0 = BigDecimal.zero();
+    candle.volumeToken1 = BigDecimal.zero();
+    candle.swapCount = ZERO_BI;
+  } else {
+    if (price.gt(candle.high)) candle.high = price;
+    if (price.lt(candle.low)) candle.low = price;
+    candle.close = price;
+  }
+
+  const pairToken0 = token0ForPair(tokenIn, tokenOut);
+  if (tokenIn.equals(pairToken0)) {
+    candle.volumeToken0 = candle.volumeToken0.plus(toDecimal(amountIn));
+    candle.volumeToken1 = candle.volumeToken1.plus(toDecimal(amountOut));
+  } else {
+    candle.volumeToken0 = candle.volumeToken0.plus(toDecimal(amountOut));
+    candle.volumeToken1 = candle.volumeToken1.plus(toDecimal(amountIn));
+  }
+  candle.swapCount = candle.swapCount.plus(ONE_BI);
+  candle.save();
+}
 
 export function handleSwapped(event: Swapped): void {
   const id =
     event.transaction.hash.toHex() + '-' + event.logIndex.toString();
+  const pairId = pairIdForTokens(event.params.tokenIn, event.params.tokenOut);
 
   const swap = new Swap(id);
   swap.user = event.params.user;
+  swap.pairId = pairId;
   swap.tokenIn = event.params.tokenIn;
   swap.tokenOut = event.params.tokenOut;
   swap.amountIn = event.params.amountIn;
@@ -29,6 +100,41 @@ export function handleSwapped(event: Swapped): void {
   swap.timestamp = event.block.timestamp;
   swap.blockNumber = event.block.number;
   swap.save();
+
+  const pool = Pool.load(pairId.toHexString());
+  if (pool === null) return;
+
+  const amountInAfterFee = event.params.amountIn.minus(event.params.fee);
+  if (amountInAfterFee.le(ZERO_BI)) return;
+
+  if (event.params.tokenIn.equals(pool.token0)) {
+    pool.reserve0 = pool.reserve0.plus(amountInAfterFee);
+    pool.reserve1 = pool.reserve1.ge(event.params.amountOut)
+      ? pool.reserve1.minus(event.params.amountOut)
+      : ZERO_BI;
+  } else {
+    pool.reserve1 = pool.reserve1.plus(amountInAfterFee);
+    pool.reserve0 = pool.reserve0.ge(event.params.amountOut)
+      ? pool.reserve0.minus(event.params.amountOut)
+      : ZERO_BI;
+  }
+  pool.save();
+
+  const price = spotPriceFromPool(pool);
+  if (price === null) return;
+
+  for (let i = 0; i < CANDLE_INTERVALS.length; i++) {
+    updateCandle(
+      pairId,
+      CANDLE_INTERVALS[i],
+      event.block.timestamp,
+      price,
+      event.params.tokenIn,
+      event.params.tokenOut,
+      event.params.amountIn,
+      event.params.amountOut,
+    );
+  }
 }
 
 export function handleLiquidityAdded(event: LiquidityAddedEvent): void {

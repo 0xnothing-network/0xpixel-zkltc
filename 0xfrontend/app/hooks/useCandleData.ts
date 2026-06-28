@@ -1,27 +1,7 @@
-/**
- * Custom hook for candlestick (OHLC) data.
- *
- * Architecture (optimized for Vercel Edge):
- *
- *   Client → /api/candles (Edge)  ← OHLCV pre-computed on server
- *                    ↓
- *            Goldsky Subgraph (fetched by Edge, cached)
- *                    ↓
- *   Client receives ready-to-paint chart data
- *
- * Real-time updates:
- *   On-chain Swapped events → optimistic candle update (instant, no wait)
- *   Background refetch from Edge → correct candle data replaces optimistic
- *
- * What this replaces vs. the old approach:
- *   ✗ fetchPage() pagination loop          → single /api/candles call
- *   ✗ sessionStorage cache + prewarm       → Edge CDN cache
- *   ✗ buildCandles() on client            → pre-computed on Edge
- *   ✗ Manual delta tracking                → React Query staleTime
- */
-import { useRef, useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useWatchContractEvent } from 'wagmi';
+import { formatUnits } from 'viem';
+import { useReadContract, useWatchContractEvent } from 'wagmi';
 import { DEX_ADDRESS, DEX_ABI } from '@/lib/0xDexAbi';
 import { SwappedEvent } from '@/lib/use0xDex';
 
@@ -50,6 +30,9 @@ export interface UseCandleDataParams {
   intervalMinutes: number;
   subgraphUrl?: string;
   enabled?: boolean;
+  initialPrice?: number | null;
+  token0Decimals?: number;
+  token1Decimals?: number;
 }
 
 export interface UseCandleDataReturn {
@@ -62,75 +45,326 @@ export interface UseCandleDataReturn {
   latestPrice: { price: number; timestamp: number } | null;
 }
 
-interface CandlesResponse {
+export interface CandlesResponse {
   candles: CandleData[];
   count: number;
   interval: number;
+  latestPrice?: { price: number; timestamp: number; source?: string } | null;
 }
 
-const QUERY_KEY = 'candles-edge';
+export const CANDLE_QUERY_KEY = 'candles-edge-v11';
+const SUPPORTED_INTERVALS = new Set([60, 240, 1440]);
+const SWAP_REFETCH_THROTTLE_MS = 1_500;
+const PRICE_SCALE_MAX_RATIO = 100;
+const BYTES32_RE = /^0x[a-fA-F0-9]{64}$/;
 
-function priceFromEvent(e: SwappedEvent, t0: string, t1: string): number | null {
+interface OptimisticCandleState {
+  cacheKey: string;
+  candles: CandleData[] | null;
+}
+
+interface FetchCandlesParams {
+  token0: string;
+  token1: string;
+  intervalMinutes: number;
+  subgraphUrl?: string;
+  token0Decimals?: number;
+  token1Decimals?: number;
+}
+
+type PoolTuple = readonly [
+  `0x${string}`,
+  `0x${string}`,
+  bigint,
+  bigint,
+  bigint,
+  bigint,
+  bigint,
+  bigint,
+];
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && isFinite(value);
+}
+
+function isBytes32(value: string): value is `0x${string}` {
+  return BYTES32_RE.test(value);
+}
+
+function isPriceScaleMismatch(left: number | null | undefined, right: number | null | undefined) {
+  if (!isFiniteNumber(left) || !isFiniteNumber(right) || left <= 0 || right <= 0) return false;
+  const ratio = left / right;
+  return ratio > PRICE_SCALE_MAX_RATIO || ratio < 1 / PRICE_SCALE_MAX_RATIO;
+}
+
+function resolveAnchoredPrice(candidate: number | null, anchor: number | null | undefined) {
+  if (!isFiniteNumber(candidate) || candidate <= 0) return null;
+  if (isFiniteNumber(anchor) && anchor > 0 && isPriceScaleMismatch(candidate, anchor)) {
+    return anchor;
+  }
+  return candidate;
+}
+
+function priceFromPool(
+  pool: PoolTuple | undefined,
+  token0: string,
+  token1: string,
+  token0Decimals: number,
+  token1Decimals: number,
+) {
+  if (!pool || !token0 || !token1) return null;
+
+  const poolToken0 = pool[0].toLowerCase();
+  const poolToken1 = pool[1].toLowerCase();
+  const chartToken0 = token0.toLowerCase();
+  const chartToken1 = token1.toLowerCase();
+
+  const reserveForChartToken0 =
+    chartToken0 === poolToken0 ? pool[2] : chartToken0 === poolToken1 ? pool[3] : null;
+  const reserveForChartToken1 =
+    chartToken1 === poolToken0 ? pool[2] : chartToken1 === poolToken1 ? pool[3] : null;
+
+  if (reserveForChartToken0 === null || reserveForChartToken1 === null || reserveForChartToken1 <= 0n) {
+    return null;
+  }
+
+  const token0Amount = Number(formatUnits(reserveForChartToken0, token0Decimals));
+  const token1Amount = Number(formatUnits(reserveForChartToken1, token1Decimals));
+  const price = token0Amount / token1Amount;
+  return isFiniteNumber(price) && price > 0 ? price : null;
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === 'number' && isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function normalizeCandleTime(value: unknown): number | null {
+  const direct = toFiniteNumber(value);
+  if (direct !== null) return Math.floor(direct);
+
+  if (typeof value === 'object' && value !== null) {
+    const seconds = toFiniteNumber((value as { seconds?: unknown }).seconds);
+    if (seconds !== null) return Math.floor(seconds);
+  }
+
+  return null;
+}
+
+function sanitizeCandles(candles: unknown): CandleData[] {
+  if (!Array.isArray(candles)) return [];
+
+  const valid: CandleData[] = [];
+  for (const item of candles) {
+    const candle = item as Partial<CandleData> | null | undefined;
+    const time = normalizeCandleTime(candle?.time);
+    const open = toFiniteNumber(candle?.open);
+    const high = toFiniteNumber(candle?.high);
+    const low = toFiniteNumber(candle?.low);
+    const close = toFiniteNumber(candle?.close);
+
+    if (time === null || open === null || high === null || low === null || close === null) {
+      continue;
+    }
+
+    valid.push({ time, open, high, low, close });
+  }
+
+  valid.sort((a, b) => a.time - b.time);
+
+  const deduped: CandleData[] = [];
+  for (const candle of valid) {
+    const previous = deduped[deduped.length - 1];
+    if (previous?.time === candle.time) {
+      deduped[deduped.length - 1] = candle;
+    } else if (!previous || candle.time > previous.time) {
+      deduped.push(candle);
+    }
+  }
+
+  return deduped;
+}
+
+function candlesEqual(a: CandleData[] | null | undefined, b: CandleData[]) {
+  if (!a || a.length !== b.length) return false;
+  for (let i = 0; i < b.length; i++) {
+    const left = a[i];
+    const right = b[i];
+    if (
+      left.time !== right.time ||
+      left.open !== right.open ||
+      left.high !== right.high ||
+      left.low !== right.low ||
+      left.close !== right.close
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function readCachedCandles(cacheKey: string): CandleData[] | null {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const raw = sessionStorage.getItem(`candles:v11:${cacheKey}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const candles = sanitizeCandles(parsed);
+    return candles.length > 0 ? candles : null;
+  } catch {
+    return null;
+  }
+}
+
+function readCachedLatestPrice(priceKey: string): { price: number; timestamp: number } | null {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const raw = sessionStorage.getItem(`latestPrice:v5:${priceKey}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<{ price: number; timestamp: number }>;
+    if (!isFiniteNumber(parsed.price) || parsed.price <= 0) return null;
+    return {
+      price: parsed.price,
+      timestamp: normalizePriceTimestamp(parsed.timestamp),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizePriceTimestamp(value: unknown) {
+  const parsed = toFiniteNumber(value);
+  if (parsed === null || parsed < 0) return Date.now();
+  return parsed < 1_000_000_000_000 ? parsed * 1000 : parsed;
+}
+
+function writeCachedLatestPrice(priceKey: string, latestPrice: { price: number; timestamp: number }) {
+  if (typeof window === 'undefined') return;
+
+  try {
+    sessionStorage.setItem(`latestPrice:v5:${priceKey}`, JSON.stringify(latestPrice));
+  } catch {}
+}
+
+export function getCandlesCacheKey(
+  token0: string,
+  token1: string,
+  intervalMinutes: number,
+  token0Decimals = 18,
+  token1Decimals = 18,
+) {
+  return `${token0.toLowerCase()}:${token1.toLowerCase()}:${intervalMinutes}:${token0Decimals}:${token1Decimals}`;
+}
+
+export function getCachedCandlesResponse(
+  token0: string,
+  token1: string,
+  intervalMinutes: number,
+  token0Decimals = 18,
+  token1Decimals = 18,
+): CandlesResponse | undefined {
+  const cacheKey = getCandlesCacheKey(token0, token1, intervalMinutes, token0Decimals, token1Decimals);
+  const candles = readCachedCandles(cacheKey);
+  return candles
+    ? { candles, count: candles.length, interval: intervalMinutes }
+    : undefined;
+}
+
+function getPriceCacheKey(token0: string, token1: string, token0Decimals = 18, token1Decimals = 18) {
+  return `${token0.toLowerCase()}:${token1.toLowerCase()}:${token0Decimals}:${token1Decimals}`;
+}
+
+function isResponseForInterval(
+  response: CandlesResponse | null | undefined,
+  intervalMinutes: number,
+): response is CandlesResponse {
+  return response?.interval === intervalMinutes;
+}
+
+export function getCandlesQueryKey(
+  pairId: string,
+  token0: string,
+  token1: string,
+  intervalMinutes: number,
+  token0Decimals = 18,
+  token1Decimals = 18,
+) {
+  return [
+    CANDLE_QUERY_KEY,
+    pairId,
+    token0.toLowerCase(),
+    token1.toLowerCase(),
+    intervalMinutes,
+    token0Decimals,
+    token1Decimals,
+  ] as const;
+}
+
+export async function fetchCandlesRequest({
+  token0,
+  token1,
+  intervalMinutes,
+  subgraphUrl = '/api/candles',
+  token0Decimals = 18,
+  token1Decimals = 18,
+}: FetchCandlesParams): Promise<CandlesResponse> {
+  const t0 = token0.toLowerCase();
+  const t1 = token1.toLowerCase();
+  if (!t0 || !t1 || !SUPPORTED_INTERVALS.has(intervalMinutes)) {
+    return { candles: [], count: 0, interval: intervalMinutes };
+  }
+
+  const params = new URLSearchParams({
+    token0: t0,
+    token1: t1,
+    interval: String(intervalMinutes),
+    token0Decimals: String(token0Decimals),
+    token1Decimals: String(token1Decimals),
+  });
+
+  const separator = subgraphUrl.includes('?') ? '&' : '?';
+  const res = await fetch(`${subgraphUrl}${separator}${params}`, {
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (!res.ok) {
+    if (res.status >= 500) throw new Error('server_error');
+    throw new Error(`Candles request failed: ${res.status}`);
+  }
+
+  const json = await res.json();
+  if (json.error) throw new Error(json.error);
+
+  const candles = sanitizeCandles(json.candles);
+  const latestPrice = json.latestPrice && isFiniteNumber(json.latestPrice.price) && json.latestPrice.price > 0
+    ? {
+        price: json.latestPrice.price,
+        timestamp: isFiniteNumber(json.latestPrice.timestamp) ? json.latestPrice.timestamp : Date.now(),
+        source: typeof json.latestPrice.source === 'string' ? json.latestPrice.source : undefined,
+      }
+    : null;
+  return {
+    candles,
+    count: candles.length,
+    interval: Number(json.interval ?? intervalMinutes),
+    latestPrice,
+  };
+}
+
+function isSwapForPair(e: SwappedEvent, t0: string, t1: string): boolean {
   const args = e.args;
-  if (!args) return null;
-  const { tokenIn, tokenOut, amountIn, amountOut } = args;
+  if (!args) return false;
+
+  const { tokenIn, tokenOut } = args;
   const ti = tokenIn.toLowerCase();
   const to = tokenOut.toLowerCase();
-  if (!((ti === t0 && to === t1) || (ti === t1 && to === t0))) return null;
-
-  const ai = Number(amountIn);
-  const ao = Number(amountOut);
-  if (ai <= 0 || ao <= 0) return null;
-
-  if (ti === t0 && to === t1) return ai > 0 ? ao / ai : 0;
-  return ao > 0 ? ai / ao : 0;
-}
-
-function applyOptimisticCandle(
-  candles: CandleData[],
-  price: number,
-  intervalMinutes: number,
-  invertPrice: boolean,
-): CandleData[] {
-  if (!candles.length) return candles;
-
-  const interval = intervalMinutes * 60;
-  const now = Math.floor(Date.now() / 1000);
-  const candleTime = Math.floor(now / interval) * interval;
-
-  const dispPrice = invertPrice && price > 0 ? 1 / price : price;
-  const last = candles[candles.length - 1];
-
-  // Guard: skip if last candle has invalid time (prevents lightweight-charts crash)
-  if (last && (typeof last.time !== 'number' || !isFinite(last.time))) {
-    return candles;
-  }
-
-  if (last.time === candleTime) {
-    // Update the current (ongoing) candle
-    return candles.map((c, i) =>
-      i === candles.length - 1
-        ? {
-            ...c,
-            high: Math.max(c.high, dispPrice),
-            low: c.low === 0 ? dispPrice : Math.min(c.low, dispPrice),
-            close: dispPrice,
-          }
-        : c,
-    );
-  } else {
-    // New candle period — append
-    return [
-      ...candles,
-      {
-        time: candleTime,
-        open: dispPrice,
-        high: dispPrice,
-        low: dispPrice,
-        close: dispPrice,
-      },
-    ];
-  }
+  return (ti === t0 && to === t1) || (ti === t1 && to === t0);
 }
 
 export function useCandleData({
@@ -140,39 +374,70 @@ export function useCandleData({
   intervalMinutes,
   subgraphUrl = '/api/candles',
   enabled = true,
+  initialPrice,
+  token0Decimals = 18,
+  token1Decimals = 18,
 }: UseCandleDataParams): UseCandleDataReturn {
   const t0 = token0 ? token0.toLowerCase() : '';
   const t1 = token1 ? token1.toLowerCase() : '';
   const queryClient = useQueryClient();
+  const cacheKey = getCandlesCacheKey(t0, t1, intervalMinutes, token0Decimals, token1Decimals);
+  const priceKey = getPriceCacheKey(t0, t1, token0Decimals, token1Decimals);
+  const pairIdBytes = isBytes32(pairId) ? pairId : undefined;
+  const lastSwapRefetchAtRef = useRef(0);
 
-  // Stable cache key for sessionStorage
-  const cacheKey = `${t0}:${t1}:${intervalMinutes}`;
-
-  // Track latest price from blockchain events (single source of truth)
-  const [latestPrice, setLatestPrice] = useState<{ price: number; timestamp: number } | null>(null);
-
-  // Optimistic candles — updated instantly from blockchain events
-  const [optimisticCandles, setOptimisticCandles] = useState<CandleData[] | null>(() => {
-    // Load from sessionStorage on first mount for instant display
-    if (typeof window !== 'undefined' && t0 && t1) {
-      try {
-        const raw = sessionStorage.getItem(`candles:${cacheKey}`);
-        if (raw) {
-          const parsed = JSON.parse(raw) as CandleData[];
-          // Guard: filter out candles with invalid time to prevent lightweight-charts crash
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            return parsed.filter((c) => typeof c?.time === 'number' && isFinite(c.time));
-          }
-        }
-      } catch {}
+  const [latestPrice, setLatestPrice] = useState<{ price: number; timestamp: number } | null>(() => {
+    if (isFiniteNumber(initialPrice) && initialPrice > 0) {
+      return { price: initialPrice, timestamp: Date.now() };
     }
-    return null;
+    return readCachedLatestPrice(priceKey);
+  });
+  const [optimisticState, setOptimisticState] = useState<OptimisticCandleState>(() => ({
+    cacheKey,
+    candles: readCachedCandles(cacheKey),
+  }));
+
+  const { data: poolData, refetch: refetchPoolData } = useReadContract({
+    address: DEX_ADDRESS,
+    abi: DEX_ABI,
+    functionName: 'pools',
+    args: pairIdBytes ? [pairIdBytes] : undefined,
+    query: {
+      enabled: !!enabled && !!pairIdBytes && !!t0 && !!t1,
+      staleTime: 0,
+      gcTime: 30_000,
+      refetchInterval: enabled ? 3_000 : false,
+      refetchOnMount: 'always',
+      refetchOnWindowFocus: false,
+    },
   });
 
-  // Track whether we have a confirmed (server) response
-  const confirmedRef = useRef(false);
+  useEffect(() => {
+    setOptimisticState({ cacheKey, candles: readCachedCandles(cacheKey) });
+  }, [cacheKey]);
 
-  // ── Base query: /api/candles ─────────────────────────────
+  useEffect(() => {
+    const seededPrice = isFiniteNumber(initialPrice) && initialPrice > 0
+      ? { price: initialPrice, timestamp: Date.now() }
+      : readCachedLatestPrice(priceKey);
+    setLatestPrice(seededPrice);
+  }, [initialPrice, priceKey]);
+
+  useEffect(() => {
+    if (!latestPrice) return;
+    writeCachedLatestPrice(priceKey, latestPrice);
+  }, [latestPrice, priceKey]);
+
+  useEffect(() => {
+    const poolPrice = resolveAnchoredPrice(
+      priceFromPool(poolData as PoolTuple | undefined, t0, t1, token0Decimals, token1Decimals),
+      initialPrice,
+    );
+
+    if (poolPrice === null) return;
+    setLatestPrice({ price: poolPrice, timestamp: Date.now() });
+  }, [poolData, t0, t1, token0Decimals, token1Decimals, initialPrice]);
+
   const {
     data: candlesResponse,
     isLoading,
@@ -180,90 +445,95 @@ export function useCandleData({
     error,
     refetch,
   } = useQuery<CandlesResponse>({
-    queryKey: [QUERY_KEY, pairId, t0, t1, intervalMinutes],
-    queryFn: async (): Promise<CandlesResponse> => {
-      if (!t0 || !t1) return { candles: [], count: 0, interval: intervalMinutes };
-
-      const params = new URLSearchParams({
+    queryKey: getCandlesQueryKey(pairId, t0, t1, intervalMinutes, token0Decimals, token1Decimals),
+    queryFn: () =>
+      fetchCandlesRequest({
         token0: t0,
         token1: t1,
-        interval: String(intervalMinutes),
-      });
-
-      const res = await fetch(`${subgraphUrl}?${params}`, {
-        signal: AbortSignal.timeout(15_000),
-      });
-
-      if (!res.ok) {
-        if (res.status >= 500) throw new Error('server_error');
-        throw new Error(`Candles request failed: ${res.status}`);
-      }
-
-      const json = await res.json();
-      if (json.error) throw new Error(json.error);
-      return json as CandlesResponse;
-    },
+        intervalMinutes,
+        subgraphUrl,
+        token0Decimals,
+        token1Decimals,
+      }),
     enabled: !!enabled && !!t0 && !!t1,
-    staleTime: 30_000,
-    refetchInterval: 30_000,
+    staleTime: 5_000,
+    gcTime: 5 * 60_000,
+    refetchInterval: enabled ? 5_000 : false,
+    refetchOnWindowFocus: false,
     retry: 2,
     retryDelay: attempt => Math.min(500 * 2 ** attempt, 4000),
+    initialData: () => getCachedCandlesResponse(t0, t1, intervalMinutes, token0Decimals, token1Decimals),
+    initialDataUpdatedAt: 0,
   });
 
-  // Sync server data into optimistic state when it arrives
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const serverCandles = candlesResponse?.candles ?? [];
   useEffect(() => {
-    if (candlesResponse?.candles) {
-      confirmedRef.current = true;
-      // Guard: filter out candles with invalid time before storing
-      const validCandles = candlesResponse.candles.filter(
-        (c) => typeof c?.time === 'number' && isFinite(c.time),
-      );
-      setOptimisticCandles(validCandles);
-      // Persist to sessionStorage for instant restore on next mount
-      try {
-        sessionStorage.setItem(`candles:${cacheKey}`, JSON.stringify(validCandles));
-      } catch {}
+    if (!isResponseForInterval(candlesResponse, intervalMinutes)) return;
+
+    const validCandles = sanitizeCandles(candlesResponse.candles);
+    const subgraphPrice = candlesResponse.latestPrice?.price;
+    if (isFiniteNumber(subgraphPrice) && subgraphPrice > 0) {
+      const nextLatestPrice = {
+        price: subgraphPrice,
+        timestamp: normalizePriceTimestamp(candlesResponse.latestPrice?.timestamp),
+      };
+      setLatestPrice(prev => (
+        !prev || nextLatestPrice.timestamp >= prev.timestamp ? nextLatestPrice : prev
+      ));
     }
-  }, [serverCandles, cacheKey]);
 
-  // ── Blockchain event: optimistic update ───────────────────
-  const handleSwapEvent = useCallback(
-    (log: SwappedEvent) => {
-      const price = priceFromEvent(log, t0, t1);
-      if (price === null || price <= 0) return;
+    setOptimisticState(prev => (
+      prev.cacheKey === cacheKey && candlesEqual(prev.candles, validCandles)
+        ? prev
+        : { cacheKey, candles: validCandles }
+    ));
 
-      // Update latest price — single source of truth for both chart and UI
-      setLatestPrice({ price, timestamp: Date.now() });
+    try {
+      sessionStorage.setItem(`candles:v11:${cacheKey}`, JSON.stringify(validCandles));
+    } catch {}
+  }, [candlesResponse, cacheKey, intervalMinutes]);
 
-      setOptimisticCandles(prev => {
-        const base: CandleData[] = prev ?? candlesResponse?.candles ?? [];
-        return applyOptimisticCandle(base, price, intervalMinutes, false);
-      });
+  const handleSwapLogs = useCallback(
+    (logs: readonly unknown[]) => {
+      const hasPairSwap = logs.some(log => isSwapForPair(log as SwappedEvent, t0, t1));
+      if (!hasPairSwap) return;
+      const now = Date.now();
+      const shouldRefetch = now - lastSwapRefetchAtRef.current >= SWAP_REFETCH_THROTTLE_MS;
+      if (shouldRefetch) lastSwapRefetchAtRef.current = now;
 
-      // In background: refetch Edge cache (stale-while-revalidate)
-      queryClient.invalidateQueries({
-        queryKey: [QUERY_KEY, pairId, t0, t1, intervalMinutes],
-      });
+      if (shouldRefetch) {
+        void refetchPoolData();
+        void queryClient.invalidateQueries({
+          queryKey: getCandlesQueryKey(pairId, t0, t1, intervalMinutes, token0Decimals, token1Decimals),
+          refetchType: 'active',
+        });
+      }
     },
-    [t0, t1, intervalMinutes, candlesResponse, pairId, queryClient],
+    [
+      t0,
+      t1,
+      intervalMinutes,
+      queryClient,
+      pairId,
+      refetchPoolData,
+      token0Decimals,
+      token1Decimals,
+    ],
   );
 
   useWatchContractEvent({
     address: DEX_ADDRESS,
     abi: DEX_ABI,
     eventName: 'Swapped',
-    onLogs: (logs) => {
-      for (const log of logs) {
-        handleSwapEvent(log as unknown as SwappedEvent);
-      }
-    },
+    onLogs: logs => handleSwapLogs(logs as readonly unknown[]),
     enabled: !!enabled && !!t0 && !!t1,
   });
 
-  // ── Merge: optimistic if available, else server ──────────
-  const candles: CandleData[] = optimisticCandles ?? candlesResponse?.candles ?? [];
+  const responseCandles = isResponseForInterval(candlesResponse, intervalMinutes)
+    ? candlesResponse.candles
+    : [];
+  const candles = optimisticState.cacheKey === cacheKey
+    ? optimisticState.candles ?? responseCandles
+    : responseCandles;
 
   return {
     candles,

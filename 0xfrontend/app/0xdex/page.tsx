@@ -191,7 +191,7 @@ function StatCard({ label, value, icon, color = "indigo" }: { label: string; val
 function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, lpTotal, rank, onSelect, onViewChart, tokenSymbol, tokenDecimals = 18 }: {
   token0: `0x${string}`; token1: `0x${string}`; reserve0: bigint; reserve1: bigint; volume24h: bigint; totalVolume: bigint; lpTotal: bigint; rank: number;
   onSelect?: (data: { token: `0x${string}`, nusd: `0x${string}`, reserve0: bigint, reserve1: bigint }) => void;
-  onViewChart?: () => void;
+  onViewChart?: (data: { price: number | null; tokenDecimals: number }) => void;
   tokenSymbol?: string;
   tokenDecimals?: number;
 }) {
@@ -241,7 +241,10 @@ function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, 
         </div>
         {onViewChart && (
           <button
-            onClick={(e) => { e.stopPropagation(); onViewChart(); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onViewChart({ price: pricePerToken > 0 ? pricePerToken : null, tokenDecimals });
+            }}
             className="pixel-btn-soft pixel-btn-soft-indigo pixel-btn-soft-sm"
           >
             CHART
@@ -384,6 +387,10 @@ export default function DexAllInOne() {
 
   // Chart state - select a pair to view chart
   const [selectedChartPair, setSelectedChartPair] = useState<string | null>(null);
+  const [selectedChartAnchor, setSelectedChartAnchor] = useState<{
+    price: number | null;
+    tokenDecimals: number;
+  } | null>(null);
   const [showChart, setShowChart] = useState(false);
 
   // Data
@@ -406,16 +413,17 @@ export default function DexAllInOne() {
     const seen = new Set<string>();
     return allPools
       .map(({ pairId, token0, token1 }) => {
-        const token = token0 === nusdAddress ? token1 : token0;
+        const token = token0.toLowerCase() === nusdAddress.toLowerCase() ? token1 : token0;
         const nusd = nusdAddress;
         // Skip duplicates
-        if (seen.has(pairId)) return null;
-        seen.add(pairId);
+        const pairKey = pairId.toLowerCase();
+        if (seen.has(pairKey)) return null;
+        seen.add(pairKey);
         return {
           token,
           nusd,
           pairId,
-          label: `${token === NATIVE_ADDRESS ? "zkLTC" : token.slice(0, 8) + "..."}/NUSD`,
+          label: `${token.toLowerCase() === NATIVE_ADDRESS.toLowerCase() ? "zkLTC" : token.slice(0, 8) + "..."}/NUSD`,
         };
       })
       .filter(Boolean) as { token: `0x${string}`; nusd: `0x${string}`; pairId: `0x${string}`; label: string }[];
@@ -497,12 +505,62 @@ export default function DexAllInOne() {
     query: { enabled: !!poolOptions[7]?.token && poolOptions[7]?.token !== NATIVE_ADDRESS }
   });
 
+  const { data: token0Decimals } = useReadContract({
+    address: poolOptions[0]?.token !== NATIVE_ADDRESS ? poolOptions[0]?.token : undefined,
+    abi: erc20Abi,
+    functionName: "decimals",
+    query: { enabled: !!poolOptions[0]?.token && poolOptions[0]?.token !== NATIVE_ADDRESS }
+  });
+  const { data: token1Decimals } = useReadContract({
+    address: poolOptions[1]?.token !== NATIVE_ADDRESS ? poolOptions[1]?.token : undefined,
+    abi: erc20Abi,
+    functionName: "decimals",
+    query: { enabled: !!poolOptions[1]?.token && poolOptions[1]?.token !== NATIVE_ADDRESS }
+  });
+  const { data: token2Decimals } = useReadContract({
+    address: poolOptions[2]?.token !== NATIVE_ADDRESS ? poolOptions[2]?.token : undefined,
+    abi: erc20Abi,
+    functionName: "decimals",
+    query: { enabled: !!poolOptions[2]?.token && poolOptions[2]?.token !== NATIVE_ADDRESS }
+  });
+  const { data: token3Decimals } = useReadContract({
+    address: poolOptions[3]?.token !== NATIVE_ADDRESS ? poolOptions[3]?.token : undefined,
+    abi: erc20Abi,
+    functionName: "decimals",
+    query: { enabled: !!poolOptions[3]?.token && poolOptions[3]?.token !== NATIVE_ADDRESS }
+  });
+  const { data: token4Decimals } = useReadContract({
+    address: poolOptions[4]?.token !== NATIVE_ADDRESS ? poolOptions[4]?.token : undefined,
+    abi: erc20Abi,
+    functionName: "decimals",
+    query: { enabled: !!poolOptions[4]?.token && poolOptions[4]?.token !== NATIVE_ADDRESS }
+  });
+  const { data: token5Decimals } = useReadContract({
+    address: poolOptions[5]?.token !== NATIVE_ADDRESS ? poolOptions[5]?.token : undefined,
+    abi: erc20Abi,
+    functionName: "decimals",
+    query: { enabled: !!poolOptions[5]?.token && poolOptions[5]?.token !== NATIVE_ADDRESS }
+  });
+  const { data: token6Decimals } = useReadContract({
+    address: poolOptions[6]?.token !== NATIVE_ADDRESS ? poolOptions[6]?.token : undefined,
+    abi: erc20Abi,
+    functionName: "decimals",
+    query: { enabled: !!poolOptions[6]?.token && poolOptions[6]?.token !== NATIVE_ADDRESS }
+  });
+  const { data: token7Decimals } = useReadContract({
+    address: poolOptions[7]?.token !== NATIVE_ADDRESS ? poolOptions[7]?.token : undefined,
+    abi: erc20Abi,
+    functionName: "decimals",
+    query: { enabled: !!poolOptions[7]?.token && poolOptions[7]?.token !== NATIVE_ADDRESS }
+  });
+
   const tokenSymbols = [token0Symbol, token1Symbol, token2Symbol, token3Symbol, token4Symbol, token5Symbol, token6Symbol, token7Symbol];
+  const tokenDecimalsList = [token0Decimals, token1Decimals, token2Decimals, token3Decimals, token4Decimals, token5Decimals, token6Decimals, token7Decimals];
 
   // Collect all pool data
   type PoolDataTuple = readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint];
-  const allPoolData = useMemo<PoolDataTuple[]>(() => {
-    return [pool0Data, pool1Data, pool2Data, pool3Data, pool4Data, pool5Data, pool6Data, pool7Data].filter(Boolean) as PoolDataTuple[];
+  const allPoolData = useMemo<(PoolDataTuple | undefined)[]>(() => {
+    return [pool0Data, pool1Data, pool2Data, pool3Data, pool4Data, pool5Data, pool6Data, pool7Data] as (PoolDataTuple | undefined)[];
   }, [pool0Data, pool1Data, pool2Data, pool3Data, pool4Data, pool5Data, pool6Data, pool7Data]);
 
   // Sort pools based on filter
@@ -1525,6 +1583,7 @@ export default function DexAllInOne() {
                       totalVolume={(pData[6] as bigint) || 0n}
                       lpTotal={(pData[4] as bigint) || 0n}
                       tokenSymbol={pool.token === NATIVE_ADDRESS ? "zkLTC" : (tokenSymbols[poolIndex] as string) || undefined}
+                      tokenDecimals={pool.token === NATIVE_ADDRESS ? 18 : Number(tokenDecimalsList[poolIndex] ?? 18)}
                       onSelect={() => {
                         setActiveTab("swap");
                         setSwapTokenIn(KNOWN_TOKENS[1]);
@@ -1535,8 +1594,9 @@ export default function DexAllInOne() {
                         }
                         setSwapMode("fixed");
                       }}
-                      onViewChart={() => {
+                      onViewChart={(chartAnchor) => {
                         setSelectedChartPair(pool.pairId);
+                        setSelectedChartAnchor(chartAnchor);
                         setShowChart(true);
                       }}
                     />
@@ -1740,16 +1800,39 @@ export default function DexAllInOne() {
         const poolIdx = poolOptions.findIndex(p => p.pairId === selectedChartPair);
         const sel = poolOptions[poolIdx];
         const label = sel?.token === NATIVE_ADDRESS ? 'zkLTC' : (tokenSymbols[poolIdx] as string) || '--';
+        const selectedTokenDecimals = selectedChartAnchor?.tokenDecimals
+          ?? (sel?.token === NATIVE_ADDRESS ? 18 : Number(tokenDecimalsList[poolIdx] ?? 18));
+        const selectedPoolData = allPoolData[poolIdx];
+        const selectedToken0 = selectedPoolData?.[0]?.toLowerCase();
+        const selectedToken1 = selectedPoolData?.[1]?.toLowerCase();
+        const chartToken1 =
+          selectedPoolData && nusdAddress
+            ? selectedToken0 === nusdAddress.toLowerCase()
+              ? selectedPoolData[1]
+              : selectedPoolData[0]
+            : sel?.token || "";
+        const selectedReserve0 = selectedPoolData?.[2] ?? 0n;
+        const selectedReserve1 = selectedPoolData?.[3] ?? 0n;
+        const currentPoolChartPrice =
+          sel && nusdAddress && selectedToken0 && selectedToken1 && selectedReserve0 > 0n && selectedReserve1 > 0n
+            ? selectedToken0 === nusdAddress.toLowerCase()
+              ? Number(formatUnits(selectedReserve0, 18)) / Number(formatUnits(selectedReserve1, selectedTokenDecimals))
+              : Number(formatUnits(selectedReserve1, 18)) / Number(formatUnits(selectedReserve0, selectedTokenDecimals))
+            : null;
+        const initialChartPrice = currentPoolChartPrice ?? selectedChartAnchor?.price ?? null;
         return (
           <ChartWindow
             key={selectedChartPair}
             pairId={selectedChartPair}
             token0={nusdAddress || ""}
-            token1={sel?.token || ""}
+            token1={chartToken1}
             pairLabel={`${label} / NUSD`}
             subgraphUrl="/api/subgraph"
-            initialTimeframe={1440}
-            onClose={() => { setShowChart(false); setSelectedChartPair(null); }}
+            initialPrice={initialChartPrice}
+            token0Decimals={18}
+            token1Decimals={selectedTokenDecimals}
+            initialTimeframe={240}
+            onClose={() => { setShowChart(false); setSelectedChartPair(null); setSelectedChartAnchor(null); }}
           />
         );
       })()}

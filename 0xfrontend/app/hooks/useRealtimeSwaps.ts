@@ -9,7 +9,7 @@
  */
 'use client';
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useWatchContractEvent } from 'wagmi';
 import { ZeroXDexAbi, ZEROXDEX_ADDRESS } from '@/abi/ZeroXDex';
@@ -56,7 +56,7 @@ export interface UseRealtimeSwapsReturn {
 // ============================================================
 
 // Query keys to invalidate when new swaps occur
-const CANDLE_QUERY_KEYS = ['candle-data'];
+const CANDLE_QUERY_KEYS = ['candles-edge-v11'];
 
 // ============================================================
 // MAIN HOOK

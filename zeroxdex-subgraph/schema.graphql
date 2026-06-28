@@ -1,6 +1,7 @@
 type Swap @entity {
   id: ID!
   user: Bytes!
+  pairId: Bytes! @index
   tokenIn: Bytes!
   tokenOut: Bytes!
   amountIn: BigInt!
@@ -8,6 +9,20 @@ type Swap @entity {
   fee: BigInt!
   timestamp: BigInt! @index
   blockNumber: BigInt
+}
+
+type Candle @entity {
+  id: ID!
+  pairId: Bytes! @index
+  interval: Int! @index
+  timestamp: BigInt! @index
+  open: BigDecimal!
+  high: BigDecimal!
+  low: BigDecimal!
+  close: BigDecimal!
+  volumeToken0: BigDecimal!
+  volumeToken1: BigDecimal!
+  swapCount: BigInt!
 }
 
 type Pool @entity {

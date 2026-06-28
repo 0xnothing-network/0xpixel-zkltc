@@ -10,6 +10,9 @@ interface ChartWindowProps {
   token1: string;
   pairLabel?: string;
   subgraphUrl?: string;
+  initialPrice?: number | null;
+  token0Decimals?: number;
+  token1Decimals?: number;
   initialTimeframe?: TfValue;
   onClose: () => void;
 }
@@ -17,14 +20,13 @@ interface ChartWindowProps {
 const COLORS = {
   bg: '#0a0a12',
   border: '#2a2a4a',
-  borderBright: '#4a4a7a',
   titleBg: '#0d0d18',
   text: '#7878b0',
-  textBright: '#d8d8ff',
   accent: '#8888ff',
-  bullish: '#00ff88',
-  bearish: '#ff4466',
 };
+
+const DEFAULT_POS = { x: 100, y: 80 };
+const DEFAULT_SIZE = { w: 780, h: 520 };
 
 export default function ChartWindow({
   pairId,
@@ -32,108 +34,171 @@ export default function ChartWindow({
   token1,
   pairLabel,
   subgraphUrl,
-  initialTimeframe = 1440,
+  initialPrice,
+  token0Decimals = 18,
+  token1Decimals = 18,
+  initialTimeframe = 240,
   onClose,
 }: ChartWindowProps) {
   const windowRef = useRef<HTMLDivElement>(null);
-  const prevState = useRef({ x: 100, y: 80, w: 780, h: 520 });
-  const [pos, setPos] = useState({ x: 100, y: 80 });
-  const [size, setSize] = useState({ w: 780, h: 520 });
+  const prevState = useRef({ ...DEFAULT_POS, ...DEFAULT_SIZE });
+  const [pos, setPos] = useState(DEFAULT_POS);
+  const [size, setSize] = useState(DEFAULT_SIZE);
+  const posRef = useRef(pos);
+  const sizeRef = useRef(size);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [fsHeight, setFsHeight] = useState(900);
-  const [isMobile, setIsMobile] = useState(false);
 
-  // Detect mobile viewport and set initial position/size
-  useEffect(() => {
-    const checkMobile = () => {
-      const mobile = window.innerWidth < 640;
-      setIsMobile(mobile);
-      if (mobile) {
-        const w = Math.min(window.innerWidth - 16, 420);
-        const h = Math.min(window.innerHeight - 80, 480);
-        setPos({ x: (window.innerWidth - w) / 2, y: 40 });
-        setSize({ w, h });
-      }
-    };
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
-  }, []);
   const dragging = useRef(false);
   const dragOffset = useRef({ x: 0, y: 0 });
   const resizing = useRef(false);
   const resizeDir = useRef('');
   const resizeStart = useRef({ x: 0, y: 0, w: 0, h: 0, px: 0, py: 0 });
+  const moveFrame = useRef<number | null>(null);
+  const pendingWindowState = useRef<{ pos?: typeof pos; size?: typeof size }>({});
 
-  // ── Drag titlebar ────────────────────────────────────────────
+  useEffect(() => { posRef.current = pos; }, [pos]);
+  useEffect(() => { sizeRef.current = size; }, [size]);
+
+  const flushWindowState = useCallback(() => {
+    moveFrame.current = null;
+    const next = pendingWindowState.current;
+    pendingWindowState.current = {};
+    if (next.pos) setPos(next.pos);
+    if (next.size) setSize(next.size);
+  }, []);
+
+  const scheduleWindowState = useCallback((next: { pos?: typeof pos; size?: typeof size }) => {
+    pendingWindowState.current = { ...pendingWindowState.current, ...next };
+    if (moveFrame.current === null) {
+      moveFrame.current = requestAnimationFrame(flushWindowState);
+    }
+  }, [flushWindowState]);
+
+  useEffect(() => {
+    const checkMobile = () => {
+      if (window.innerWidth >= 640) return;
+      const w = Math.min(window.innerWidth - 16, 420);
+      const h = Math.min(window.innerHeight - 80, 480);
+      const nextPos = { x: (window.innerWidth - w) / 2, y: 40 };
+      const nextSize = { w, h };
+      setPos(p => (p.x === nextPos.x && p.y === nextPos.y ? p : nextPos));
+      setSize(s => (s.w === nextSize.w && s.h === nextSize.h ? s : nextSize));
+    };
+
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
   const onTitleMouseDown = useCallback((e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('.titlebar-btn')) return;
     dragging.current = true;
-    // Use current pos from closure — refs avoid stale closures and re-render cascading
-    dragOffset.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
+    const currentPos = posRef.current;
+    dragOffset.current = { x: e.clientX - currentPos.x, y: e.clientY - currentPos.y };
     e.preventDefault();
-  }, [pos]); // pos only for initial value, ref keeps it fresh
+  }, []);
 
-  // ── Resize from edges ───────────────────────────────────────
   const onEdgeMouseDown = useCallback((e: React.MouseEvent, dir: string) => {
     e.preventDefault();
     e.stopPropagation();
     resizing.current = true;
     resizeDir.current = dir;
-    resizeStart.current = { x: e.clientX, y: e.clientY, w: size.w, h: size.h, px: pos.x, py: pos.y };
-  }, [size, pos]); // same — initial values from closure, refs for live access
+    const currentSize = sizeRef.current;
+    const currentPos = posRef.current;
+    resizeStart.current = {
+      x: e.clientX,
+      y: e.clientY,
+      w: currentSize.w,
+      h: currentSize.h,
+      px: currentPos.x,
+      py: currentPos.y,
+    };
+  }, []);
 
-  // ── Minimize ───────────────────────────────────────────────
   const toggleMinimize = useCallback(() => {
     setIsMinimized(m => !m);
   }, []);
 
-  // ── Fullscreen ──────────────────────────────────────────────
   const toggleFullscreen = useCallback(() => {
     setIsFullscreen(f => {
       if (!f) {
-        prevState.current = { x: pos.x, y: pos.y, w: size.w, h: size.h };
+        const currentPos = posRef.current;
+        const currentSize = sizeRef.current;
+        prevState.current = {
+          x: currentPos.x,
+          y: currentPos.y,
+          w: currentSize.w,
+          h: currentSize.h,
+        };
         return true;
-      } else {
-        setPos({ x: prevState.current.x, y: prevState.current.y });
-        setSize({ w: prevState.current.w, h: prevState.current.h });
-        return false;
       }
-    });
-  }, [pos, size]);
 
-  // ── Mouse move / up ─────────────────────────────────────────
+      setPos({ x: prevState.current.x, y: prevState.current.y });
+      setSize({ w: prevState.current.w, h: prevState.current.h });
+      return false;
+    });
+  }, []);
+
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (dragging.current) {
-        setPos({ x: e.clientX - dragOffset.current.x, y: e.clientY - dragOffset.current.y });
+        scheduleWindowState({
+          pos: {
+            x: e.clientX - dragOffset.current.x,
+            y: e.clientY - dragOffset.current.y,
+          },
+        });
       }
+
       if (resizing.current) {
         const { x, y, w, h, px, py } = resizeStart.current;
         const dx = e.clientX - x;
         const dy = e.clientY - y;
         const dir = resizeDir.current;
-        let newW = w, newH = h, newX = px, newY = py;
-        if (dir.includes('e')) newW = Math.max(400, w + dx);
-        if (dir.includes('s')) newH = Math.max(300, h + dy);
-        if (dir.includes('w')) { newW = Math.max(400, w - dx); newX = px + dx; }
-        if (dir.includes('n')) { newH = Math.max(300, h - dy); newY = py + dy; }
-        setSize({ w: newW, h: newH });
-        if (dir.includes('w')) setPos(p => ({ ...p, x: newX }));
-        if (dir.includes('n')) setPos(p => ({ ...p, y: newY }));
+        const minW = Math.min(400, Math.max(280, window.innerWidth - 16));
+        const minH = Math.min(300, Math.max(220, window.innerHeight - 64));
+        let newW = w;
+        let newH = h;
+        let newX = px;
+        let newY = py;
+
+        if (dir.includes('e')) newW = Math.max(minW, w + dx);
+        if (dir.includes('s')) newH = Math.max(minH, h + dy);
+        if (dir.includes('w')) {
+          newW = Math.max(minW, w - dx);
+          newX = px + (w - newW);
+        }
+        if (dir.includes('n')) {
+          newH = Math.max(minH, h - dy);
+          newY = py + (h - newH);
+        }
+
+        scheduleWindowState({
+          size: { w: newW, h: newH },
+          pos: { x: newX, y: newY },
+        });
       }
     };
-    const onUp = () => { dragging.current = false; resizing.current = false; };
+
+    const onUp = () => {
+      dragging.current = false;
+      resizing.current = false;
+    };
+
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
     return () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      if (moveFrame.current !== null) {
+        cancelAnimationFrame(moveFrame.current);
+        moveFrame.current = null;
+      }
     };
-  }, []);
+  }, [scheduleWindowState]);
 
-  // ── Fullscreen height sync ───────────────────────────────────
   useEffect(() => {
     if (!isFullscreen) return;
     setFsHeight(window.innerHeight);
@@ -144,23 +209,21 @@ export default function ChartWindow({
 
   const fs = isFullscreen;
 
-return (
-    <>
-      <div
-        ref={windowRef}
-        style={{
-          position: 'fixed',
-          left: fs ? 0 : pos.x,
-          top: fs ? 0 : pos.y,
-          width: fs ? '100vw' : size.w,
-          height: fs ? `${fsHeight}px` : isMinimized ? 36 : size.h,
-          zIndex: fs ? 99999 : 9999,
-          display: 'flex',
-          flexDirection: 'column',
-          background: COLORS.bg,
-        }}
-      >
-      {/* ── Titlebar ── */}
+  return (
+    <div
+      ref={windowRef}
+      style={{
+        position: 'fixed',
+        left: fs ? 0 : pos.x,
+        top: fs ? 0 : pos.y,
+        width: fs ? '100vw' : size.w,
+        height: fs ? `${fsHeight}px` : isMinimized ? 36 : size.h,
+        zIndex: fs ? 99999 : 9999,
+        display: 'flex',
+        flexDirection: 'column',
+        background: COLORS.bg,
+      }}
+    >
       <div
         onMouseDown={onTitleMouseDown}
         style={{
@@ -175,20 +238,23 @@ return (
           flexShrink: 0,
         }}
       >
-        {/* Traffic lights */}
         <div style={{ display: 'flex', gap: 5, marginRight: 12 }}>
           <button
             className="titlebar-btn"
             onClick={onClose}
             style={{
-              width: 18, height: 18,
+              width: 18,
+              height: 18,
               background: '#ff4466',
-              border: `2px solid #aa2244`,
+              border: '2px solid #aa2244',
               boxShadow: 'inset 1px 1px 0 #ff8899, inset -1px -1px 0 #660011',
               cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
               fontFamily: "'Press Start 2P', monospace",
-              fontSize: 6, color: '#220008',
+              fontSize: 6,
+              color: '#220008',
               lineHeight: 1,
             }}
             title="Close"
@@ -199,14 +265,18 @@ return (
             className="titlebar-btn"
             onClick={toggleMinimize}
             style={{
-              width: 18, height: 18,
+              width: 18,
+              height: 18,
               background: '#ffcc00',
-              border: `2px solid #aa8800`,
+              border: '2px solid #aa8800',
               boxShadow: 'inset 1px 1px 0 #ffee88, inset -1px -1px 0 #664400',
               cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
               fontFamily: "'Press Start 2P', monospace",
-              fontSize: 7, color: '#443300',
+              fontSize: 7,
+              color: '#443300',
               lineHeight: 1,
             }}
             title="Minimize"
@@ -217,28 +287,34 @@ return (
             className="titlebar-btn"
             onClick={toggleFullscreen}
             style={{
-              width: 18, height: 18,
+              width: 18,
+              height: 18,
               background: '#00ff88',
-              border: `2px solid #00aa55`,
+              border: '2px solid #00aa55',
               boxShadow: 'inset 1px 1px 0 #88ffcc, inset -1px -1px 0 #005522',
               cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
               fontFamily: "'Press Start 2P', monospace",
-              fontSize: 5, color: '#002211',
+              fontSize: 5,
+              color: '#002211',
               lineHeight: 1,
             }}
             title={fs ? 'Restore' : 'Maximize'}
           >
-            {fs ? '◀' : '□'}
+            {fs ? '<' : '[]'}
           </button>
         </div>
 
-        {/* Title */}
         <span
           style={{
-            flex: 1, textAlign: 'center',
+            flex: 1,
+            textAlign: 'center',
             fontFamily: "'Press Start 2P', monospace",
-            fontSize: 7, color: COLORS.accent, letterSpacing: '0.08em',
+            fontSize: 7,
+            color: COLORS.accent,
+            letterSpacing: '0.08em',
           }}
         >
           {pairLabel || `${token0?.slice(0, 6)}... / ${token1?.slice(0, 6)}...`}
@@ -247,31 +323,34 @@ return (
         <span
           style={{
             fontFamily: "'Press Start 2P', monospace",
-            fontSize: 6, color: COLORS.text,
+            fontSize: 6,
+            color: COLORS.text,
           }}
         >
           {pairId ? `${pairId.slice(0, 4)}...${pairId.slice(-2)}` : ''}
         </span>
       </div>
 
-      {/* ── Chart ── */}
       <div style={{ flex: 1, overflow: 'hidden', display: isMinimized ? 'none' : 'flex' }}>
         <CandleChart
           pairId={pairId}
           token0={token0}
           token1={token1}
           subgraphUrl={subgraphUrl}
+          initialPrice={initialPrice}
+          token0Decimals={token0Decimals}
+          token1Decimals={token1Decimals}
           initialTimeframe={initialTimeframe}
           height={Math.max(200, (fs ? fsHeight : size.h) - 60)}
-          enableRealtime={true}
+          enableRealtime={!isMinimized}
         />
       </div>
 
-      {/* ── Resize handles ── */}
       {!fs && !isMinimized && (['e', 's', 'w', 'n', 'se', 'sw', 'ne', 'nw'] as const).map(dir => {
         const isCorner = dir.length === 2;
         const style: React.CSSProperties = {
-          position: 'absolute', zIndex: 10,
+          position: 'absolute',
+          zIndex: 10,
           cursor: isCorner
             ? (dir === 'se' || dir === 'nw' ? 'nwse' : 'nesw')
             : (dir === 'e' || dir === 'w' ? 'ew' : 'ns'),
@@ -283,6 +362,5 @@ return (
         return <div key={dir} style={style} onMouseDown={e => onEdgeMouseDown(e, dir)} />;
       })}
     </div>
-    </>
   );
 }
