@@ -8,6 +8,10 @@ import {
 } from "@/lib/contract";
 import { pixelDataToSVG } from "@/lib/gridParser";
 import { MarketplaceAbi } from "@/lib/marketplaceAbi";
+import {
+  fetchUserNftsFromSubgraph,
+  hasMarketplaceSubgraph,
+} from "@/lib/marketplaceSubgraph";
 
 export const runtime = "nodejs";
 export const revalidate = 30;
@@ -32,7 +36,15 @@ async function fetchNativeNfts(address: string): Promise<NativeNft[]> {
     return cached.value;
   }
 
-  const addr = address as `0x${string}`;
+  if (hasMarketplaceSubgraph()) {
+    try {
+      const tokens = await fetchUserNftsFromSubgraph(address);
+      CACHE.set(address, { value: tokens, ts: Date.now() });
+      return tokens;
+    } catch (err) {
+      console.warn("[user-nfts] subgraph fallback to RPC:", err);
+    }
+  }
 
   // Get token IDs first
   const tokenIds = await getUserTokenIds(address);

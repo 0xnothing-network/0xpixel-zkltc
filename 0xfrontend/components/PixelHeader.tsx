@@ -131,9 +131,9 @@ function AppHeader() {
   const wrongNetwork = isConnected && chainId && chainId !== LITVM_CHAIN_ID;
 
   return (
-    <header className="sticky top-0 z-50 bg-[#1A1A2E]/90 backdrop-blur-xl border-b border-[#2D2D44]">
-      <div className="max-w-7xl mx-auto px-5 py-3.5 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
+    <header className="sticky top-0 z-50 bg-[#1A1A2E]/92 backdrop-blur-xl border-b border-[#2D2D44]">
+      <div className="max-w-7xl mx-auto px-3 py-2.5 sm:px-5 sm:py-3.5 flex items-center justify-between gap-2 sm:gap-4">
+        <div className="flex min-w-0 items-center gap-3 sm:gap-4">
           <Link href="/" className="flex items-center gap-2.5 group">
             <Image
               src="/icon.svg"
@@ -141,10 +141,10 @@ function AppHeader() {
               width={36}
               height={36}
               priority
-              className="w-9 h-9 rounded-full object-cover transition-transform duration-200 group-hover:scale-105"
+              className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover transition-transform duration-200 group-hover:scale-105"
             />
             <span
-              className="text-white font-bold text-lg tracking-tight"
+              className="text-white font-bold text-base sm:text-lg tracking-tight"
               style={{ fontFamily: "var(--font-departure)" }}
             >
               0xPixel
@@ -179,7 +179,7 @@ function AppHeader() {
           </a>
         </nav>
 
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
           {mounted && isConnected && address ? (
             <div className="flex items-center gap-2">
               {/* Wrong network warning */}
@@ -187,7 +187,7 @@ function AppHeader() {
                 <button
                   onClick={() => switchChain?.({ chainId: LITVM_CHAIN_ID })}
                   disabled={isSwitching}
-                  className="px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-400 text-xs font-bold hover:bg-amber-500/30 transition-colors"
+                  className="hidden sm:block px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-400 text-xs font-bold hover:bg-amber-500/30 transition-colors"
                 >
                   {isSwitching ? "Switching..." : "Switch to LitVM"}
                 </button>
@@ -283,19 +283,24 @@ function AppHeader() {
                   </div>
                 ) : null}
 
-                <div className="sm:hidden flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/30">
+                <button
+                  onClick={() => setAddressMenuOpen((v) => !v)}
+                  aria-expanded={addressMenuOpen}
+                  aria-haspopup="menu"
+                  className="sm:hidden flex min-w-0 items-center gap-1.5 px-2 py-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/30"
+                >
                   <span className={`w-2 h-2 rounded-full ${wrongNetwork ? "bg-amber-400" : "bg-emerald-400"}`} />
-                  <span className="text-white text-[11px] font-mono">
+                  <span className="text-white text-[10px] font-mono">
                     {shortenAddress(address)}
                   </span>
-                </div>
+                </button>
               </div>
             </div>
           ) : mounted ? (
             <button
               onClick={handleConnect}
               disabled={isPending}
-              className="relative px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed active:translate-y-px overflow-hidden group"
+              className="relative px-3 sm:px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] sm:text-xs font-bold transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed active:translate-y-px overflow-hidden group whitespace-nowrap"
               style={{ fontFamily: "var(--font-departure)" }}
             >
               <span
@@ -314,7 +319,8 @@ function AppHeader() {
                       <path d="M21 12V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2h7" />
                       <path d="M16 16l2 2 4-4" />
                     </svg>
-                    CONNECT WALLET
+                    <span className="hidden min-[390px]:inline">CONNECT WALLET</span>
+                    <span className="min-[390px]:hidden">CONNECT</span>
                   </>
                 )}
               </span>
@@ -325,7 +331,7 @@ function AppHeader() {
 
           <button
             onClick={() => setMobileMenuOpen((v) => !v)}
-            className="md:hidden w-9 h-9 flex flex-col items-center justify-center gap-1.5 rounded-lg hover:bg-white/5 transition-colors"
+            className="md:hidden w-10 h-10 flex flex-col items-center justify-center gap-1.5 rounded-lg hover:bg-white/5 transition-colors"
             aria-label="Toggle menu"
             aria-expanded={mobileMenuOpen}
           >

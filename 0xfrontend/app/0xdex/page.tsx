@@ -10,11 +10,10 @@ const ChartWindow = dynamic(() => import("@/app/components/ChartWindow"), {
 });
 
 import { useAccount, useReadContract, useConnect, useDisconnect, useBlockNumber, useWriteContract, useSwitchChain } from "wagmi";
-import { erc20Abi, maxUint256 } from "viem";
+import { erc20Abi, formatUnits, maxUint256, parseUnits } from "viem";
 import { useDexStats, useAllPools, useDexRead, useDexWrite, NATIVE_TOKEN, useTokenBalance, useTokenAllowance, Token } from "@/lib/use0xDex";
 import { DEX_ADDRESS, NATIVE_ADDRESS } from "@/lib/0xDexAbi";
 import { NUSD_ADDRESS, NUSD_ABI } from "@/lib/NUSDContract";
-import { formatUnits, parseUnits, keccak256, encodePacked } from "viem";
 import { useToast } from "@/components/Toast";
 import { useGSAP } from "@gsap/react";
 import { gsapPixelStagger } from "@/lib/gsap-animations";
@@ -332,18 +331,13 @@ export default function DexAllInOne() {
       toast.info("Wrong Network", "Switching to LitVM...");
       switchChain?.({ chainId: LITVM_CHAIN_ID });
     }
-  }, [isConnected, chainId, switchChain]);
+  }, [isConnected, chainId, switchChain, toast]);
 
   // Swap state
   const [swapTokenIn, setSwapTokenIn] = useState<Token>(KNOWN_TOKENS[1]); // NUSD
   const [swapTokenOut, setSwapTokenOut] = useState<Token | null>(NATIVE_TOKEN); // zkLTC
   const [swapAmountIn, setSwapAmountIn] = useState("");
   const [swapAmountOut, setSwapAmountOut] = useState("");
-  const [swapMode, setSwapMode] = useState<"fixed" | "custom">("fixed");
-  const [customTokenAddress, setCustomTokenAddress] = useState("");
-  const [customDirection, setCustomDirection] = useState<"token_to_nusd" | "nusd_to_token">("token_to_nusd");
-  const [customAmountIn, setCustomAmountIn] = useState("");
-  const [customAmountOut, setCustomAmountOut] = useState("");
 
   // Pool state
   const [poolToken, setPoolToken] = useState<Token>(NATIVE_TOKEN);
@@ -353,12 +347,8 @@ export default function DexAllInOne() {
 
   // Admin state
   const [createTokenA, setCreateTokenA] = useState("");
-  const [createTokenB, setCreateTokenB] = useState("");
   const [createAmountA, setCreateAmountA] = useState("");
   const [createAmountB, setCreateAmountB] = useState("");
-  const [createTokenName, setCreateTokenName] = useState("");
-  const [createTokenSymbol, setCreateTokenSymbol] = useState("");
-  const [createTokenDecimals, setCreateTokenDecimals] = useState(18);
 
   // Fetch token info when address changes
   const { data: tokenName } = useReadContract({
@@ -381,10 +371,6 @@ export default function DexAllInOne() {
   });
   const { data: createTokenBalance } = useTokenBalance(address, createTokenA ? { address: createTokenA as `0x${string}`, symbol: tokenSymbol as string || "TOKEN", decimals: tokenDecimals as number || 18, name: tokenName as string || "Token" } : null);
   
-  // Pool Modal state
-  const [selectedPoolModal, setSelectedPoolModal] = useState<{token: `0x${string}`, nusd: `0x${string}`, reserve0: bigint, reserve1: bigint} | null>(null);
-  const [poolModalTab, setPoolModalTab] = useState<"swap" | "add" | "remove">("swap");
-
   // Chart state - select a pair to view chart
   const [selectedChartPair, setSelectedChartPair] = useState<string | null>(null);
   const [selectedChartAnchor, setSelectedChartAnchor] = useState<{
@@ -395,8 +381,8 @@ export default function DexAllInOne() {
 
   // Data
   const stats = useDexStats();
-  const { data: allPools, refetch: refetchAllPoolsData } = useAllPools();
-  const { data: nusdAddress, refetch: refetchNusd } = useDexRead<`0x${string}`>("NUSD");
+  const { data: allPools } = useAllPools();
+  const { data: nusdAddress } = useDexRead<`0x${string}`>("NUSD");
   const { data: totalRewardPool } = useDexRead<bigint>("totalRewardPool");
 
   // Check allowance for create pool token
@@ -603,7 +589,6 @@ export default function DexAllInOne() {
     swapTokenIn && swapTokenOut ? [swapTokenIn.address, swapTokenOut.address] : undefined
   );
   const { data: poolData } = useDexRead("pools", pairId ? [pairId] : undefined);
-  const { data: userLP } = useDexRead<bigint>("userLP", pairId && address ? [pairId, address] : undefined);
 
   // Farm LP queries - use selectedFarmPool index
   const farmPairId = poolOptions.length > selectedFarmPool ? poolOptions[selectedFarmPool]?.pairId : undefined;
@@ -613,12 +598,6 @@ export default function DexAllInOne() {
   );
   const { data: farmPendingReward, refetch: refetchPendingReward } = useDexRead<bigint>("getUserPendingReward",
     address ? [address as `0x${string}`] : undefined
-  );
-  
-  // Farm token balance
-  const { data: farmTokenBalance } = useTokenBalance(
-    address, 
-    farmPoolToken ? { address: farmPoolToken, symbol: "TOKEN", decimals: 18, name: "Token" } : null
   );
   
   // Farm token allowance
@@ -640,40 +619,9 @@ export default function DexAllInOne() {
   const { data: balancePoolToken } = useTokenBalance(address, poolToken);
   const { data: balanceNUSD } = useTokenBalance(address, KNOWN_TOKENS[1]);
 
-  // Custom token balance & allowance
-  const customToken = useMemo(() => customTokenAddress && /^0x[a-fA-F0-9]{40}$/.test(customTokenAddress)
-    ? { address: customTokenAddress as `0x${string}`, symbol: "TOKEN", decimals: 18, name: "Custom Token" }
-    : null, [customTokenAddress]);
-  const { data: customBalance } = useTokenBalance(address, customToken);
-  const { data: customAllowance } = useTokenAllowance(customToken, DEX_ADDRESS as `0x${string}`);
-
   // Real-time block updates for auto-refresh
   const { data: blockNumber } = useBlockNumber({ watch: true });
   const { refetch: refetchPool } = useDexRead("pools", pairId ? [pairId] : undefined);
-
-  // Auto-refetch all data when block changes
-  useEffect(() => {
-    if (blockNumber) {
-      // Refetch all pool data
-      refetchPool?.();
-      refetchAllPools?.();
-      refetchFarmLP?.();
-      refetchPendingReward?.();
-      refetchAllowanceIn?.();
-      refetchAllowancePool?.();
-      refetchFarmAllowance?.();
-      refetchAllowance?.();
-      // Refetch individual pool data
-      refetchPool0?.();
-      refetchPool1?.();
-      refetchPool2?.();
-      refetchPool3?.();
-      refetchPool4?.();
-      refetchPool5?.();
-      refetchPool6?.();
-      refetchPool7?.();
-    }
-  }, [blockNumber]);
 
   // Allowances - use useReadContract directly for better reliability
   const { data: allowanceIn, refetch: refetchAllowanceIn, isError: allowanceInError } = useReadContract({
@@ -743,21 +691,27 @@ export default function DexAllInOne() {
       refetchFarmAllowance?.();
       refetchAllowance?.();
     }
-  }, [blockNumber]);
+  }, [
+    blockNumber,
+    refetchAllowanceIn,
+    refetchAllowancePool,
+    refetchPool,
+    refetchPool0,
+    refetchPool1,
+    refetchPool2,
+    refetchPool3,
+    refetchPool4,
+    refetchPool5,
+    refetchPool6,
+    refetchPool7,
+    refetchAllPools,
+    refetchFarmLP,
+    refetchPendingReward,
+    refetchFarmAllowance,
+    refetchAllowance,
+  ]);
 
   useEffect(() => { setMounted(true); }, []);
-
-  const handleSwap = () => {
-    if (!swapTokenIn || !swapTokenOut || !swapAmountIn) return;
-    if (swapTokenIn.address !== NATIVE_ADDRESS && needsSwapApproval) {
-      toast.error("Approval required", `Please approve ${swapTokenIn.symbol} first`);
-      return;
-    }
-    const amountIn = parseUnits(swapAmountIn, swapTokenIn.decimals);
-    const minOut = parseUnits(String(parseFloat(swapAmountOut) * 0.95), swapTokenOut.decimals);
-    swap(swapTokenIn.address, swapTokenOut.address, amountIn, minOut);
-    toast.info("Swapping", "Please confirm transaction...");
-  };
 
   const handleSwapApprove = () => {
     if (!isConnected) {
@@ -798,77 +752,6 @@ export default function DexAllInOne() {
     swap(swapTokenIn.address, swapTokenOut.address, amountIn, minOut);
     toast.info("Swapping", "Please confirm transaction...");
   };
-
-  const handleCustomSwap = () => {
-    if (!customTokenAddress || !customAmountIn) return;
-    const tokenIn = customDirection === "token_to_nusd" ? customTokenAddress : nusdAddress!;
-    const tokenOut = customDirection === "token_to_nusd" ? nusdAddress! : customTokenAddress;
-    const amountIn = parseUnits(customAmountIn, 18);
-    const minOut = parseUnits(String(parseFloat(customAmountOut) * 0.95), 18);
-    swap(tokenIn as `0x${string}`, tokenOut as `0x${string}`, amountIn, minOut);
-    toast.info("Swapping", "Please confirm transaction...");
-  };
-
-  const handlePoolSwap = (token0: `0x${string}`, token1: `0x${string}`) => {
-    setActiveTab("swap");
-    const token0Obj = KNOWN_TOKENS.find(t => t.address === token0) || { address: token0, symbol: "TOKEN", decimals: 18, name: "Token" };
-    const token1Obj = KNOWN_TOKENS.find(t => t.address === token1) || { address: token1, symbol: "TOKEN", decimals: 18, name: "Token" };
-    setSwapTokenIn(token0Obj);
-    setSwapTokenOut(token1Obj);
-  };
-
-  const handleCustomApprove = () => {
-    if (!isConnected) {
-      toast.error("Not connected", "Please connect your wallet first");
-      return;
-    }
-    if (!customToken) return;
-
-    const isNUSD = customToken.address.toLowerCase() === NUSD_ADDRESS.toLowerCase();
-    const abi = isNUSD ? NUSD_ABI : erc20Abi;
-
-    toast.info("Approving", `Please approve ${customToken.symbol}...`);
-    writeContract({
-      address: customToken.address as `0x${string}`,
-      abi,
-      functionName: "approve",
-      args: [DEX_ADDRESS as `0x${string}`, maxUint256],
-    });
-  };
-
-  // Custom swap calculation — mirrors ZeroDex.sol constant-product + fee math.
-  // Uses the same helper as the main swap so the displayed estimate and the
-  // chart-derived "executed price" stay consistent.
-  const { data: customPairId } = useDexRead<`0x${string}`>(
-    "getPairId",
-    customTokenAddress && /^0x[a-fA-F0-9]{40}$/.test(customTokenAddress) && nusdAddress
-      ? [customTokenAddress as `0x${string}`, nusdAddress as `0x${string}`]
-      : undefined
-  );
-  const { data: customPoolData } = useDexRead("pools", customPairId ? [customPairId] : undefined);
-
-  useEffect(() => {
-    if (!customTokenAddress || !customAmountIn || parseFloat(customAmountIn) === 0 || !customPoolData) {
-      setCustomAmountOut("");
-      return;
-    }
-    const tokenIn = customDirection === "token_to_nusd" ? customTokenAddress : nusdAddress!;
-    const tokenOut = customDirection === "token_to_nusd" ? nusdAddress! : customTokenAddress;
-    const pd = customPoolData as PoolDataTuple;
-    const t0 = pd[0];
-    const r0 = pd[2];
-    const r1 = pd[3];
-    const reserveIn = tokenIn.toLowerCase() === t0.toLowerCase() ? r0 : r1;
-    const reserveOut = tokenIn.toLowerCase() === t0.toLowerCase() ? r1 : r0;
-    const amountIn = parseUnits(customAmountIn, 18);
-    const feeBps = swapFeeBps ?? 10n;
-    const fee = (amountIn * feeBps) / BPS_DENOM;
-    const amountInAfterFee = amountIn - fee;
-    const amountOut = amountInAfterFee <= 0n
-      ? 0n
-      : (amountInAfterFee * reserveOut) / (reserveIn + amountInAfterFee);
-    setCustomAmountOut(Number(formatUnits(amountOut, 18)).toFixed(6));
-  }, [customAmountIn, customDirection, customTokenAddress, customPoolData, nusdAddress, swapFeeBps]);
 
   const handleAddLiquidity = () => {
     if (!isConnected || !ensureCorrectChain()) return;
@@ -1035,11 +918,6 @@ export default function DexAllInOne() {
 
   const needsSwapApproval = swapTokenIn && swapTokenIn.address !== NATIVE_ADDRESS && !allowanceInError && allowanceIn !== undefined && allowanceIn === 0n;
   const needsPoolApproval = poolToken && poolToken.address !== NATIVE_ADDRESS && !allowancePoolError && allowancePoolToken !== undefined && allowancePoolToken === 0n;
-  const needsCustomApproval = customDirection === "token_to_nusd" && customToken && customBalance && (!customAllowance || (customAllowance as bigint) < parseUnits(customAmountIn || "0", 18));
-
-  // Calculate pairIds for pools
-  const getPairId = (token: `0x${string}`, nusd: `0x${string}`) => 
-    keccak256(encodePacked(["address", "address"], [token < nusd ? token : nusd, token < nusd ? nusd : token]));
 
   if (!mounted) return (
     <div className="min-h-screen bg-[#0F0F23] flex flex-col items-center justify-center">
@@ -1518,7 +1396,7 @@ export default function DexAllInOne() {
                   <div className="mt-4 px-1 text-xs flex justify-between">
                     <span className="text-[#64748B]">Initial Price</span>
                     <span className="text-emerald-400 font-bold">
-                      1 {createTokenSymbol || "Token"} = {(Number(createAmountB) / Number(createAmountA)).toFixed(6)} $NUSD
+                      1 {(tokenSymbol as string) || "Token"} = {(Number(createAmountB) / Number(createAmountA)).toFixed(6)} $NUSD
                     </span>
                   </div>
                 )}
@@ -1592,7 +1470,6 @@ export default function DexAllInOne() {
                         } else {
                           setSwapTokenOut({ address: pool.token, symbol: (tokenSymbols[poolIndex] as string) || "TOKEN", decimals: 18, name: "Token" });
                         }
-                        setSwapMode("fixed");
                       }}
                       onViewChart={(chartAnchor) => {
                         setSelectedChartPair(pool.pairId);

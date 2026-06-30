@@ -18,7 +18,7 @@ export function NFTCardSkeleton() {
 
 export function GridSkeleton({ count = 8 }: { count?: number }) {
   return (
-    <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6" style={{ fontFamily: "var(--font-departure)" }}>
+    <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-6" style={{ fontFamily: "var(--font-departure)" }}>
       {Array.from({ length: count }).map((_, i) => (
         <NFTCardSkeleton key={i} />
       ))}

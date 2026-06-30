@@ -73,7 +73,7 @@ export function OwnedNftCard({ nft, isPaused, onChanged }: CardProps) {
   return (
     <div
       ref={cardRef}
-      className="nft-card group bg-[#1A1A2E] rounded-2xl overflow-hidden border border-[#2D2D44] hover:border-indigo-500/50 transition-shadow duration-300 hover:shadow-xl hover:shadow-indigo-500/10"
+      className="nft-card group bg-[#1A1A2E] rounded-xl sm:rounded-2xl overflow-hidden border border-[#2D2D44] hover:border-indigo-500/50 transition-shadow duration-300 hover:shadow-xl hover:shadow-indigo-500/10"
     >
       <Link
         href={getExplorerUrl(nft.tokenId)}
@@ -92,14 +92,14 @@ export function OwnedNftCard({ nft, isPaused, onChanged }: CardProps) {
         />
         {nft.listing ? (
           <div
-            className="absolute top-2 left-2 px-2 py-1 rounded-md bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-bold"
+            className="absolute top-1.5 left-1.5 sm:top-2 sm:left-2 px-1.5 sm:px-2 py-1 rounded-md bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[8px] sm:text-[10px] font-bold max-w-[calc(100%-12px)] truncate"
             style={{ fontFamily: "var(--font-departure)" }}
           >
             FOR SALE · {formatEther(nft.listing.price)} zkLTC
           </div>
         ) : null}
       </Link>
-      <div className="p-4 space-y-3">
+      <div className="p-3 sm:p-4 space-y-2.5 sm:space-y-3">
         <div>
           <div
             className="text-[10px] text-[#64748B] uppercase tracking-wider"
@@ -108,13 +108,13 @@ export function OwnedNftCard({ nft, isPaused, onChanged }: CardProps) {
             0xPIXEL
           </div>
           <h3
-            className="text-white font-bold text-base truncate"
+            className="text-white font-bold text-sm sm:text-base truncate"
             style={{ fontFamily: "var(--font-departure)" }}
           >
             {nft.name || "Untitled"}
           </h3>
           <div
-            className="text-[#94A3B8] text-xs mt-0.5"
+            className="text-[#94A3B8] text-[11px] sm:text-xs mt-0.5"
             style={{ fontFamily: "var(--font-departure)" }}
           >
             #{nft.tokenId.toString()}
@@ -148,7 +148,7 @@ export function OwnedNftCard({ nft, isPaused, onChanged }: CardProps) {
             onClick={() => setMode("list")}
             disabled={isPaused}
             className="pixel-btn pixel-btn-indigo w-full"
-            style={{ padding: "10px 16px" }}
+            style={{ padding: "12px 12px" }}
           >
             LIST FOR SALE
           </button>
@@ -241,7 +241,7 @@ function ListForSaleControl({
         value={price}
         onChange={(e) => onPriceChange(e.target.value)}
         placeholder="Price (zkLTC)"
-        className="w-full bg-[#0F0F23] border border-[#2D2D44] text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500"
+        className="w-full bg-[#0F0F23] border border-[#2D2D44] text-white text-sm rounded-lg px-3 py-3 sm:py-2 focus:outline-none focus:border-indigo-500"
         style={{ fontFamily: "var(--font-departure)" }}
         disabled={busy}
       />
@@ -336,7 +336,7 @@ function CancelListingControl({
         onClick={handleCancel}
         disabled={busy || disabled}
         className="pixel-btn pixel-btn-red w-full"
-        style={{ padding: "10px 16px" }}
+        style={{ padding: "12px 12px" }}
       >
         {busy ? (
           <span className="flex items-center justify-center gap-2">

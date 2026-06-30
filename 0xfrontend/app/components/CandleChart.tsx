@@ -304,54 +304,106 @@ const TfButton = memo(function TfButton({
 
 const SkeletonBars = memo(function SkeletonBars() {
   const bars = useMemo(
-    () => Array.from({ length: 18 }, (_, i) => ({
-      height: 28 + ((i * 13) % 82),
-      opacity: 0.45 + ((i % 4) * 0.12),
-      delay: `${i * 55}ms`,
+    () => Array.from({ length: 26 }, (_, i) => ({
+      height: 18 + ((i * 19) % 108),
+      wick: 10 + ((i * 11) % 30),
+      opacity: 0.32 + ((i % 5) * 0.08),
+      delay: `${i * 38}ms`,
     })),
     [],
   );
 
   return (
-    <div style={{ width: 'min(460px, 78vw)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div
+      style={{
+        position: 'absolute',
+        inset: 0,
+        overflow: 'hidden',
+        background:
+          `linear-gradient(${COLORS.grid} 1px, transparent 1px), ` +
+          `linear-gradient(90deg, ${COLORS.grid} 1px, transparent 1px), ` +
+          `radial-gradient(circle at 18% 12%, rgba(136,136,255,0.12), transparent 28%), ${COLORS.bg}`,
+        backgroundSize: '100% 54px, 72px 100%, 100% 100%',
+      }}
+    >
+      <div
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          left: 18,
+          right: 52,
+          top: 22,
+          height: 1,
+          background: 'linear-gradient(90deg, transparent, rgba(136,136,255,0.45), transparent)',
+          animation: 'chartLoadSweep 1.5s ease-in-out infinite',
+        }}
+      />
       <div
         style={{
-          height: 138,
-          border: `1px solid ${COLORS.border}`,
-          background:
-            `linear-gradient(${COLORS.grid} 1px, transparent 1px), ` +
-            `linear-gradient(90deg, ${COLORS.grid} 1px, transparent 1px), ${COLORS.bg}`,
-          backgroundSize: '100% 34px, 52px 100%',
+          position: 'absolute',
+          left: 26,
+          right: 26,
+          bottom: 30,
+          height: '68%',
           display: 'flex',
           alignItems: 'flex-end',
-          gap: 7,
-          padding: '14px 16px',
+          gap: 'clamp(4px, 1.2vw, 8px)',
+        }}
+      >
+        {bars.map((bar, i) => {
+          const color = i % 4 === 0 ? COLORS.bearish : COLORS.bullish;
+          return (
+            <div
+              key={i}
+              style={{
+                position: 'relative',
+                width: 'clamp(5px, 1.3vw, 9px)',
+                height: bar.height,
+                minHeight: 16,
+                background: color,
+                opacity: bar.opacity,
+                boxShadow: `0 0 16px ${color}26`,
+                transformOrigin: 'bottom center',
+                animation: 'chartLoadPulse 1.25s ease-in-out infinite',
+                animationDelay: bar.delay,
+                willChange: 'transform, filter',
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  position: 'absolute',
+                  left: 4,
+                  bottom: -Math.round(bar.wick / 3),
+                  width: 1,
+                  height: bar.height + bar.wick,
+                  background: color,
+                  opacity: 0.7,
+                }}
+              />
+            </div>
+          );
+        })}
+      </div>
+
+      <div
+        style={{
+          position: 'absolute',
+          left: 16,
+          right: 16,
+          bottom: 12,
+          height: 2,
+          background: 'rgba(136,136,255,0.18)',
           overflow: 'hidden',
         }}
       >
-        {bars.map((bar, i) => (
-          <div
-            key={i}
-            style={{
-              width: 10,
-              height: bar.height,
-              background: i % 3 === 0 ? COLORS.bearish : COLORS.bullish,
-              opacity: bar.opacity,
-              boxShadow: `0 -18px 0 -4px ${i % 3 === 0 ? COLORS.bearish : COLORS.bullish}`,
-              animation: 'chartLoadPulse 1.05s steps(2) infinite',
-              animationDelay: bar.delay,
-            }}
-          />
-        ))}
-      </div>
-
-      <div style={{ height: 4, background: COLORS.toolbarBtn, border: `1px solid ${COLORS.border}`, overflow: 'hidden' }}>
         <div
           style={{
-            width: '42%',
+            width: '36%',
             height: '100%',
             background: COLORS.accent,
-            animation: 'chartLoadSweep 1.15s ease-in-out infinite',
+            boxShadow: `0 0 16px ${COLORS.accent}`,
+            animation: 'chartLoadProgress 1.35s ease-in-out infinite',
           }}
         />
       </div>
@@ -373,32 +425,41 @@ const ChartLoadingOverlay = memo(function ChartLoadingOverlay({
         right: 0,
         bottom: 0,
         background: COLORS.bg,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 14,
         zIndex: 3,
       }}
     >
       <SkeletonBars />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div
+        style={{
+          position: 'absolute',
+          left: 14,
+          top: 14,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 9,
+          padding: '8px 10px',
+          background: 'rgba(13,13,24,0.88)',
+          border: `1px solid ${COLORS.border}`,
+          boxShadow: `3px 3px 0 0 #060614`,
+        }}
+      >
         <span
           style={{
-            width: 7,
-            height: 7,
+            width: 8,
+            height: 8,
             background: COLORS.accent,
-            boxShadow: `10px 0 0 ${COLORS.text}, 20px 0 0 ${COLORS.border}`,
-            animation: 'chartLoadDots 0.9s steps(3) infinite',
+            animation: 'chartLoadBlink 0.9s steps(2) infinite',
           }}
         />
-        <span style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 6, color: COLORS.textBright }}>
-          {label}
-        </span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <span style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 7, color: COLORS.textBright, lineHeight: 1 }}>
+            {label}
+          </span>
+          <span style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 5, color: COLORS.text, lineHeight: 1 }}>
+            fetching candles
+          </span>
+        </div>
       </div>
-      <span style={{ fontFamily: "'Press Start 2P', monospace", fontSize: 5, color: COLORS.text }}>
-        syncing 1h / 4h / 1D
-      </span>
     </div>
   );
 });

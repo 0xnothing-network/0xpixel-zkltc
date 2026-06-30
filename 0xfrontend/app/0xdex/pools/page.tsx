@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useAccount, useReadContract } from "wagmi";
 import { useDexWrite, NATIVE_TOKEN, Token, useTokenBalance, useDexRead, useAllPools } from "@/lib/use0xDex";
 import { DEX_ADDRESS } from "@/lib/0xDexAbi";
-import { formatUnits, parseUnits, keccak256, toBytes, encodePacked } from "viem";
+import { formatUnits, parseUnits } from "viem";
 import { useToast } from "@/components/Toast";
 import { useChainId } from "wagmi";
 import { LITVM_CHAIN_ID } from "@/lib/chainSwitch";
@@ -32,45 +32,6 @@ function formatUSD(value: bigint, decimals = 18) {
   if (num >= 1e6) return `$${(num / 1e6).toFixed(2)}M`;
   if (num >= 1e3) return `$${(num / 1e3).toFixed(2)}K`;
   return `$${num.toFixed(2)}`;
-}
-
-function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, lpTotal }: {
-  token0: `0x${string}`; token1: `0x${string}`; reserve0: bigint; reserve1: bigint; volume24h: bigint; totalVolume: bigint; lpTotal: bigint;
-}) {
-  const token0Symbol = token0 === "0x0000000000000000000000000000000000000000" ? "zkLTC" : token0.slice(0, 6) + "...";
-  const token1Symbol = token1 === "0x0000000000000000000000000000000000000000" ? "zkLTC" : token1.slice(0, 6) + "...";
-
-  return (
-    <div className="p-4 rounded-xl bg-[#13131F] border border-[#2D2D44] hover:border-[#3D3D54] transition-colors">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-full bg-[#8888ff]/20 border border-[#8888ff]/40 flex items-center justify-center text-[#8888ff] text-xs font-bold">
-            {token0Symbol[0]}{token1Symbol[0]}
-          </div>
-          <span className="font-bold text-white" style={{ fontFamily: "var(--font-departure)" }}>
-            {token0Symbol} / {token1Symbol}
-          </span>
-        </div>
-        <Link href="/0xdex/swap" className="pixel-btn pixel-btn-indigo text-xs">
-          TRADE
-        </Link>
-      </div>
-      <div className="grid grid-cols-2 gap-3 text-xs">
-        <div>
-          <div className="text-[#64748B] mb-1">Liquidity</div>
-          <div className="text-white font-medium" style={{ fontFamily: "var(--font-departure)" }}>
-            {formatUSD(reserve0 + reserve1)}
-          </div>
-        </div>
-        <div>
-          <div className="text-[#64748B] mb-1">Volume 24h</div>
-          <div className="text-emerald-400 font-medium" style={{ fontFamily: "var(--font-departure)" }}>
-            {formatUSD(volume24h)}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 export default function PoolsPage() {
@@ -115,9 +76,6 @@ export default function PoolsPage() {
       };
     });
   }, [allPools, nusdAddress]);
-  
-  // Selected pool data
-  const selectedPool = poolOptions[selectedPoolIndex];
   
   // Get pool info for selected pool
   const { data: pairId } = useDexRead<`0x${string}`>(
@@ -178,7 +136,6 @@ export default function PoolsPage() {
 
   const handleApprove = () => {
     if (!tokenA || !amountA) return;
-    const amount = parseUnits(amountA, tokenA.decimals);
     toast.info("Approving", `Approving ${tokenA.symbol}...`);
   };
   
@@ -224,7 +181,7 @@ export default function PoolsPage() {
     try {
       removeLiquidity(pairId, lpFormatted);
       toast.info("Removing liquidity", "Please confirm the transaction...");
-    } catch (err) {
+    } catch {
       toast.error("Failed", "Could not remove liquidity");
     }
   };
@@ -584,15 +541,6 @@ export default function PoolsPage() {
       </main>
     </div>
   );
-}
-
-// Helper function to match contract's getPairId
-function keccak256PairId(tokenA: `0x${string}`, tokenB: `0x${string}`): `0x${string}` {
-  const token0 = tokenA < tokenB ? tokenA : tokenB;
-  const token1 = tokenA < tokenB ? tokenB : tokenA;
-  // Use viem's keccak256 and encodePacked
-  const hash = keccak256(encodePacked(["address", "address"], [token0, token1]));
-  return hash;
 }
 
 function PoolTopCard({ index, token0, token1 }: { index: number; token0: `0x${string}`; token1: `0x${string}` }) {

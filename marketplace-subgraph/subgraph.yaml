@@ -1,0 +1,59 @@
+specVersion: 0.0.5
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum
+    name: PixelNFT
+    network: liteforge
+    source:
+      address: "0x7bE3B9035AAAcB57b6634eCBa65402e37E30Bf66"
+      abi: PixelNFT
+      startBlock: 20207834
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/mapping.ts
+      entities:
+        - Token
+        - Account
+        - TransferEvent
+        - MarketplaceStats
+      abis:
+        - name: PixelNFT
+          file: ./abis/PixelNFT.json
+      eventHandlers:
+        - event: Minted(indexed address,indexed uint256,string)
+          handler: handleMinted
+        - event: Transfer(indexed address,indexed address,indexed uint256)
+          handler: handleTransfer
+  - kind: ethereum
+    name: Marketplace
+    network: liteforge
+    source:
+      address: "0x8f3B1f42e671097001f9FBEec5635d51C8Ed14fd"
+      abi: Marketplace
+      startBlock: 20208271
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/mapping.ts
+      entities:
+        - Listing
+        - Token
+        - Account
+        - MarketEvent
+        - MarketplaceStats
+      abis:
+        - name: Marketplace
+          file: ./abis/Marketplace.json
+        - name: PixelNFT
+          file: ./abis/PixelNFT.json
+      eventHandlers:
+        - event: Listed(indexed uint256,indexed address,uint256,address,uint256)
+          handler: handleListed
+        - event: Bought(indexed uint256,address,uint256)
+          handler: handleBought
+        - event: ListingCancelled(indexed uint256)
+          handler: handleListingCancelled

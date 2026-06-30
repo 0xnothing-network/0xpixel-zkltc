@@ -610,6 +610,32 @@ input[type="range"]::-webkit-slider-thumb:hover {
   background: rgba(239, 68, 68, 0.08) !important;
 }
 
+@media (max-width: 640px) {
+  .pixel-btn {
+    min-height: 42px;
+    padding-inline: 12px;
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    box-shadow:
+      0 0 0 1px var(--border-color, rgba(255,255,255,0.06)),
+      3px 3px 0 0 var(--shadow-color, #0a0a18);
+  }
+
+  .pixel-btn-sm {
+    min-height: 38px;
+    padding: 8px 10px;
+    font-size: 8px;
+  }
+
+  .pixel-nav-mobile {
+    min-height: 46px;
+  }
+
+  .nft-card {
+    animation-delay: 0.04s !important;
+  }
+}
+
 /* Pixel spinner */
 @keyframes pixel-spin {
   to { transform: rotate(360deg); }
@@ -842,13 +868,24 @@ input[type="range"]::-webkit-slider-thumb:hover {
 }
 
 @keyframes chartLoadPulse {
-  0%, 100% { filter: brightness(0.72); transform: scaleY(0.9); }
-  50% { filter: brightness(1.18); transform: scaleY(1); }
+  0%, 100% { filter: brightness(0.68); transform: scaleY(0.86); }
+  50% { filter: brightness(1.2); transform: scaleY(1.04); }
 }
 
 @keyframes chartLoadSweep {
   0% { transform: translateX(-120%); }
   100% { transform: translateX(260%); }
+}
+
+@keyframes chartLoadProgress {
+  0% { transform: translateX(-110%); }
+  50% { transform: translateX(105%); }
+  100% { transform: translateX(330%); }
+}
+
+@keyframes chartLoadBlink {
+  0%, 48% { opacity: 1; }
+  49%, 100% { opacity: 0.32; }
 }
 
 @keyframes chartLoadDots {

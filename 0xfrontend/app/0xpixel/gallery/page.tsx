@@ -123,12 +123,12 @@ export default function GalleryPage() {
   }, [sorted.length]);
 
   return (
-    <div className="min-h-[calc(100vh-64px)] px-5 py-10 max-w-7xl mx-auto" style={{ fontFamily: "var(--font-departure)" }}>
-      <div ref={headerRef} className="mb-10 flex items-end justify-between flex-wrap gap-4">
+    <div className="min-h-[calc(100vh-64px)] px-3 py-6 sm:px-5 sm:py-10 max-w-7xl mx-auto" style={{ fontFamily: "var(--font-departure)" }}>
+      <div ref={headerRef} className="mb-6 sm:mb-10 flex items-end justify-between flex-wrap gap-4">
         <div>
           <h1
             ref={titleRef}
-            className="text-3xl sm:text-4xl font-bold text-white mb-2"
+            className="text-2xl sm:text-4xl font-bold text-white mb-2"
             style={{ fontFamily: "var(--font-departure)" }}
           >
             MY GALLERY
@@ -149,6 +149,7 @@ export default function GalleryPage() {
             display: "inline-flex",
             alignItems: "center",
             gap: 8,
+            width: "fit-content",
           }}
         >
           + NEW PIXEL ART
@@ -174,7 +175,7 @@ export default function GalleryPage() {
         <EmptyState />
       ) : (
         <>
-          <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
+          <div className="flex items-center justify-between mb-4 sm:mb-6 flex-wrap gap-3">
             <div
               className="text-sm text-[#94A3B8]"
               style={{ fontFamily: "var(--font-departure)" }}
@@ -184,7 +185,7 @@ export default function GalleryPage() {
             <select
               value={sort}
               onChange={(e) => setSort(e.target.value as SortKey)}
-              className="bg-[#0F0F23] border border-[#2D2D44] text-white text-sm rounded-lg px-4 py-2 focus:outline-none focus:border-indigo-500 transition-colors cursor-pointer"
+              className="bg-[#0F0F23] border border-[#2D2D44] text-white text-sm rounded-lg px-3 py-2.5 sm:px-4 sm:py-2 focus:outline-none focus:border-indigo-500 transition-colors cursor-pointer"
               style={{ fontFamily: "var(--font-departure)" }}
             >
               <option value="newest">Newest</option>
@@ -194,9 +195,9 @@ export default function GalleryPage() {
           </div>
           <div
             ref={gridRef}
-            className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
+            className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-6"
           >
-            {sorted.map((nft, i) => (
+            {sorted.map((nft) => (
               <div key={nft.tokenId.toString()} data-card>
                 <OwnedNftCard
                   nft={nft}

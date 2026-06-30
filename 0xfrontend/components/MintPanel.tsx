@@ -320,7 +320,7 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
         </h3>
       </div>
 
-      <div className="p-4 space-y-4">
+      <div className="p-3 sm:p-4 space-y-4">
         <div
           className="relative rounded-xl overflow-hidden border"
           style={{
@@ -433,7 +433,7 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
                 onChange={(e) => setName(e.target.value.slice(0, 32))}
                 placeholder="Artwork name"
                 maxLength={32}
-                className="w-full bg-[#1A1A2E] border border-[#2D2D44] rounded-xl px-3.5 py-2.5 text-white placeholder-[#374151] focus:outline-none focus:border-indigo-500/50 transition-all text-sm"
+                className="w-full bg-[#1A1A2E] border border-[#2D2D44] rounded-xl px-3.5 py-3 sm:py-2.5 text-white placeholder-[#374151] focus:outline-none focus:border-indigo-500/50 transition-all text-sm"
                 style={{ fontFamily: "var(--font-departure)" }}
               />
             </div>
@@ -445,7 +445,7 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
                 placeholder="Description (optional, not stored on-chain)"
                 maxLength={256}
                 rows={2}
-                className="w-full bg-[#1A1A2E] border border-[#2D2D44] rounded-xl px-3.5 py-2.5 text-white placeholder-[#374151] focus:outline-none focus:border-indigo-500/50 transition-all resize-none text-sm"
+                className="w-full bg-[#1A1A2E] border border-[#2D2D44] rounded-xl px-3.5 py-3 sm:py-2.5 text-white placeholder-[#374151] focus:outline-none focus:border-indigo-500/50 transition-all resize-none text-sm"
                 style={{ fontFamily: "var(--font-departure)" }}
               />
             </div>

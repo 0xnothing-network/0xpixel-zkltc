@@ -205,8 +205,6 @@ export async function getUserNFTs(address: string) {
   const tokenIds = await getUserTokenIds(address);
   if (tokenIds.length === 0) return [];
 
-  // Parallel fetch all token data for maximum speed
-  const BATCH = 20;
   const results = await Promise.all(
     tokenIds.map((id) => fetchTokenDataCached(id))
   );

@@ -18,22 +18,6 @@ import {
 } from "./0xDexAbi";
 
 // ============================================================
-// Debounce utility
-// ============================================================
-
-function useDebounce<T>(value: T, delay: number): T {
-  const [debouncedValue, setDebouncedValue] = useState(value);
-  useEffect(() => {
-    const handler = setTimeout(() => setDebouncedValue(value), delay);
-    return () => clearTimeout(handler);
-  }, [value, delay]);
-  return debouncedValue;
-}
-
-const MaxUint256 =
-  115792089237316195423570985008687907853269984665640564039457584007913129639935n;
-
-// ============================================================
 // Tokens registry — NUSD + native (zkLTC on LitVM)
 // ============================================================
 
@@ -205,27 +189,6 @@ export function useTokenAllowance(token: Token | null, spender: `0x${string}`) {
   });
 
   return { ...result, refetch: result.refetch };
-}
-
-export function useApproveToken() {
-  const { writeContract, isPending } = useWriteContract();
-
-  return useCallback(
-    (token: Token, _amount: bigint) => {
-      if (token.address === NATIVE_ADDRESS) return;
-      try {
-        writeContract({
-          address: token.address,
-          abi: erc20Abi,
-          functionName: "approve",
-          args: [DEX_ADDRESS, MaxUint256],
-        });
-      } catch (err) {
-        console.error("Approve error:", err);
-      }
-    },
-    [writeContract],
-  );
 }
 
 // ============================================================
@@ -450,7 +413,7 @@ export function useSwapQuote(
       fee,
       pairId: pairId!,
     };
-  }, [amountInFormatted, tokenIn, tokenOut, pool]);
+  }, [amountInFormatted, tokenIn, tokenOut, pool, pairId, swapFeeBps]);
 
   return quote;
 }
@@ -553,7 +516,7 @@ export function useRealtimePrice(
           (e.args.tokenIn.toLowerCase() === t1 && e.args.tokenOut.toLowerCase() === t0)),
     );
     if (!event?.args) return null;
-    const { tokenIn, tokenOut, amountIn, amountOut } = event.args;
+    const { tokenIn, amountIn, amountOut } = event.args;
     const ai = Number(amountIn);
     const ao = Number(amountOut);
     if (ai <= 0 || ao <= 0) return null;

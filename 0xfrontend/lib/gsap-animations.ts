@@ -3,7 +3,7 @@
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useGSAP as useGsapReact } from "@gsap/react";
-import { useRef, type RefObject } from "react";
+import { useRef } from "react";
 
 gsap.registerPlugin(ScrollTrigger, useGsapReact);
 
@@ -354,7 +354,7 @@ export function gsapGlitch(target: gsap.TweenTarget) {
 }
 
 /** Pulse glow — for live / active indicators */
-export function gsapPulseGlow(target: gsap.TweenTarget, color = "#00ff88") {
+export function gsapPulseGlow(target: gsap.TweenTarget) {
   return gsap.to(target, {
     opacity: 0.4,
     duration: 0.8,

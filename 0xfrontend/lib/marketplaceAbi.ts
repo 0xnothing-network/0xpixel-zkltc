@@ -86,7 +86,7 @@ export const MarketplaceAbi = [
     inputs: [
       { indexed: true, name: "listingId", type: "uint256" },
       { indexed: true, name: "collection", type: "address" },
-      { indexed: true, name: "tokenId", type: "uint256" },
+      { indexed: false, name: "tokenId", type: "uint256" },
       { indexed: false, name: "seller", type: "address" },
       { indexed: false, name: "price", type: "uint256" },
     ],
@@ -97,7 +97,7 @@ export const MarketplaceAbi = [
     name: "Bought",
     inputs: [
       { indexed: true, name: "listingId", type: "uint256" },
-      { indexed: true, name: "buyer", type: "address" },
+      { indexed: false, name: "buyer", type: "address" },
       { indexed: false, name: "price", type: "uint256" },
     ],
     anonymous: false,

@@ -67,7 +67,7 @@ export function Toolbar({
   return (
     <div
       ref={containerRef}
-      className="bg-[#1A1A2E] rounded-2xl p-5 border border-[#2D2D44] flex flex-col gap-6"
+      className="bg-[#1A1A2E] rounded-2xl p-3 sm:p-5 border border-[#2D2D44] flex flex-col gap-4 sm:gap-6"
     >
       {!mounted ? (
         <>
@@ -107,14 +107,13 @@ export function Toolbar({
             >
               Color Palette
             </p>
-            <div className="grid grid-cols-8 gap-1 mb-3">
-              {PALETTE_COLORS.map((color, i) => (
+            <div className="grid grid-cols-8 sm:grid-cols-8 gap-1.5 mb-3">
+              {PALETTE_COLORS.map((color) => (
                 <ColorButton
                   key={color}
                   color={color}
                   isSelected={selectedColor === color}
                   onClick={() => handleColorSelect(color)}
-                  index={i}
                 />
               ))}
             </div>
@@ -154,7 +153,7 @@ export function Toolbar({
                     setCustomHex(e.target.value);
                     handleColorSelect(e.target.value);
                   }}
-                  className="w-10 h-9 rounded-lg cursor-pointer border border-[#2D2D44] bg-transparent flex-shrink-0"
+                className="w-11 h-10 sm:w-10 sm:h-9 rounded-lg cursor-pointer border border-[#2D2D44] bg-transparent flex-shrink-0"
                 />
                 <input
                   type="text"
@@ -168,7 +167,7 @@ export function Toolbar({
                   }}
                   placeholder="#RRGGBB"
                   maxLength={7}
-                  className="flex-1 bg-[#0F0F23] border border-[#2D2D44] rounded-xl px-3 py-2 text-white text-xs placeholder-[#374151] focus:outline-none focus:border-indigo-500 transition-all uppercase"
+                  className="flex-1 bg-[#0F0F23] border border-[#2D2D44] rounded-xl px-3 py-2.5 sm:py-2 text-white text-xs placeholder-[#374151] focus:outline-none focus:border-indigo-500 transition-all uppercase"
                   style={{ fontFamily: "var(--font-mono)" }}
                 />
               </div>
@@ -216,7 +215,7 @@ export function Toolbar({
                   key={size}
                   onClick={() => onGridSizeChange(size)}
                   className={
-                    "flex-1 py-2 rounded-xl text-xs font-bold transition-all " +
+                    "flex-1 py-2.5 sm:py-2 rounded-xl text-xs font-bold transition-all " +
                     (gridSize === size
                       ? "bg-indigo-500 text-white"
                       : "bg-[#0F0F23] border border-[#2D2D44] text-[#64748B] hover:bg-[#1A1A2E] hover:text-white")
@@ -232,7 +231,7 @@ export function Toolbar({
           {/* Clear */}
           <button
             onClick={onClear}
-            className="w-full py-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-bold uppercase tracking-wider hover:bg-red-500/20 hover:border-red-500/30 active:translate-y-[1px] transition-all flex items-center justify-center gap-1.5"
+            className="w-full py-3 sm:py-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-bold uppercase tracking-wider hover:bg-red-500/20 hover:border-red-500/30 active:translate-y-[1px] transition-all flex items-center justify-center gap-1.5"
             style={{ fontFamily: "var(--font-departure)" }}
           >
             <svg
@@ -261,12 +260,10 @@ function ColorButton({
   color,
   isSelected,
   onClick,
-  index,
 }: {
   color: string;
   isSelected: boolean;
   onClick: () => void;
-  index: number;
 }) {
   const btnRef = useRef<HTMLButtonElement>(null);
 
@@ -295,7 +292,7 @@ function ColorButton({
     <button
       ref={btnRef}
       onClick={onClick}
-      className="aspect-square rounded"
+      className="aspect-square min-h-8 rounded sm:min-h-0"
       style={{
         backgroundColor: color,
         outline: isSelected ? "2px solid white" : "2px solid transparent",

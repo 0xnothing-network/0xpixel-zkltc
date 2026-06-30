@@ -116,15 +116,15 @@ export default function PixelPage() {
               "radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99,102,241,0.15) 0%, transparent 60%)",
           }}
         />
-        <div className="absolute top-20 left-1/4 w-96 h-96 bg-[#8888ff]/10 rounded-full blur-3xl animate-pulse" />
+        <div className="absolute top-20 left-1/4 w-96 h-96 bg-[#8888ff]/10 rounded-full blur-3xl animate-pulse max-sm:hidden" />
         <div
-          className="absolute bottom-10 right-1/4 w-64 h-64 bg-[#8888ff]/10 rounded-full blur-3xl animate-pulse"
+          className="absolute bottom-10 right-1/4 w-64 h-64 bg-[#8888ff]/10 rounded-full blur-3xl animate-pulse max-sm:hidden"
           style={{ animationDelay: "1s" }}
         />
 
-        <div className="max-w-7xl mx-auto px-5 pt-12 pb-10 text-center relative">
+        <div className="max-w-7xl mx-auto px-4 pt-7 pb-6 text-center relative sm:px-5 sm:pt-12 sm:pb-10">
           <h1
-            className="text-3xl md:text-5xl font-bold text-white mb-4 tracking-tight leading-tight hero-fade-in"
+            className="text-2xl sm:text-3xl md:text-5xl font-bold text-white mb-3 sm:mb-4 tracking-tight leading-tight hero-fade-in text-balance"
             style={{ fontFamily: "var(--font-departure)" }}
           >
             Create your{" "}
@@ -133,7 +133,7 @@ export default function PixelPage() {
             </span>
           </h1>
           <p
-            className="text-[#94A3B8] text-base md:text-lg max-w-md mx-auto hero-fade-in-delay"
+            className="text-[#94A3B8] text-sm sm:text-base md:text-lg max-w-md mx-auto hero-fade-in-delay"
             style={{ fontFamily: "var(--font-departure)" }}
           >
             Draw. Mint. Trade on LitVM.
@@ -141,8 +141,8 @@ export default function PixelPage() {
         </div>
       </section>
 
-      <main className="max-w-7xl mx-auto px-5 pt-8 pb-16">
-        <div className="grid xl:grid-cols-[300px_1fr_380px] gap-6 items-start">
+      <main className="max-w-7xl mx-auto px-3 pt-4 pb-24 sm:px-5 sm:pt-8 sm:pb-16">
+        <div className="grid xl:grid-cols-[300px_minmax(0,1fr)_380px] gap-4 sm:gap-6 items-start">
           <div className="order-2 xl:order-1">
             <div className="xl:sticky xl:top-20">
               <Toolbar
@@ -155,7 +155,7 @@ export default function PixelPage() {
             </div>
           </div>
 
-          <div className="order-1 xl:order-2 flex justify-center">
+          <div className="order-1 xl:order-2 flex min-w-0 justify-center">
             <Canvas
               gridSize={gridSize}
               pixelData={pixelData}

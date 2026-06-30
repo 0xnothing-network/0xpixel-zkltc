@@ -64,6 +64,7 @@ export function Canvas({
   const isDrawingRef = useRef(false);
   const isPanningRef = useRef(false);
   const panStartRef = useRef({ x: 0, y: 0 });
+  const activePointerRef = useRef<number | null>(null);
   const currentToolRef = useRef<Tool>("pencil");
   const selectedColorRef = useRef(selectedColor);
   const pixelDataRef = useRef(pixelData);
@@ -365,8 +366,11 @@ export function Canvas({
     }
   }, [gridSize, brushSize, symmetry, setPixelData]);
 
-  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (e.button === 1 || e.button === 2) {
+  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    activePointerRef.current = e.pointerId;
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+
+    if (e.pointerType === "mouse" && (e.button === 1 || e.button === 2)) {
       e.preventDefault();
       isPanningRef.current = true;
       panStartRef.current = { x: e.clientX, y: e.clientY };
@@ -414,7 +418,9 @@ export function Canvas({
     [drawPreview]
   );
 
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handlePointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (activePointerRef.current !== null && activePointerRef.current !== e.pointerId) return;
+
     if (isPanningRef.current) {
       const dx = (e.clientX - panStartRef.current.x) / zoom;
       const dy = (e.clientY - panStartRef.current.y) / zoom;
@@ -446,16 +452,19 @@ export function Canvas({
     if (tool === "pencil" || tool === "eraser") {
       paintPixels(coords.x, coords.y, tool, selectedColorRef.current);
     }
-  }, [getGridCoords, zoom, gridSize, paintPixels, drawPreview]);
+  }, [getGridCoords, zoom, gridSize, paintPixels, throttledDrawPreview]);
 
-  const handleMouseUp = useCallback(() => {
+  const handlePointerUp = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     isDrawingRef.current = false;
     isPanningRef.current = false;
+    activePointerRef.current = null;
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
   }, []);
 
-  const handleMouseLeave = useCallback(() => {
+  const handlePointerLeave = useCallback(() => {
     isDrawingRef.current = false;
     isPanningRef.current = false;
+    activePointerRef.current = null;
     const previewCanvas = previewCanvasRef.current;
     if (previewCanvas) {
       const pctx = previewCanvas.getContext("2d");
@@ -464,11 +473,11 @@ export function Canvas({
   }, []);
 
   return (
-    <div className="flex flex-col items-center gap-3">
+    <div className="flex w-full flex-col items-center gap-3">
       {/* Toolbar Bar */}
-      <div className="flex flex-wrap items-center gap-1.5 justify-center">
+      <div className="flex w-full max-w-[min(100%,640px)] flex-nowrap items-center gap-1.5 overflow-x-auto overscroll-x-contain pb-1 sm:flex-wrap sm:justify-center">
         {/* Tools */}
-        <div className="flex gap-0.5 bg-[#1A1A2E] rounded-xl p-1 border border-[#2D2D44]">
+        <div className="flex flex-shrink-0 gap-0.5 bg-[#1A1A2E] rounded-xl p-1 border border-[#2D2D44]">
           <ToolButton active={currentTool === "pencil"} onClick={() => setCurrentTool("pencil")} title="Pencil">
             <PencilIcon />
           </ToolButton>
@@ -495,7 +504,7 @@ export function Canvas({
         </div>
 
         {/* Zoom */}
-        <div className="flex items-center gap-0.5 bg-[#1A1A2E] rounded-xl p-1 border border-[#2D2D44]">
+        <div className="flex flex-shrink-0 items-center gap-0.5 bg-[#1A1A2E] rounded-xl p-1 border border-[#2D2D44]">
           <button
             onClick={() => setZoom(z => Math.max(z / 1.5, 0.5))}
             className="w-8 h-8 rounded-lg flex items-center justify-center text-[#94A3B8] hover:text-white hover:bg-white/5 transition-all"
@@ -529,7 +538,7 @@ export function Canvas({
         </div>
 
         {/* Brush Size */}
-        <div className="flex items-center gap-0.5 bg-[#1A1A2E] rounded-xl p-1 border border-[#2D2D44]">
+        <div className="flex flex-shrink-0 items-center gap-0.5 bg-[#1A1A2E] rounded-xl p-1 border border-[#2D2D44]">
           <span className="text-[#64748B] text-[9px] px-1 font-mono self-center" style={{ fontFamily: "var(--font-departure)" }}>SZ</span>
           {BRUSH_SIZES.map(size => (
             <button
@@ -547,7 +556,7 @@ export function Canvas({
         </div>
 
         {/* Symmetry */}
-        <div className="flex items-center gap-0.5 bg-[#1A1A2E] rounded-xl p-1 border border-[#2D2D44]">
+        <div className="flex flex-shrink-0 items-center gap-0.5 bg-[#1A1A2E] rounded-xl p-1 border border-[#2D2D44]">
           <SymmetryButton active={symmetry === "horizontal"} onClick={() => setSymmetry(s => s === "horizontal" ? "none" : "horizontal")} title="Symmetry Horizontal">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M12 2v20" />
@@ -572,7 +581,7 @@ export function Canvas({
         </div>
 
         {/* Subdivision */}
-        <div className="flex items-center gap-0.5 bg-[#1A1A2E] rounded-xl p-1 border border-[#2D2D44]">
+        <div className="flex flex-shrink-0 items-center gap-0.5 bg-[#1A1A2E] rounded-xl p-1 border border-[#2D2D44]">
           <span className="text-[#64748B] text-[9px] px-1 font-mono self-center" style={{ fontFamily: "var(--font-departure)" }}>GRID</span>
           {SUBDIVISION_OPTIONS.map(opt => (
             <button
@@ -595,8 +604,13 @@ export function Canvas({
       {/* Canvas */}
       <div
         ref={containerRef}
-        className="w-full max-w-[480px] flex justify-center items-center overflow-hidden bg-[#0F0F23] rounded-xl border border-[#2D2D44] relative"
-        style={{ aspectRatio: "1 / 1" }}
+        className="relative flex w-full max-w-[min(100%,520px)] items-center justify-center overflow-hidden rounded-xl border border-[#2D2D44] bg-[#0F0F23] shadow-2xl shadow-black/20"
+        style={{
+          aspectRatio: "1 / 1",
+          touchAction: "none",
+          WebkitUserSelect: "none",
+          userSelect: "none",
+        }}
       >
         <canvas
           ref={canvasRef}
@@ -607,10 +621,11 @@ export function Canvas({
             width: "100%",
             height: "100%",
           }}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseLeave}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+          onPointerLeave={handlePointerLeave}
           onWheel={e => { e.preventDefault(); setZoom(z => e.deltaY < 0 ? Math.min(z * 1.2, 10) : Math.max(z / 1.2, 0.5)); }}
           onContextMenu={e => e.preventDefault()}
         />
@@ -628,8 +643,8 @@ export function Canvas({
         />
       </div>
 
-      <p className="text-[#374151] text-[10px]" style={{ fontFamily: "var(--font-departure)" }}>
-        Scroll to zoom &middot; Right-click to pan
+      <p className="text-center text-[#64748B] text-[10px]" style={{ fontFamily: "var(--font-departure)" }}>
+        Drag to draw <span className="hidden sm:inline">&middot; Scroll to zoom &middot; Right-click to pan</span>
       </p>
     </div>
   );
@@ -713,22 +728,90 @@ function UndoIcon() {
 
 function ExportMenu({ pixelData, gridSize }: { pixelData: string[][]; gridSize: number }) {
   const [open, setOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({ top: 0, right: 12 });
   const ref = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const hasDrawing = pixelData.some(row => row.some(cell => cell !== "transparent"));
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (
+        ref.current &&
+        !ref.current.contains(target) &&
+        (!menuRef.current || !menuRef.current.contains(target))
+      ) {
+        setOpen(false);
+      }
     };
     if (open) document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  const hasDrawing = pixelData.some(row => row.some(cell => cell !== "transparent"));
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [open]);
+
+  const updateMenuPosition = useCallback(() => {
+    const button = ref.current;
+    if (!button) return;
+    const rect = button.getBoundingClientRect();
+    const menuWidth = 184;
+    setMenuPosition({
+      top: Math.min(rect.bottom + 8, window.innerHeight - 150),
+      right: Math.max(12, window.innerWidth - rect.right),
+    });
+    if (rect.left + menuWidth > window.innerWidth - 12) {
+      setMenuPosition({
+        top: Math.min(rect.bottom + 8, window.innerHeight - 150),
+        right: 12,
+      });
+    }
+  }, []);
+
+  const toggleOpen = useCallback(() => {
+    updateMenuPosition();
+    setOpen((value) => !value);
+  }, [updateMenuPosition]);
+
+  useEffect(() => {
+    if (!open) return;
+    updateMenuPosition();
+    window.addEventListener("resize", updateMenuPosition, { passive: true });
+    window.addEventListener("scroll", updateMenuPosition, { passive: true });
+    return () => {
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition);
+    };
+  }, [open, updateMenuPosition]);
+
+  const actions = [
+    {
+      label: "COPY GRID DATA",
+      icon: <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></svg>,
+      onClick: () => { navigator.clipboard.writeText(pixelDataToJSON(pixelData, gridSize)); setOpen(false); },
+    },
+    {
+      label: "PNG IMAGE",
+      icon: <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" /></svg>,
+      onClick: () => { downloadAsPNG(pixelData, gridSize); setOpen(false); },
+    },
+    {
+      label: "DOWNLOAD GRID DATA",
+      icon: <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>,
+      onClick: () => { downloadAsJSON(pixelData, gridSize); setOpen(false); },
+    },
+  ];
 
   return (
     <div ref={ref} className="relative">
       <button
-        onClick={() => setOpen(o => !o)}
+        onClick={toggleOpen}
         className="pixel-btn pixel-btn-secondary pixel-btn-sm flex items-center gap-1 text-[#64748B] hover:text-white"
         style={{ fontFamily: "var(--font-departure)" }}
       >
@@ -744,47 +827,97 @@ function ExportMenu({ pixelData, gridSize }: { pixelData: string[][]; gridSize: 
       </button>
 
       {open && (
-        <div
-          className="absolute right-0 top-full mt-1.5 z-50 min-w-[160px]"
-          style={{
-            background: "#1A1A2E",
-            border: "1px solid #2D2D44",
-            boxShadow: "4px 4px 0 0 #060614",
-            borderRadius: "8px",
-          }}
-        >
-          {[
-            {
-              label: "COPY GRID DATA",
-              icon: <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></svg>,
-              onClick: () => { navigator.clipboard.writeText(pixelDataToJSON(pixelData, gridSize)); setOpen(false); },
-            },
-            {
-              label: "PNG IMAGE",
-              icon: <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" /></svg>,
-              onClick: () => { downloadAsPNG(pixelData, gridSize); setOpen(false); },
-            },
-            {
-              label: "DOWNLOAD GRID DATA",
-              icon: <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>,
-              onClick: () => { downloadAsJSON(pixelData, gridSize); setOpen(false); },
-            },
-          ].map((item, i, arr) => (
-            <div key={item.label}>
-              <button
-                onClick={item.onClick}
-                disabled={!hasDrawing}
-                className="w-full px-3 py-2.5 text-left flex items-center gap-2 transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-[#94A3B8] hover:text-white hover:bg-white/5"
-                style={{ fontFamily: "var(--font-departure)", fontSize: 9, fontWeight: 700, letterSpacing: "0.05em" }}
-              >
-                {item.icon}
-                {item.label}
-              </button>
-              {i < arr.length - 1 && <div style={{ height: 1, background: "#2D2D44" }} />}
+        <>
+          <div
+            ref={menuRef}
+            className="hidden sm:block fixed z-[90] w-[184px] rounded-lg border border-[#2D2D44] bg-[#1A1A2E] shadow-[4px_4px_0_0_#060614]"
+            style={{
+              top: menuPosition.top,
+              right: menuPosition.right,
+            }}
+          >
+            <ExportActions actions={actions} hasDrawing={hasDrawing} />
+          </div>
+
+          <div
+            className="fixed inset-0 z-[90] flex items-end bg-black/50 backdrop-blur-sm p-3 sm:hidden"
+            onClick={() => setOpen(false)}
+          >
+            <div
+              className="w-full overflow-hidden rounded-2xl border border-[#2D2D44] bg-[#13133A] shadow-2xl shadow-black/40"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-[#2D2D44] px-4 py-3">
+                <div>
+                  <p
+                    className="text-[10px] font-bold uppercase tracking-wider text-[#8888ff]"
+                    style={{ fontFamily: "var(--font-departure)" }}
+                  >
+                    Export
+                  </p>
+                  <p
+                    className="mt-0.5 text-xs text-[#94A3B8]"
+                    style={{ fontFamily: "var(--font-departure)" }}
+                  >
+                    Save or copy your pixel grid
+                  </p>
+                </div>
+                <button
+                  onClick={() => setOpen(false)}
+                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#2D2D44] text-[#94A3B8] active:translate-y-px"
+                  aria-label="Close export menu"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M18 6 6 18" />
+                    <path d="m6 6 12 12" />
+                  </svg>
+                </button>
+              </div>
+              <ExportActions actions={actions} hasDrawing={hasDrawing} mobile />
             </div>
-          ))}
-        </div>
+          </div>
+        </>
       )}
+    </div>
+  );
+}
+
+function ExportActions({
+  actions,
+  hasDrawing,
+  mobile,
+}: {
+  actions: Array<{ label: string; icon: React.ReactNode; onClick: () => void }>;
+  hasDrawing: boolean;
+  mobile?: boolean;
+}) {
+  return (
+    <div>
+      {actions.map((item, i, arr) => (
+        <div key={item.label}>
+          <button
+            onClick={item.onClick}
+            disabled={!hasDrawing}
+            className={
+              mobile
+                ? "flex w-full items-center gap-3 px-4 py-4 text-left text-[#CBD5E1] transition-colors active:bg-white/5 disabled:cursor-not-allowed disabled:opacity-30"
+                : "flex w-full items-center gap-2 px-3 py-2.5 text-left text-[#94A3B8] transition-colors hover:bg-white/5 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+            }
+            style={{
+              fontFamily: "var(--font-departure)",
+              fontSize: mobile ? 11 : 9,
+              fontWeight: 700,
+              letterSpacing: "0.05em",
+            }}
+          >
+            <span className={mobile ? "flex h-8 w-8 items-center justify-center rounded-lg bg-[#0F0F23] text-[#8888ff]" : ""}>
+              {item.icon}
+            </span>
+            {item.label}
+          </button>
+          {i < arr.length - 1 && <div className="h-px bg-[#2D2D44]" />}
+        </div>
+      ))}
     </div>
   );
 }

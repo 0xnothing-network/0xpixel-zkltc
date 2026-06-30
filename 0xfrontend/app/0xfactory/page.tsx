@@ -80,7 +80,6 @@ export default function FactoryPage() {
   const { connectors, connect, isPending: isConnecting } = useConnect();
   const { disconnect } = useDisconnect();
   const { switchChain, isPending: isSwitching } = useSwitchChain();
-  const toast = useToast();
   const [mounted, setMounted] = useState(false);
 
   const [tokenName, setTokenName] = useState("");

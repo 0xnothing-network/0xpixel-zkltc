@@ -7,8 +7,13 @@ import {
 import { MarketplaceAbi } from "@/lib/marketplaceAbi";
 import { PixelNFTABI } from "@/lib/abi";
 import { pixelDataToSVG } from "@/lib/gridParser";
+import {
+  fetchMarketplaceListingsFromSubgraph,
+  hasMarketplaceSubgraph,
+} from "@/lib/marketplaceSubgraph";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 // Cache CDN for 15s. Stale-while-revalidate = 60s for snappy repeat loads.
 export const revalidate = 15;
 
@@ -28,6 +33,11 @@ interface TokenDTO {
   mintedAt: number;
 }
 
+interface ListingsPayload {
+  listings: ListingDTO[];
+  tokens: Record<string, TokenDTO | null>;
+}
+
 interface CacheEntry<T> {
   value: T;
   ts: number;
@@ -38,6 +48,7 @@ const LISTING_TTL = 15_000;
 
 const tokenCache = new Map<string, CacheEntry<TokenDTO | null>>();
 const listingCache = new Map<string, CacheEntry<ListingDTO[]>>();
+const subgraphPayloadCache = new Map<string, CacheEntry<ListingsPayload>>();
 
 /**
  * Returns a single payload with active listings + per-token metadata so the
@@ -45,11 +56,24 @@ const listingCache = new Map<string, CacheEntry<ListingDTO[]>>();
  * RPC calls. Backed by an in-memory cache and Next.js route caching.
  */
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const limitRaw = parseInt(searchParams.get("limit") || "20", 10);
-  const limit = Math.min(Math.max(1, Number.isFinite(limitRaw) ? limitRaw : 20), 60);
+  void request;
+  const cacheKey = "listings:all";
 
-  const cacheKey = `listings:${limit}`;
+  if (hasMarketplaceSubgraph()) {
+    const cachedPayload = subgraphPayloadCache.get(cacheKey);
+    if (cachedPayload && Date.now() - cachedPayload.ts < LISTING_TTL) {
+      return NextResponse.json(cachedPayload.value);
+    }
+
+    try {
+      const subgraph = await fetchMarketplaceListingsFromSubgraph();
+      subgraphPayloadCache.set(cacheKey, { value: subgraph, ts: Date.now() });
+      return NextResponse.json(subgraph);
+    } catch (err) {
+      console.error("[marketplace] subgraph fetch failed, falling back to RPC:", err);
+    }
+  }
+
   const cached = listingCache.get(cacheKey);
   let listings: ListingDTO[];
 
@@ -57,15 +81,15 @@ export async function GET(request: Request) {
     listings = cached.value;
   } else {
     try {
-      listings = await fetchActiveListings(limit);
+      listings = await fetchActiveListings();
       listingCache.set(cacheKey, { value: listings, ts: Date.now() });
     } catch (err) {
-      console.error("[marketplace] fetchActiveListings failed:", err);
+      console.error("[marketplace] RPC listing fetch failed:", err);
       // Return stale if available, otherwise propagate.
       if (cached) listings = cached.value;
       else {
         return NextResponse.json(
-          { error: "RPC unavailable" },
+          { error: "Marketplace data unavailable" },
           { status: 503 }
         );
       }
@@ -81,14 +105,27 @@ export async function GET(request: Request) {
   return NextResponse.json({ listings, tokens });
 }
 
-async function fetchActiveListings(limit: number): Promise<ListingDTO[]> {
-  // Step 1: get active listing IDs in one call.
-  const idsRaw = (await publicClient.readContract({
-    address: PIXEL_MARKETPLACE_ADDRESS,
-    abi: MarketplaceAbi,
-    functionName: "getActiveListings",
-    args: [0n, BigInt(limit)],
-  })) as bigint[];
+async function fetchActiveListings(): Promise<ListingDTO[]> {
+  // Step 1: page through active listing IDs. The subgraph is the normal path;
+  // this only runs as a slower fallback.
+  const idsRaw: bigint[] = [];
+  const pageSize = 100n;
+  let offset = 0n;
+
+  while (true) {
+    const page = (await publicClient.readContract({
+      address: PIXEL_MARKETPLACE_ADDRESS,
+      abi: MarketplaceAbi,
+      functionName: "getActiveListings",
+      args: [offset, pageSize],
+    })) as bigint[];
+
+    if (!page || page.length === 0) break;
+    idsRaw.push(...page);
+    if (page.length < Number(pageSize)) break;
+    offset += pageSize;
+  }
+
   if (!idsRaw || idsRaw.length === 0) return [];
 
   // Step 2: batch fetch listing details via multicall.

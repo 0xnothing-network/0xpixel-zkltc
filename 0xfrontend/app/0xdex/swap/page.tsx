@@ -3,10 +3,9 @@
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useAccount } from "wagmi";
-import { useDexWrite, useSwapQuote, usePoolByTokens, useRealtimePrice, NATIVE_TOKEN, KNOWN_TOKENS, Token, useTokenBalance, useApproveToken } from "@/lib/use0xDex";
+import { useDexWrite, useSwapQuote, usePoolByTokens, useRealtimePrice, NATIVE_TOKEN, KNOWN_TOKENS, Token, useTokenBalance } from "@/lib/use0xDex";
 import { formatUnits, parseUnits } from "viem";
 import { useToast } from "@/components/Toast";
-import { useWaitForTransactionReceipt } from "wagmi";
 import { useChainId, useSwitchChain } from "wagmi";
 import { LITVM_CHAIN_ID } from "@/lib/chainSwitch";
 
@@ -95,7 +94,7 @@ export default function SwapPage() {
   const [slippage, setSlippage] = useState(0.5);
   const [mounted, setMounted] = useState(false);
   
-  const { swap, addLiquidity } = useDexWrite();
+  const { swap } = useDexWrite();
   const { data: balanceIn } = useTokenBalance(address, tokenIn);
   const quote = useSwapQuote(tokenIn, tokenOut, amountIn);
   const { pool } = usePoolByTokens(tokenIn?.address, tokenOut?.address);
@@ -174,7 +173,7 @@ export default function SwapPage() {
     try {
       swap(tokenIn.address, tokenOut.address, amountInFormatted, minAmountOut);
       toast.info("Swapping", `Swapping ${amountIn} ${tokenIn.symbol}...`);
-    } catch (err) {
+    } catch {
       toast.error("Swap failed", "Transaction failed");
     }
   };
