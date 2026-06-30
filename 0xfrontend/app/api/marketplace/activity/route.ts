@@ -20,10 +20,7 @@ const activityCache = new Map<string, CacheEntry>();
 
 export async function GET(request: Request) {
   if (!hasMarketplaceSubgraph()) {
-    return NextResponse.json(
-      { events: [], error: "Marketplace subgraph is not configured" },
-      { status: 503 }
-    );
+    return NextResponse.json({ events: [] });
   }
 
   const { searchParams } = new URL(request.url);
@@ -48,10 +45,7 @@ export async function GET(request: Request) {
   } catch (err) {
     console.error("[marketplace] activity fetch failed:", err);
     if (cached) return NextResponse.json(cached.value);
-    return NextResponse.json(
-      { events: [], error: "Marketplace activity unavailable" },
-      { status: 503 }
-    );
+    return NextResponse.json({ events: [] });
   }
 }
 

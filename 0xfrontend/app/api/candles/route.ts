@@ -4,7 +4,6 @@ import { encodePacked, keccak256 } from 'viem';
 export const runtime = 'edge';
 
 const SUBGRAPH_URL =
-  process.env.SUBGRAPH_URL ||
   process.env.NEXT_PUBLIC_SUBGRAPH_URL ||
   'https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.4/gn';
 
