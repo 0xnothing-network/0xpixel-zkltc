@@ -381,9 +381,11 @@ function MarketplaceActivity() {
             <h2 className="mt-1 text-lg sm:text-xl font-bold text-white" style={{ fontFamily: "var(--font-departure)" }}>
               Recent marketplace activity
             </h2>
-            <p className="mt-1 text-xs sm:text-sm text-[#64748B]" style={{ fontFamily: "var(--font-departure)" }}>
-              {loading ? "syncing...." : `${events.length} event${events.length === 1 ? "" : "s"} loaded`}
-            </p>
+            {loading && (
+              <p className="mt-1 text-xs sm:text-sm text-[#64748B]" style={{ fontFamily: "var(--font-departure)" }}>
+                syncing....
+              </p>
+            )}
           </div>
 
           <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-0.5">
