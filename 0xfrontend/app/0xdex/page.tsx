@@ -117,9 +117,19 @@ const BPS_DENOM = 10000n; // matches `swapFee / 10000` in 0xDex.sol
 type ChartTf = 1 | 15 | 60 | 240 | 1440;
 const DEFAULT_CHART_TF: ChartTf = 1;
 const CHART_PRELOAD_TIMEFRAMES = [1, 15, 60, 240, 1440] as const satisfies readonly ChartTf[];
+const CHART_WARM_POOL_LIMIT = 6;
 const CHART_TIMEFRAMES = new Set<number>([1, 15, 60, 240, 1440]);
 const SWAP_SLIPPAGE_BPS = 300n;
 const SWAP_PRICE_REFRESH_MS = 2_000;
+
+type ChartPreloadTarget = {
+  pairId: string;
+  chartAnchor: { price: number | null; tokenDecimals: number };
+  chartLabel: string;
+  chartToken0: string;
+  chartToken1: string;
+  chartToken1Decimals: number;
+};
 
 type PoolDataTuple = readonly [
   `0x${string}`,
@@ -806,6 +816,7 @@ export default function DexAllInOne() {
   const [chartPreloadProgress, setChartPreloadProgress] = useState(0);
   const routePairAppliedRef = useRef(false);
   const chartPreloadSeqRef = useRef(0);
+  const chartWarmCacheRef = useRef(new Set<string>());
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1401,17 +1412,12 @@ export default function DexAllInOne() {
     return { price: price > 0 ? price : null, tokenDecimals: tokenDecimalsForPool };
   }, [allPoolData, getPoolTokenDecimals, poolOptions]);
 
-  const openChartForPool = useCallback(async (
+  const getChartPreloadTarget = useCallback((
     poolIndex: number,
     anchor?: { price: number | null; tokenDecimals: number },
-    timeframe: ChartTf = selectedChartTimeframe,
-    updateUrl = true,
-  ) => {
+  ): ChartPreloadTarget | null => {
     const pool = poolOptions[poolIndex];
-    if (!pool) return;
-
-    const preloadSeq = chartPreloadSeqRef.current + 1;
-    chartPreloadSeqRef.current = preloadSeq;
+    if (!pool) return null;
 
     const chartAnchor = anchor ?? getChartAnchorForPool(poolIndex);
     const poolData = allPoolData[poolIndex];
@@ -1423,11 +1429,79 @@ export default function DexAllInOne() {
           : poolData[0]
         : pool.token
     ).toLowerCase();
-    const chartToken1Decimals = chartAnchor.tokenDecimals || getPoolTokenDecimals(poolIndex);
-    const chartLabel = `${getPoolTokenSymbol(poolIndex)} / NUSD`;
+
+    return {
+      pairId: pool.pairId,
+      chartAnchor,
+      chartLabel: `${getPoolTokenSymbol(poolIndex)} / NUSD`,
+      chartToken0,
+      chartToken1,
+      chartToken1Decimals: chartAnchor.tokenDecimals || getPoolTokenDecimals(poolIndex),
+    };
+  }, [
+    allPoolData,
+    getChartAnchorForPool,
+    getPoolTokenDecimals,
+    getPoolTokenSymbol,
+    nusdAddress,
+    poolOptions,
+  ]);
+
+  const preloadChartCandles = useCallback(async (
+    target: ChartPreloadTarget,
+    options: { force?: boolean; onTimeframeDone?: () => void } = {},
+  ) => {
+    await Promise.allSettled(
+      CHART_PRELOAD_TIMEFRAMES.map(async (tf) => {
+        try {
+          const queryOptions = {
+            queryKey: getCandlesQueryKey(
+              target.pairId,
+              target.chartToken0,
+              target.chartToken1,
+              tf,
+              18,
+              target.chartToken1Decimals,
+            ),
+            queryFn: () => fetchCandlesRequest({
+              token0: target.chartToken0,
+              token1: target.chartToken1,
+              intervalMinutes: tf,
+              subgraphUrl: "/api/candles",
+              token0Decimals: 18,
+              token1Decimals: target.chartToken1Decimals,
+            }),
+            staleTime: tf <= 1 ? 2_500 : tf <= 15 ? 10_000 : tf <= 60 ? 20_000 : 45_000,
+          };
+
+          if (options.force) {
+            await queryClient.fetchQuery(queryOptions);
+          } else {
+            await queryClient.prefetchQuery(queryOptions);
+          }
+        } finally {
+          options.onTimeframeDone?.();
+        }
+      }),
+    );
+  }, [queryClient]);
+
+  const openChartForPool = useCallback(async (
+    poolIndex: number,
+    anchor?: { price: number | null; tokenDecimals: number },
+    timeframe: ChartTf = selectedChartTimeframe,
+    updateUrl = true,
+  ) => {
+    const pool = poolOptions[poolIndex];
+    if (!pool) return;
+
+    const preloadSeq = chartPreloadSeqRef.current + 1;
+    chartPreloadSeqRef.current = preloadSeq;
+    const target = getChartPreloadTarget(poolIndex, anchor);
+    if (!target) return;
 
     setShowChart(false);
-    setChartPreloadLabel(chartLabel);
+    setChartPreloadLabel(target.chartLabel);
     setChartPreloadProgress(0);
 
     let completed = 0;
@@ -1440,50 +1514,22 @@ export default function DexAllInOne() {
 
     await Promise.allSettled([
       loadChartWindow(),
-      ...CHART_PRELOAD_TIMEFRAMES.map(async (tf) => {
-        try {
-          await queryClient.fetchQuery({
-            queryKey: getCandlesQueryKey(
-              pool.pairId,
-              chartToken0,
-              chartToken1,
-              tf,
-              18,
-              chartToken1Decimals,
-            ),
-            queryFn: () => fetchCandlesRequest({
-              token0: chartToken0,
-              token1: chartToken1,
-              intervalMinutes: tf,
-              subgraphUrl: "/api/candles",
-              token0Decimals: 18,
-              token1Decimals: chartToken1Decimals,
-            }),
-            staleTime: tf <= 1 ? 2_500 : tf <= 15 ? 10_000 : tf <= 60 ? 20_000 : 45_000,
-          });
-        } finally {
-          markDone();
-        }
-      }),
+      preloadChartCandles(target, { force: true, onTimeframeDone: markDone }),
     ]);
 
     if (chartPreloadSeqRef.current !== preloadSeq) return;
 
     setSelectedChartPair(pool.pairId);
-    setSelectedChartAnchor(chartAnchor);
+    setSelectedChartAnchor(target.chartAnchor);
     setSelectedChartTimeframe(timeframe);
     setShowChart(true);
     setChartPreloadLabel(null);
     if (updateUrl) clearDexPairUrl();
   }, [
-    allPoolData,
     clearDexPairUrl,
-    getChartAnchorForPool,
-    getPoolTokenDecimals,
-    getPoolTokenSymbol,
-    nusdAddress,
+    getChartPreloadTarget,
     poolOptions,
-    queryClient,
+    preloadChartCandles,
     selectedChartTimeframe,
   ]);
 
@@ -1530,6 +1576,58 @@ export default function DexAllInOne() {
       }
     });
   }, [poolOptions, allPoolData, pairFilter]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !poolOptions.length || !allPoolData.length) return;
+
+    let cancelled = false;
+    const warmVisibleCharts = async () => {
+      await loadChartWindow();
+
+      const targets = sortedPoolIndices
+        .slice(0, CHART_WARM_POOL_LIMIT)
+        .map((poolIndex) => ({ poolIndex, target: getChartPreloadTarget(poolIndex) }))
+        .filter((item): item is { poolIndex: number; target: ChartPreloadTarget } => !!item.target);
+
+      for (const { target } of targets) {
+        if (cancelled) return;
+        const warmKey = `${target.pairId}:${target.chartToken0}:${target.chartToken1}:${target.chartToken1Decimals}`;
+        if (chartWarmCacheRef.current.has(warmKey)) continue;
+
+        chartWarmCacheRef.current.add(warmKey);
+        await preloadChartCandles(target);
+      }
+    };
+
+    const win = window as typeof window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+
+    if (win.requestIdleCallback) {
+      const handle = win.requestIdleCallback(() => {
+        void warmVisibleCharts();
+      }, { timeout: 3500 });
+      return () => {
+        cancelled = true;
+        win.cancelIdleCallback?.(handle);
+      };
+    }
+
+    const handle = window.setTimeout(() => {
+      void warmVisibleCharts();
+    }, 1800);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [
+    allPoolData,
+    getChartPreloadTarget,
+    poolOptions.length,
+    preloadChartCandles,
+    sortedPoolIndices,
+  ]);
 
   // Check if selected pool is Base Pool (contains NUSD) - only Base Pools can farm
   const isSelectedBasePool = useMemo(() => {
