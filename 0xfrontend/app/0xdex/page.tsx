@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import dynamic from "next/dynamic";
+import { useQueryClient } from "@tanstack/react-query";
 
 const loadChartWindow = () => import("@/app/components/ChartWindow");
 const ChartWindow = dynamic(loadChartWindow, {
@@ -20,6 +21,7 @@ import { useToast } from "@/components/Toast";
 import { PageLoader } from "@/components/PageLoader";
 import { useGSAP } from "@gsap/react";
 import { gsapPixelStagger } from "@/lib/gsap-animations";
+import { fetchCandlesRequest, getCandlesQueryKey } from "@/app/hooks/useCandleData";
 
 // ============================================================
 // Pixel Skeleton Component - Dark theme shimmer loader
@@ -114,6 +116,7 @@ function castPoolData(data: unknown): PoolData | null {
 const BPS_DENOM = 10000n; // matches `swapFee / 10000` in 0xDex.sol
 type ChartTf = 1 | 15 | 60 | 240 | 1440;
 const DEFAULT_CHART_TF: ChartTf = 1;
+const CHART_PRELOAD_TIMEFRAMES = [1, 15, 60, 240, 1440] as const satisfies readonly ChartTf[];
 const CHART_TIMEFRAMES = new Set<number>([1, 15, 60, 240, 1440]);
 const SWAP_SLIPPAGE_BPS = 300n;
 const SWAP_PRICE_REFRESH_MS = 2_000;
@@ -704,6 +707,7 @@ const shimmerStyle = `
 `;
 
 export default function DexAllInOne() {
+  const queryClient = useQueryClient();
   const { address, isConnected, chainId } = useAccount();
   const { connect, connectors } = useConnect();
   const { disconnect } = useDisconnect();
@@ -798,7 +802,10 @@ export default function DexAllInOne() {
   } | null>(null);
   const [selectedChartTimeframe, setSelectedChartTimeframe] = useState<ChartTf>(DEFAULT_CHART_TF);
   const [showChart, setShowChart] = useState(false);
+  const [chartPreloadLabel, setChartPreloadLabel] = useState<string | null>(null);
+  const [chartPreloadProgress, setChartPreloadProgress] = useState(0);
   const routePairAppliedRef = useRef(false);
+  const chartPreloadSeqRef = useRef(0);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1394,7 +1401,7 @@ export default function DexAllInOne() {
     return { price: price > 0 ? price : null, tokenDecimals: tokenDecimalsForPool };
   }, [allPoolData, getPoolTokenDecimals, poolOptions]);
 
-  const openChartForPool = useCallback((
+  const openChartForPool = useCallback(async (
     poolIndex: number,
     anchor?: { price: number | null; tokenDecimals: number },
     timeframe: ChartTf = selectedChartTimeframe,
@@ -1403,12 +1410,82 @@ export default function DexAllInOne() {
     const pool = poolOptions[poolIndex];
     if (!pool) return;
 
+    const preloadSeq = chartPreloadSeqRef.current + 1;
+    chartPreloadSeqRef.current = preloadSeq;
+
+    const chartAnchor = anchor ?? getChartAnchorForPool(poolIndex);
+    const poolData = allPoolData[poolIndex];
+    const chartToken0 = (nusdAddress || NUSD_ADDRESS).toLowerCase();
+    const chartToken1 = (
+      poolData
+        ? poolData[0].toLowerCase() === chartToken0
+          ? poolData[1]
+          : poolData[0]
+        : pool.token
+    ).toLowerCase();
+    const chartToken1Decimals = chartAnchor.tokenDecimals || getPoolTokenDecimals(poolIndex);
+    const chartLabel = `${getPoolTokenSymbol(poolIndex)} / NUSD`;
+
+    setShowChart(false);
+    setChartPreloadLabel(chartLabel);
+    setChartPreloadProgress(0);
+
+    let completed = 0;
+    const markDone = () => {
+      completed += 1;
+      if (chartPreloadSeqRef.current === preloadSeq) {
+        setChartPreloadProgress(completed);
+      }
+    };
+
+    await Promise.allSettled([
+      loadChartWindow(),
+      ...CHART_PRELOAD_TIMEFRAMES.map(async (tf) => {
+        try {
+          await queryClient.fetchQuery({
+            queryKey: getCandlesQueryKey(
+              pool.pairId,
+              chartToken0,
+              chartToken1,
+              tf,
+              18,
+              chartToken1Decimals,
+            ),
+            queryFn: () => fetchCandlesRequest({
+              token0: chartToken0,
+              token1: chartToken1,
+              intervalMinutes: tf,
+              subgraphUrl: "/api/candles",
+              token0Decimals: 18,
+              token1Decimals: chartToken1Decimals,
+            }),
+            staleTime: tf <= 1 ? 2_500 : tf <= 15 ? 10_000 : tf <= 60 ? 20_000 : 45_000,
+          });
+        } finally {
+          markDone();
+        }
+      }),
+    ]);
+
+    if (chartPreloadSeqRef.current !== preloadSeq) return;
+
     setSelectedChartPair(pool.pairId);
-    setSelectedChartAnchor(anchor ?? getChartAnchorForPool(poolIndex));
+    setSelectedChartAnchor(chartAnchor);
     setSelectedChartTimeframe(timeframe);
     setShowChart(true);
+    setChartPreloadLabel(null);
     if (updateUrl) clearDexPairUrl();
-  }, [clearDexPairUrl, getChartAnchorForPool, poolOptions, selectedChartTimeframe]);
+  }, [
+    allPoolData,
+    clearDexPairUrl,
+    getChartAnchorForPool,
+    getPoolTokenDecimals,
+    getPoolTokenSymbol,
+    nusdAddress,
+    poolOptions,
+    queryClient,
+    selectedChartTimeframe,
+  ]);
 
   useEffect(() => {
     if (routePairAppliedRef.current || !poolOptions.length || typeof window === "undefined") return;
@@ -2611,6 +2688,26 @@ export default function DexAllInOne() {
         </div>
 
       </main>
+
+      {chartPreloadLabel && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-sm">
+          <div className="border border-white/25 bg-black px-6 py-5 text-center shadow-[6px_6px_0_#000]" style={{ fontFamily: "var(--font-departure)" }}>
+            <div className="mb-3 text-sm text-white">LOADING CHART</div>
+            <div className="mb-4 text-[10px] text-white/65">{chartPreloadLabel}</div>
+            <div className="mx-auto mb-3 flex w-52 gap-1">
+              {CHART_PRELOAD_TIMEFRAMES.map((tf, index) => (
+                <div
+                  key={tf}
+                  className={`h-3 flex-1 border border-white/20 ${index < chartPreloadProgress ? "bg-white" : "bg-white/10"}`}
+                />
+              ))}
+            </div>
+            <div className="text-[9px] text-white/55">
+              {chartPreloadProgress}/{CHART_PRELOAD_TIMEFRAMES.length} TIMEFRAMES
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Chart Window ── */}
       {showChart && selectedChartPair && (() => {

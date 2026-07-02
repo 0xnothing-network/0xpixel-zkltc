@@ -441,6 +441,10 @@ function makeSeriesKey(pairId: string, timeframe: TfValue, invertPrice: boolean)
   return `${pairId}:${timeframe}:${invertPrice ? 'inverted' : 'normal'}`;
 }
 
+function normalizeTimeframe(value: number | undefined): TfValue {
+  return TF.find(t => t.value === value)?.value ?? 240;
+}
+
 function defaultVisibleBars(timeframe: TfValue) {
   if (timeframe <= 1) return 90;
   if (timeframe <= 15) return 96;
@@ -615,22 +619,26 @@ export default function CandleChart({
   const chartSeriesKeyRef = useRef('');
   const chartFirstTimeRef = useRef<number | null>(null);
   const chartLastTimeRef = useRef<number | null>(null);
-  const timeframeRef = useRef<TfValue>(initialTimeframe);
+  const initialTf = normalizeTimeframe(initialTimeframe);
+  const timeframeRef = useRef<TfValue>(initialTf);
   const initialTimeframePropRef = useRef<TfValue>(
-    TF.find(t => t.value === initialTimeframe)?.value ?? 240,
+    initialTf,
   );
   const rafRef = useRef<number | null>(null);
   const pendingRef = useRef<PendingChartData | null>(null);
+  const switchTimerRef = useRef<number | null>(null);
+  const internalTimeframeChangeRef = useRef(false);
 
   const [isClient, setIsClient] = useState(false);
   const [timeframe, setTimeframe] = useState<TfValue>(
-    TF.find(t => t.value === initialTimeframe)?.value ?? 240,
+    initialTf,
   );
+  const [requestedTimeframe, setRequestedTimeframe] = useState<TfValue>(initialTf);
   const [hasData, setHasData] = useState(false);
   const [viewportH, setViewportH] = useState(height);
   const [loadingSeriesKey, setLoadingSeriesKey] = useState('');
   const [liveBucket, setLiveBucket] = useState(() => (
-    Math.floor(Date.now() / Math.max(1, initialTimeframe) / 60_000)
+    Math.floor(Date.now() / Math.max(1, initialTf) / 60_000)
   ));
 
   const cancelPendingChartWork = useCallback(() => {
@@ -639,6 +647,13 @@ export default function CandleChart({
       rafRef.current = null;
     }
     pendingRef.current = null;
+  }, []);
+
+  useEffect(() => () => {
+    if (switchTimerRef.current !== null) {
+      window.clearTimeout(switchTimerRef.current);
+      switchTimerRef.current = null;
+    }
   }, []);
 
   useEffect(() => {
@@ -725,9 +740,21 @@ export default function CandleChart({
   }, [prepareChartForSeries]);
 
   useEffect(() => {
-    const nextTimeframe = TF.find(t => t.value === initialTimeframe)?.value ?? 240;
+    const nextTimeframe = normalizeTimeframe(initialTimeframe);
     if (initialTimeframePropRef.current === nextTimeframe) return;
     initialTimeframePropRef.current = nextTimeframe;
+    setRequestedTimeframe(nextTimeframe);
+
+    if (internalTimeframeChangeRef.current) {
+      internalTimeframeChangeRef.current = false;
+      return;
+    }
+
+    if (switchTimerRef.current !== null) {
+      window.clearTimeout(switchTimerRef.current);
+      switchTimerRef.current = null;
+    }
+
     if (nextTimeframe === timeframe) return;
 
     const nextSeriesKey = makeSeriesKey(pairId, nextTimeframe, invertPrice);
@@ -985,6 +1012,11 @@ export default function CandleChart({
     const previousChartCandles = lastRawCandlesRef.current;
     const previousFirstTime = firstValidTime(previousChartCandles);
     const confirmedCandles = normalizeCandleBuckets(candles, timeframe);
+
+    if (isNewSeries && isLoading && confirmedCandles.length === 0 && hasData) {
+      return;
+    }
+
     const liveMerge = mergeLocalLiveCandles(
       confirmedCandles,
       liveSyntheticCandlesRef.current.get(seriesKey) ?? [],
@@ -1095,28 +1127,44 @@ export default function CandleChart({
   const hasInstantPrice = isValidNumber(livePrice) && livePrice > 0;
   const showLoadingOverlay = isSeriesLoading && !hasData && !hasInstantPrice;
 
+  const requestTimeframeChange = useCallback((nextTimeframe: TfValue) => {
+    if (nextTimeframe === requestedTimeframe) return;
+
+    const nextSeriesKey = makeSeriesKey(pairId, nextTimeframe, invertPrice);
+    setRequestedTimeframe(nextTimeframe);
+    setLoadingSeriesKey(nextSeriesKey);
+    internalTimeframeChangeRef.current = true;
+    onTimeframeChange?.(nextTimeframe);
+
+    if (switchTimerRef.current !== null) {
+      window.clearTimeout(switchTimerRef.current);
+    }
+
+    switchTimerRef.current = window.setTimeout(() => {
+      switchTimerRef.current = null;
+      prepareChartForSeries(nextSeriesKey);
+      setTimeframe(nextTimeframe);
+    }, 120);
+  }, [
+    invertPrice,
+    onTimeframeChange,
+    pairId,
+    prepareChartForSeries,
+    requestedTimeframe,
+  ]);
+
   const timeframeButtons = useMemo(
     () => TF.map(tf => (
       <TfButton
         key={tf.value}
         label={tf.label}
-        active={timeframe === tf.value}
-        onClick={() => {
-          if (tf.value === timeframe) return;
-          const nextSeriesKey = makeSeriesKey(pairId, tf.value, invertPrice);
-          prepareChartForSeries(nextSeriesKey);
-          setLoadingSeriesKey(nextSeriesKey);
-          setTimeframe(tf.value);
-          onTimeframeChange?.(tf.value);
-        }}
+        active={requestedTimeframe === tf.value}
+        onClick={() => requestTimeframeChange(tf.value)}
       />
     )),
     [
-      invertPrice,
-      pairId,
-      prepareChartForSeries,
-      timeframe,
-      onTimeframeChange,
+      requestedTimeframe,
+      requestTimeframeChange,
     ],
   );
 
