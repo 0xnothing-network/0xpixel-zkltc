@@ -15,7 +15,6 @@ import {
   useCandleData,
   CandleData,
   CandlesResponse,
-  fetchCandlesRequest,
   getCachedCandlesResponse,
   getCandlesQueryKey,
 } from '@/app/hooks/useCandleData';
@@ -204,6 +203,30 @@ function normalizeCandleBuckets(candles: CandleData[], intervalMinutes: number):
   }
 
   return deduped;
+}
+
+function mergeCanonicalCandles(candles: CandleData[], intervalMinutes: number): CandleData[] {
+  const normalized = normalizeCandleBuckets(candles, intervalMinutes);
+  const merged: CandleData[] = [];
+
+  for (const candle of normalized) {
+    const time = normalizeTime(candle.time);
+    if (time === null) continue;
+    const previous = merged[merged.length - 1];
+    if (previous?.time === time) {
+      merged[merged.length - 1] = {
+        time,
+        open: previous.open,
+        high: Math.max(previous.high, candle.high),
+        low: Math.min(previous.low, candle.low),
+        close: candle.close,
+      };
+      continue;
+    }
+    merged.push({ ...candle, time });
+  }
+
+  return merged;
 }
 
 function withLivePrice(
@@ -644,7 +667,7 @@ export default function CandleChart({
   const livePrice = latestPrice?.price ?? (isValidNumber(initialPrice) && initialPrice > 0 ? initialPrice : null);
 
   useEffect(() => {
-    if (!enableRealtime || !normalizedToken0 || !normalizedToken1) return;
+    if (!normalizedToken0 || !normalizedToken1) return;
 
     for (const tf of TF) {
       const queryKey = getCandlesQueryKey(
@@ -665,25 +688,8 @@ export default function CandleChart({
         );
         if (cached) queryClient.setQueryData(queryKey, cached);
       }
-
-      void queryClient.prefetchQuery({
-        queryKey,
-        queryFn: () =>
-          fetchCandlesRequest({
-            token0: normalizedToken0,
-            token1: normalizedToken1,
-            intervalMinutes: tf.value,
-            subgraphUrl: candlesEndpoint,
-            token0Decimals,
-            token1Decimals,
-          }),
-        staleTime: 5_000,
-        gcTime: 5 * 60_000,
-      });
     }
   }, [
-    candlesEndpoint,
-    enableRealtime,
     normalizedToken0,
     normalizedToken1,
     pairId,
@@ -977,7 +983,7 @@ export default function CandleChart({
       timeframe,
       liveBucket,
     );
-    const chartCandles = liveMerge.candles;
+    const chartCandles = mergeCanonicalCandles(liveMerge.candles, timeframe);
 
     if (liveMerge.syntheticCandles.length > 0) {
       liveSyntheticCandlesRef.current.set(seriesKey, liveMerge.syntheticCandles);
@@ -1090,13 +1096,8 @@ export default function CandleChart({
     [
       clearChartForSeries,
       invertPrice,
-      normalizedToken0,
-      normalizedToken1,
       pairId,
-      queryClient,
       timeframe,
-      token0Decimals,
-      token1Decimals,
       onTimeframeChange,
     ],
   );

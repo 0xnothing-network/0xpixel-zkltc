@@ -2,6 +2,8 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   compress: true,
+  poweredByHeader: false,
+  productionBrowserSourceMaps: false,
   outputFileTracingRoot: __dirname,
   experimental: {
     optimizePackageImports: [

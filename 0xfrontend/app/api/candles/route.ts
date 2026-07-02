@@ -11,9 +11,8 @@ const SUBGRAPH_URL = SUBGRAPH_URL_RAW === 'disabled' ? '' : SUBGRAPH_URL_RAW;
 const SWAP_PAGE_SIZE = 1000;
 const RECENT_SWAPS_PER_DIRECTION = 30_000;
 const FULL_HISTORY_SWAPS_PER_DIRECTION = 30_000;
-const RESPONSE_CACHE_TTL_MS = 3_000;
 const GENESIS_CACHE_TTL_MS = 5 * 60_000;
-const SWAP_CACHE_TTL_MS = 2_500;
+const SWAP_CACHE_TTL_MS = 10_000;
 const LATEST_SWAP_CACHE_TTL_MS = 2_500;
 const INDEXED_SCHEMA_RETRY_MS = 60_000;
 const SUPPORTED_INTERVALS = new Set([1, 15, 60, 240, 1440]);
@@ -264,6 +263,20 @@ function getLookbackSeconds(intervalMinutes: number): number {
   if (intervalMinutes <= 60) return 14 * 24 * 60 * 60;
   if (intervalMinutes <= 240) return 45 * 24 * 60 * 60;
   return 180 * 24 * 60 * 60;
+}
+
+function responseCacheTtlMs(intervalMinutes: number): number {
+  if (intervalMinutes <= 1) return 2_500;
+  if (intervalMinutes <= 15) return 10_000;
+  if (intervalMinutes <= 60) return 20_000;
+  return 45_000;
+}
+
+function responseCacheControl(intervalMinutes: number): string {
+  if (intervalMinutes <= 1) return 'public, max-age=0, s-maxage=2, stale-while-revalidate=15';
+  if (intervalMinutes <= 15) return 'public, max-age=0, s-maxage=10, stale-while-revalidate=60';
+  if (intervalMinutes <= 60) return 'public, max-age=0, s-maxage=20, stale-while-revalidate=120';
+  return 'public, max-age=0, s-maxage=45, stale-while-revalidate=300';
 }
 
 function shouldLoadFullHistory(intervalMinutes: number): boolean {
@@ -824,13 +837,14 @@ export async function GET(request: NextRequest) {
   const t0 = token0.toLowerCase();
   const t1 = token1.toLowerCase();
   const responseKey = `${t0}:${t1}:${interval}:${token0Decimals}:${token1Decimals}`;
+  const cacheControl = responseCacheControl(interval);
   const cached = responseCache.get(responseKey);
   if (cached && cached.expires > Date.now()) {
     const body = await refreshCachedLatestPrice(cached.body, t0, t1, token0Decimals, token1Decimals);
     return NextResponse.json(body, {
       headers: {
         'Content-Type': 'application/json',
-        'Cache-Control': 'no-store',
+        'Cache-Control': cacheControl,
         'X-Candles-Cache': 'HIT',
       },
     });
@@ -842,14 +856,14 @@ export async function GET(request: NextRequest) {
     if (!existing) responseInFlight.set(responseKey, body);
     const payload = await body;
     responseInFlight.delete(responseKey);
-    responseCache.set(responseKey, { expires: Date.now() + RESPONSE_CACHE_TTL_MS, body: payload });
+    responseCache.set(responseKey, { expires: Date.now() + responseCacheTtlMs(interval), body: payload });
 
     return NextResponse.json(
       payload,
       {
         headers: {
           'Content-Type': 'application/json',
-          'Cache-Control': 'no-store',
+          'Cache-Control': cacheControl,
           'X-Candles-Cache': existing ? 'JOINED' : 'MISS',
         },
       },

@@ -221,8 +221,13 @@ async function filterPurchasableListings(
 
     if (!ownerMatches || (!tokenApproved && !collectionApproved)) continue;
 
-    const { collection: _collection, ...dto } = listing;
-    out.push(dto);
+    out.push({
+      listingId: listing.listingId,
+      tokenId: listing.tokenId,
+      price: listing.price,
+      seller: listing.seller,
+      active: listing.active,
+    });
   }
 
   return out;

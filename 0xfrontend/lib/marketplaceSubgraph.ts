@@ -29,7 +29,7 @@ export interface SubgraphListingDTO {
   active: boolean;
 }
 
-export type SubgraphMarketEventType = "LISTED" | "BOUGHT" | "CANCELLED";
+export type SubgraphMarketEventType = "MINTED" | "LISTED" | "BOUGHT" | "CANCELLED";
 
 export interface SubgraphMarketEventDTO {
   id: string;
@@ -246,6 +246,32 @@ const MARKET_EVENTS_BY_TYPE_QUERY = `
   }
 `;
 
+const MINTED_EVENTS_QUERY = `
+  query GetPixelMintedEvents(
+    $collection: Bytes!
+    $limit: Int!
+    $skip: Int!
+  ) {
+    tokens(
+      first: $limit
+      skip: $skip
+      orderBy: mintedAt
+      orderDirection: desc
+      where: {
+        collection: $collection
+      }
+    ) {
+      id
+      tokenId
+      name
+      gridSize
+      pixelData
+      creator
+      mintedAt
+    }
+  }
+`;
+
 export function hasMarketplaceSubgraph(): boolean {
   return MARKETPLACE_SUBGRAPH_URL.length > 0;
 }
@@ -340,17 +366,53 @@ export async function fetchMarketplaceActivityFromSubgraph({
   const safeLimit = Math.min(Math.max(1, limit), 100);
   const safeSkip = Math.max(0, skip);
   const filteredTypes = eventTypes?.filter(isMarketEventType);
-  const query = filteredTypes?.length
+  const includeAll = !filteredTypes?.length;
+  const includeMinted = includeAll || filteredTypes?.includes("MINTED");
+  const marketTypes = includeAll
+    ? (["LISTED", "BOUGHT", "CANCELLED"] as const)
+    : filteredTypes.filter((type) => type !== "MINTED");
+  const windowSize = Math.min(1000, safeLimit + safeSkip);
+
+  const [marketEvents, mintedEvents] = await Promise.all([
+    marketTypes.length
+      ? fetchMarketEvents({
+          limit: windowSize,
+          skip: 0,
+          eventTypes: includeAll ? undefined : marketTypes,
+        })
+      : Promise.resolve([]),
+    includeMinted
+      ? fetchMintedEvents({ limit: windowSize, skip: 0 })
+      : Promise.resolve([]),
+  ]);
+
+  return {
+    events: [...marketEvents, ...mintedEvents]
+      .sort((a, b) => b.timestamp - a.timestamp || b.id.localeCompare(a.id))
+      .slice(safeSkip, safeSkip + safeLimit),
+  };
+}
+
+async function fetchMarketEvents({
+  limit,
+  skip,
+  eventTypes,
+}: {
+  limit: number;
+  skip: number;
+  eventTypes?: readonly Exclude<SubgraphMarketEventType, "MINTED">[];
+}): Promise<SubgraphMarketEventDTO[]> {
+  const query = eventTypes?.length
     ? MARKET_EVENTS_BY_TYPE_QUERY
     : MARKET_EVENTS_QUERY;
   const variables: Record<string, unknown> = {
     collection: PIXEL_COLLECTION,
-    limit: safeLimit,
-    skip: safeSkip,
+    limit,
+    skip,
   };
 
-  if (filteredTypes?.length) {
-    variables.eventTypes = filteredTypes;
+  if (eventTypes?.length) {
+    variables.eventTypes = eventTypes;
   }
 
   const data = await graphFetch<{ marketEvents: MarketEventNode[] }>(
@@ -358,33 +420,54 @@ export async function fetchMarketplaceActivityFromSubgraph({
     variables
   );
 
-  return {
-    events: (data.marketEvents ?? []).map((event) => {
-      const token = event.listing?.token ?? null;
-      const tokenId = event.tokenId || token?.tokenId || "0";
-      return {
-        id: event.id,
-        listingId: event.listingId,
-        tokenId,
-        eventType: event.eventType,
-        price: event.price,
-        seller: normalizeNullableAddress(event.seller),
-        buyer: normalizeNullableAddress(event.buyer),
-        timestamp: Number(event.timestamp || 0),
-        blockNumber: Number(event.blockNumber || 0),
-        txHash: normalizeAddress(event.txHash),
-        token: token
-          ? {
-              tokenId,
-              name: token.name || `Token #${tokenId}`,
-              imageUrl: imageUrlFromToken(token),
-              creator: normalizeAddress(token.creator),
-              mintedAt: Number(token.mintedAt || 0),
-            }
-          : null,
-      };
-    }),
-  };
+  return (data.marketEvents ?? []).map((event) => {
+    const token = event.listing?.token ?? null;
+    const tokenId = event.tokenId || token?.tokenId || "0";
+    return {
+      id: event.id,
+      listingId: event.listingId,
+      tokenId,
+      eventType: event.eventType,
+      price: event.price,
+      seller: normalizeNullableAddress(event.seller),
+      buyer: normalizeNullableAddress(event.buyer),
+      timestamp: Number(event.timestamp || 0),
+      blockNumber: Number(event.blockNumber || 0),
+      txHash: normalizeAddress(event.txHash),
+      token: token ? tokenMetadataFromNode(token, tokenId) : null,
+    };
+  });
+}
+
+async function fetchMintedEvents({
+  limit,
+  skip,
+}: {
+  limit: number;
+  skip: number;
+}): Promise<SubgraphMarketEventDTO[]> {
+  const data = await graphFetch<{ tokens: TokenNode[] }>(
+    MINTED_EVENTS_QUERY,
+    {
+      collection: PIXEL_COLLECTION,
+      limit,
+      skip,
+    }
+  );
+
+  return (data.tokens ?? []).map((token) => ({
+    id: `minted-${token.id}`,
+    listingId: "0",
+    tokenId: token.tokenId,
+    eventType: "MINTED",
+    price: null,
+    seller: normalizeAddress(token.creator),
+    buyer: null,
+    timestamp: Number(token.mintedAt || 0),
+    blockNumber: 0,
+    txHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    token: tokenMetadataFromNode(token, token.tokenId),
+  }));
 }
 
 async function graphFetch<T>(
@@ -424,6 +507,16 @@ function imageUrlFromToken(token: TokenNode): string {
   return pixelDataToSVG(token.pixelData, gridSize);
 }
 
+function tokenMetadataFromNode(token: TokenNode, tokenId: string): SubgraphTokenMetadata {
+  return {
+    tokenId,
+    name: token.name || `Token #${tokenId}`,
+    imageUrl: imageUrlFromToken(token),
+    creator: normalizeAddress(token.creator),
+    mintedAt: Number(token.mintedAt || 0),
+  };
+}
+
 function normalizeAddress(address: string): `0x${string}` {
   return address.toLowerCase() as `0x${string}`;
 }
@@ -433,5 +526,5 @@ function normalizeNullableAddress(address: string | null | undefined): `0x${stri
 }
 
 function isMarketEventType(value: string): value is SubgraphMarketEventType {
-  return value === "LISTED" || value === "BOUGHT" || value === "CANCELLED";
+  return value === "MINTED" || value === "LISTED" || value === "BOUGHT" || value === "CANCELLED";
 }

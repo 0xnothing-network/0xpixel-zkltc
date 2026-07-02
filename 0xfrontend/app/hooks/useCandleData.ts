@@ -52,9 +52,10 @@ export interface CandlesResponse {
   latestPrice?: { price: number; timestamp: number; source?: string } | null;
 }
 
-export const CANDLE_QUERY_KEY = 'candles-edge-v14';
+export const CANDLE_QUERY_KEY = 'candles-edge-v15';
 const SUPPORTED_INTERVALS = new Set([1, 15, 60, 240, 1440]);
-const SWAP_REFETCH_THROTTLE_MS = 1_500;
+const CANDLE_SESSION_CACHE_PREFIX = 'candles:v15';
+const SWAP_REFETCH_THROTTLE_MS = 2_500;
 const PRICE_SCALE_MAX_RATIO = 100;
 const BYTES32_RE = /^0x[a-fA-F0-9]{64}$/;
 
@@ -207,11 +208,25 @@ function candlesEqual(a: CandleData[] | null | undefined, b: CandleData[]) {
   return true;
 }
 
+function candleStaleTime(intervalMinutes: number) {
+  if (intervalMinutes <= 1) return 3_000;
+  if (intervalMinutes <= 15) return 10_000;
+  if (intervalMinutes <= 60) return 20_000;
+  return 45_000;
+}
+
+function candleRefetchInterval(intervalMinutes: number) {
+  if (intervalMinutes <= 1) return 4_000;
+  if (intervalMinutes <= 15) return 15_000;
+  if (intervalMinutes <= 60) return 30_000;
+  return 60_000;
+}
+
 function readCachedCandles(cacheKey: string): CandleData[] | null {
   if (typeof window === 'undefined') return null;
 
   try {
-    const raw = sessionStorage.getItem(`candles:v13:${cacheKey}`);
+    const raw = sessionStorage.getItem(`${CANDLE_SESSION_CACHE_PREFIX}:${cacheKey}`);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     const candles = sanitizeCandles(parsed);
@@ -384,6 +399,8 @@ export function useCandleData({
   const cacheKey = getCandlesCacheKey(t0, t1, intervalMinutes, token0Decimals, token1Decimals);
   const priceKey = getPriceCacheKey(t0, t1, token0Decimals, token1Decimals);
   const pairIdBytes = isBytes32(pairId) ? pairId : undefined;
+  const queryStaleTime = candleStaleTime(intervalMinutes);
+  const queryRefetchInterval = candleRefetchInterval(intervalMinutes);
   const lastSwapRefetchAtRef = useRef(0);
 
   const [latestPrice, setLatestPrice] = useState<{ price: number; timestamp: number } | null>(() => {
@@ -404,9 +421,9 @@ export function useCandleData({
     args: pairIdBytes ? [pairIdBytes] : undefined,
     query: {
       enabled: !!enabled && !!pairIdBytes && !!t0 && !!t1,
-      staleTime: 0,
-      gcTime: 30_000,
-      refetchInterval: enabled ? 3_000 : false,
+      staleTime: 1_000,
+      gcTime: 60_000,
+      refetchInterval: enabled ? Math.min(queryRefetchInterval, 5_000) : false,
       refetchOnMount: 'always',
       refetchOnWindowFocus: false,
     },
@@ -456,11 +473,12 @@ export function useCandleData({
         token1Decimals,
       }),
     enabled: !!enabled && !!t0 && !!t1,
-    staleTime: 5_000,
-    gcTime: 5 * 60_000,
-    refetchInterval: enabled ? 5_000 : false,
+    staleTime: queryStaleTime,
+    gcTime: 10 * 60_000,
+    refetchInterval: enabled ? queryRefetchInterval : false,
     refetchOnWindowFocus: false,
-    retry: 2,
+    refetchOnReconnect: true,
+    retry: 1,
     retryDelay: attempt => Math.min(500 * 2 ** attempt, 4000),
     initialData: () => getCachedCandlesResponse(t0, t1, intervalMinutes, token0Decimals, token1Decimals),
     initialDataUpdatedAt: 0,
@@ -488,7 +506,7 @@ export function useCandleData({
     ));
 
     try {
-      sessionStorage.setItem(`candles:v13:${cacheKey}`, JSON.stringify(validCandles));
+      sessionStorage.setItem(`${CANDLE_SESSION_CACHE_PREFIX}:${cacheKey}`, JSON.stringify(validCandles));
     } catch {}
   }, [candlesResponse, cacheKey, intervalMinutes]);
 

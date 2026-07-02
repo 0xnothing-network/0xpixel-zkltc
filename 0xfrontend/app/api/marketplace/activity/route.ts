@@ -68,5 +68,5 @@ function parseEventTypes(raw: string | null): SubgraphMarketEventType[] {
 }
 
 function isMarketEventType(value: string): value is SubgraphMarketEventType {
-  return value === "LISTED" || value === "BOUGHT" || value === "CANCELLED";
+  return value === "MINTED" || value === "LISTED" || value === "BOUGHT" || value === "CANCELLED";
 }

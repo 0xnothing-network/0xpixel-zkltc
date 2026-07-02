@@ -13,6 +13,7 @@ import { useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useWatchContractEvent } from 'wagmi';
 import { ZeroXDexAbi, ZEROXDEX_ADDRESS } from '@/abi/ZeroXDex';
+import { CANDLE_QUERY_KEY } from './useCandleData';
 
 // ============================================================
 // TYPES — match 0xDex.sol Swapped event signature exactly
@@ -56,7 +57,7 @@ export interface UseRealtimeSwapsReturn {
 // ============================================================
 
 // Query keys to invalidate when new swaps occur
-const CANDLE_QUERY_KEYS = ['candles-edge-v12'];
+const CANDLE_QUERY_KEYS = [CANDLE_QUERY_KEY];
 
 // ============================================================
 // MAIN HOOK

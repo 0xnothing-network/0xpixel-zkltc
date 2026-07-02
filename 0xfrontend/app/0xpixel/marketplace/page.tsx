@@ -10,8 +10,8 @@ import { useToast } from "@/components/Toast";
 import { LITVM_CHAIN_ID } from "@/lib/chainSwitch";
 
 type SortKey = "newest" | "price-asc" | "price-desc";
-type ActivityFilter = "all" | "sales" | "listed" | "cancelled";
-type MarketActivityType = "LISTED" | "BOUGHT" | "CANCELLED";
+type ActivityFilter = "all" | "sold" | "minted" | "listed" | "cancelled";
+type MarketActivityType = "MINTED" | "LISTED" | "BOUGHT" | "CANCELLED";
 
 interface TokenMetadata {
   tokenId: string;
@@ -56,7 +56,8 @@ const ACTIVITY_PAGE_SIZE = 24;
 
 const ACTIVITY_FILTERS: Array<{ key: ActivityFilter; label: string }> = [
   { key: "all", label: "All" },
-  { key: "sales", label: "Sales" },
+  { key: "sold", label: "Sold" },
+  { key: "minted", label: "Minted" },
   { key: "listed", label: "Listed" },
   { key: "cancelled", label: "Cancelled" },
 ];
@@ -482,6 +483,7 @@ function ActivityRow({ event }: { event: MarketActivityEvent }) {
   const tone = activityTone(event.eventType);
   const tokenName = event.token?.name || `Token #${event.tokenId}`;
   const actorText = activityActorText(event);
+  const hasTxHash = event.txHash !== "0x0000000000000000000000000000000000000000000000000000000000000000";
 
   return (
     <article className="grid grid-cols-[44px_minmax(0,1fr)] gap-3 p-3 sm:grid-cols-[56px_minmax(0,1fr)_auto] sm:items-center sm:gap-4 sm:p-4">
@@ -538,19 +540,23 @@ function ActivityRow({ event }: { event: MarketActivityEvent }) {
           <p className="text-[10px] uppercase tracking-wider text-[#64748B]">
             {formatActivityTime(event.timestamp)}
           </p>
-          <a
-            href={getMarketplaceTxUrl(event.txHash)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-1 inline-flex items-center justify-end gap-1 text-[11px] font-bold text-[#8888ff] transition-colors hover:text-[#AAAADD]"
-          >
-            Tx
-            <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <path d="M15 3h6v6" />
-              <path d="M10 14L21 3" />
-              <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
-            </svg>
-          </a>
+          {hasTxHash ? (
+            <a
+              href={getMarketplaceTxUrl(event.txHash)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-1 inline-flex items-center justify-end gap-1 text-[11px] font-bold text-[#8888ff] transition-colors hover:text-[#AAAADD]"
+            >
+              Tx
+              <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path d="M15 3h6v6" />
+                <path d="M10 14L21 3" />
+                <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+              </svg>
+            </a>
+          ) : (
+            <span className="mt-1 inline-block text-[11px] font-bold text-[#64748B]">Mint</span>
+          )}
         </div>
       </div>
     </article>
@@ -596,7 +602,6 @@ function ListingCard({
 }) {
   const toast = useToast();
   const [busy, setBusy] = useState<"buy" | "cancel" | null>(null);
-  const [showBuyModal, setShowBuyModal] = useState(false);
   const { address, isConnected, chainId } = useAccount();
   const { switchChain, isPending: isSwitchingChain } = useSwitchChain();
   const publicClient = usePublicClient();
@@ -618,14 +623,12 @@ function ListingCard({
       hrefLabel: "View on Explorer",
     });
     setBusy(null);
-    setShowBuyModal(false);
     onActionComplete();
   }, [isConfirmed, txHash, busy, listing.tokenId, meta, toast, onActionComplete]);
 
   const handleBuy = useCallback(async () => {
     if (!isConnected || !address) {
       toast.warning("Connect wallet", "Connect your wallet before buying.");
-      setShowBuyModal(false);
       return;
     }
     if (chainId && chainId !== LITVM_CHAIN_ID) {
@@ -651,7 +654,6 @@ function ListingCard({
       if (!active) {
         toast.error("Listing inactive", "This NFT was already bought or cancelled.");
         setBusy(null);
-        setShowBuyModal(false);
         onActionComplete();
         return;
       }
@@ -781,18 +783,7 @@ function ListingCard({
           </button>
         ) : (
           <button
-            onClick={() => {
-              if (!isConnected || !address) {
-                toast.warning("Connect wallet", "Connect your wallet before buying.");
-                return;
-              }
-              if (chainId && chainId !== LITVM_CHAIN_ID) {
-                toast.info("Wrong network", "Switching to LitVM...");
-                switchChain?.({ chainId: LITVM_CHAIN_ID });
-                return;
-              }
-              setShowBuyModal(true);
-            }}
+            onClick={handleBuy}
             disabled={busy !== null || isConfirming || isSwitchingChain}
             className="w-full py-3 sm:py-2.5 rounded-lg bg-[#8888ff] hover:bg-[#AAAADD] text-white text-[10px] sm:text-xs font-bold transition-colors disabled:opacity-50"
           >
@@ -800,17 +791,6 @@ function ListingCard({
           </button>
         )}
       </div>
-
-      {showBuyModal && (
-        <BuyModal
-          listing={listing}
-          meta={meta}
-          busy={busy === "buy"}
-          isConfirming={isConfirming}
-          onConfirm={handleBuy}
-          onClose={() => setShowBuyModal(false)}
-        />
-      )}
     </div>
   );
 }
@@ -830,19 +810,24 @@ function appendUniqueEvents(
 }
 
 function activityFilterToType(filter: ActivityFilter): MarketActivityType | null {
-  if (filter === "sales") return "BOUGHT";
+  if (filter === "sold") return "BOUGHT";
+  if (filter === "minted") return "MINTED";
   if (filter === "listed") return "LISTED";
   if (filter === "cancelled") return "CANCELLED";
   return null;
 }
 
 function activityLabel(type: MarketActivityType): string {
+  if (type === "MINTED") return "Minted";
   if (type === "BOUGHT") return "Sold";
   if (type === "CANCELLED") return "Cancelled";
   return "Listed";
 }
 
 function activityTone(type: MarketActivityType): string {
+  if (type === "MINTED") {
+    return "border-yellow-300/40 bg-yellow-300/10 text-yellow-200";
+  }
   if (type === "BOUGHT") {
     return "border-emerald-400/30 bg-emerald-400/10 text-emerald-300";
   }
@@ -855,6 +840,7 @@ function activityTone(type: MarketActivityType): string {
 function activityActorText(event: MarketActivityEvent): string {
   const seller = event.seller ? shortenAddress(event.seller) : "unknown seller";
   const buyer = event.buyer ? shortenAddress(event.buyer) : "unknown buyer";
+  if (event.eventType === "MINTED") return `Minted by ${seller}`;
   if (event.eventType === "BOUGHT") return `Buyer ${buyer} · Seller ${seller}`;
   if (event.eventType === "CANCELLED") return `Cancelled by ${seller}`;
   return `Listed by ${seller}`;
@@ -886,70 +872,4 @@ function formatActivityTime(timestamp: number): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(ms));
-}
-
-function BuyModal({
-  listing,
-  meta,
-  busy,
-  isConfirming,
-  onConfirm,
-  onClose,
-}: {
-  listing: RawListing;
-  meta: TokenMetadata | null;
-  busy: boolean;
-  isConfirming: boolean;
-  onConfirm: () => void;
-  onClose: () => void;
-}) {
-  const priceEth = formatEther(listing.price);
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm p-3 sm:p-4"
-      onClick={onClose}
-    >
-      <div
-        className="bg-[#13133A] rounded-t-2xl sm:rounded-2xl border border-[#2D2D44] max-w-sm w-full max-h-[92dvh] overflow-auto shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {meta?.imageUrl && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={meta.imageUrl}
-            alt={meta.name}
-            className="w-full aspect-square object-cover"
-            style={{ imageRendering: "pixelated" }}
-          />
-        )}
-        <div className="p-5 space-y-4" style={{ fontFamily: "var(--font-departure)" }}>
-          <div>
-            <h3 className="text-white font-bold text-lg">{meta?.name || `Token #${listing.tokenId.toString()}`}</h3>
-            <p className="text-[#64748B] text-xs">Sold by {shortenAddress(listing.seller)}</p>
-          </div>
-          <div className="bg-[#0F0F23] rounded-xl p-4 text-center">
-            <p className="text-[#64748B] text-[10px] uppercase tracking-wider">Total price</p>
-            <p className="text-white font-bold text-2xl mt-1">{priceEth} zkLTC</p>
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={onClose}
-              disabled={busy || isConfirming}
-              className="flex-1 py-2.5 rounded-lg bg-[#1A1A2E] border border-[#2D2D44] text-white text-xs font-bold hover:border-[#4D4D64] transition-colors disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={onConfirm}
-              disabled={busy || isConfirming}
-              className="flex-1 py-2.5 rounded-lg bg-[#8888ff] hover:bg-[#AAAADD] text-white text-xs font-bold transition-colors disabled:opacity-50"
-            >
-              {isConfirming ? "Confirming..." : busy ? "Submitting..." : "Confirm"}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
 }
