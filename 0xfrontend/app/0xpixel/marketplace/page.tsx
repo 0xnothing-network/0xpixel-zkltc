@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useAccount, usePublicClient, useSwitchChain, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { formatEther } from "viem";
 import { PIXEL_MARKETPLACE_ADDRESS, shortenAddress, getMarketplaceTxUrl, getExplorerUrl } from "@/lib/contract";
 import { MarketplaceAbi, type RawListing } from "@/lib/marketplaceAbi";
 import { GridSkeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/Toast";
+import { LITVM_CHAIN_ID } from "@/lib/chainSwitch";
 
 type SortKey = "newest" | "price-asc" | "price-desc";
 type ActivityFilter = "all" | "sales" | "listed" | "cancelled";
@@ -596,6 +597,9 @@ function ListingCard({
   const toast = useToast();
   const [busy, setBusy] = useState<"buy" | "cancel" | null>(null);
   const [showBuyModal, setShowBuyModal] = useState(false);
+  const { address, isConnected, chainId } = useAccount();
+  const { switchChain, isPending: isSwitchingChain } = useSwitchChain();
+  const publicClient = usePublicClient();
 
   const priceEth = formatEther(listing.price);
   const isOwner = userAddress && listing.seller.toLowerCase() === userAddress.toLowerCase();
@@ -619,14 +623,65 @@ function ListingCard({
   }, [isConfirmed, txHash, busy, listing.tokenId, meta, toast, onActionComplete]);
 
   const handleBuy = useCallback(async () => {
+    if (!isConnected || !address) {
+      toast.warning("Connect wallet", "Connect your wallet before buying.");
+      setShowBuyModal(false);
+      return;
+    }
+    if (chainId && chainId !== LITVM_CHAIN_ID) {
+      toast.info("Wrong network", "Switching to LitVM...");
+      switchChain?.({ chainId: LITVM_CHAIN_ID });
+      return;
+    }
+    if (!publicClient) {
+      toast.error("RPC unavailable", "Please refresh and try again.");
+      return;
+    }
+
     try {
       setBusy("buy");
+      const currentListing = await publicClient.readContract({
+        address: PIXEL_MARKETPLACE_ADDRESS,
+        abi: MarketplaceAbi,
+        functionName: "listings",
+        args: [listing.listingId],
+      }) as readonly [`0x${string}`, bigint, bigint, `0x${string}`, boolean];
+
+      const [, , currentPrice, currentSeller, active] = currentListing;
+      if (!active) {
+        toast.error("Listing inactive", "This NFT was already bought or cancelled.");
+        setBusy(null);
+        setShowBuyModal(false);
+        onActionComplete();
+        return;
+      }
+      if (currentSeller.toLowerCase() === address.toLowerCase()) {
+        toast.error("Seller cannot buy", "You own this listing.");
+        setBusy(null);
+        return;
+      }
+      if (currentPrice !== listing.price) {
+        toast.error("Price changed", "Refreshing the listing price.");
+        setBusy(null);
+        onActionComplete();
+        return;
+      }
+
+      await publicClient.simulateContract({
+        account: address,
+        address: PIXEL_MARKETPLACE_ADDRESS,
+        abi: MarketplaceAbi,
+        functionName: "buy",
+        args: [listing.listingId],
+        value: currentPrice,
+      });
+
       const hash = await writeContractAsync({
         address: PIXEL_MARKETPLACE_ADDRESS,
         abi: MarketplaceAbi,
         functionName: "buy",
         args: [listing.listingId],
-        value: listing.price,
+        value: currentPrice,
       });
       toast.show({
         title: "Purchase submitted",
@@ -638,7 +693,18 @@ function ListingCard({
       toast.handleError(err, "Purchase failed");
       setBusy(null);
     }
-  }, [listing.listingId, listing.price, writeContractAsync, toast]);
+  }, [
+    address,
+    chainId,
+    isConnected,
+    listing.listingId,
+    listing.price,
+    onActionComplete,
+    publicClient,
+    switchChain,
+    toast,
+    writeContractAsync,
+  ]);
 
   const handleCancel = useCallback(async () => {
     try {
@@ -715,11 +781,22 @@ function ListingCard({
           </button>
         ) : (
           <button
-            onClick={() => setShowBuyModal(true)}
-            disabled={busy !== null || isConfirming}
+            onClick={() => {
+              if (!isConnected || !address) {
+                toast.warning("Connect wallet", "Connect your wallet before buying.");
+                return;
+              }
+              if (chainId && chainId !== LITVM_CHAIN_ID) {
+                toast.info("Wrong network", "Switching to LitVM...");
+                switchChain?.({ chainId: LITVM_CHAIN_ID });
+                return;
+              }
+              setShowBuyModal(true);
+            }}
+            disabled={busy !== null || isConfirming || isSwitchingChain}
             className="w-full py-3 sm:py-2.5 rounded-lg bg-[#8888ff] hover:bg-[#AAAADD] text-white text-[10px] sm:text-xs font-bold transition-colors disabled:opacity-50"
           >
-            {busy === "buy" || isConfirming ? "Buying..." : "Buy Now"}
+            {isSwitchingChain ? "Switching..." : busy === "buy" || isConfirming ? "Buying..." : "Buy Now"}
           </button>
         )}
       </div>
