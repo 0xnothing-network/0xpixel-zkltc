@@ -25,6 +25,10 @@ interface ListingDTO {
   active: boolean;
 }
 
+interface InternalListingDTO extends ListingDTO {
+  collection: `0x${string}`;
+}
+
 interface TokenDTO {
   tokenId: string;
   name: string;
@@ -60,21 +64,6 @@ export async function GET(request: Request) {
   const force = searchParams.get("force") === "1";
   const cacheKey = "listings:all";
 
-  if (hasMarketplaceSubgraph()) {
-    const cachedPayload = subgraphPayloadCache.get(cacheKey);
-    if (!force && cachedPayload && Date.now() - cachedPayload.ts < LISTING_TTL) {
-      return NextResponse.json(cachedPayload.value);
-    }
-
-    try {
-      const subgraph = await fetchMarketplaceListingsFromSubgraph();
-      subgraphPayloadCache.set(cacheKey, { value: subgraph, ts: Date.now() });
-      return NextResponse.json(subgraph);
-    } catch (err) {
-      console.error("[marketplace] subgraph fetch failed, falling back to RPC:", err);
-    }
-  }
-
   const cached = listingCache.get(cacheKey);
   let listings: ListingDTO[];
 
@@ -86,6 +75,21 @@ export async function GET(request: Request) {
       listingCache.set(cacheKey, { value: listings, ts: Date.now() });
     } catch (err) {
       console.error("[marketplace] RPC listing fetch failed:", err);
+      if (hasMarketplaceSubgraph()) {
+        const cachedPayload = subgraphPayloadCache.get(cacheKey);
+        if (!force && cachedPayload && Date.now() - cachedPayload.ts < LISTING_TTL) {
+          return NextResponse.json(cachedPayload.value);
+        }
+
+        try {
+          const subgraph = await fetchMarketplaceListingsFromSubgraph();
+          subgraphPayloadCache.set(cacheKey, { value: subgraph, ts: Date.now() });
+          return NextResponse.json(subgraph);
+        } catch (subgraphErr) {
+          console.error("[marketplace] subgraph fallback failed:", subgraphErr);
+        }
+      }
+
       // Return stale if available, otherwise propagate.
       if (cached) listings = cached.value;
       else {
@@ -140,7 +144,7 @@ async function fetchActiveListings(): Promise<ListingDTO[]> {
     })),
   });
 
-  const out: ListingDTO[] = [];
+  const out: InternalListingDTO[] = [];
   for (let i = 0; i < idsRaw.length; i++) {
     const r = listingResults[i];
     if (!r || r.status !== "success") continue;
@@ -153,6 +157,7 @@ async function fetchActiveListings(): Promise<ListingDTO[]> {
     ];
     if (!v[4]) continue; // inactive
     out.push({
+      collection: v[0],
       listingId: idsRaw[i].toString(),
       tokenId: v[1].toString(),
       price: v[2].toString(),
@@ -160,6 +165,66 @@ async function fetchActiveListings(): Promise<ListingDTO[]> {
       active: v[4],
     });
   }
+
+  return filterPurchasableListings(out);
+}
+
+async function filterPurchasableListings(
+  listings: InternalListingDTO[]
+): Promise<ListingDTO[]> {
+  if (listings.length === 0) return [];
+
+  const results = await publicClient.multicall({
+    allowFailure: true,
+    contracts: listings.flatMap((listing) => {
+      const tokenId = BigInt(listing.tokenId);
+      return [
+        {
+          address: listing.collection,
+          abi: PixelNFTABI,
+          functionName: "ownerOf" as const,
+          args: [tokenId] as const,
+        },
+        {
+          address: listing.collection,
+          abi: PixelNFTABI,
+          functionName: "getApproved" as const,
+          args: [tokenId] as const,
+        },
+        {
+          address: listing.collection,
+          abi: PixelNFTABI,
+          functionName: "isApprovedForAll" as const,
+          args: [listing.seller, PIXEL_MARKETPLACE_ADDRESS] as const,
+        },
+      ];
+    }),
+  });
+
+  const out: ListingDTO[] = [];
+  for (let i = 0; i < listings.length; i++) {
+    const listing = listings[i];
+    const owner = results[i * 3];
+    const approved = results[i * 3 + 1];
+    const approvedForAll = results[i * 3 + 2];
+
+    const ownerMatches =
+      owner?.status === "success" &&
+      String(owner.result).toLowerCase() === listing.seller.toLowerCase();
+
+    const tokenApproved =
+      approved?.status === "success" &&
+      String(approved.result).toLowerCase() === PIXEL_MARKETPLACE_ADDRESS.toLowerCase();
+
+    const collectionApproved =
+      approvedForAll?.status === "success" && approvedForAll.result === true;
+
+    if (!ownerMatches || (!tokenApproved && !collectionApproved)) continue;
+
+    const { collection: _collection, ...dto } = listing;
+    out.push(dto);
+  }
+
   return out;
 }
 

@@ -130,7 +130,7 @@ function AppHeader() {
   const wrongNetwork = isConnected && chainId && chainId !== LITVM_CHAIN_ID;
 
   return (
-    <header className="pixel-app-header sticky top-0 z-50 border-b border-white/[0.08] bg-[#07070d]/86 backdrop-blur-xl supports-[backdrop-filter]:bg-[#07070d]/72">
+    <header className="pixel-app-header sticky top-0 z-[80] border-b border-white/[0.08] bg-[#07070d]/86 backdrop-blur-xl supports-[backdrop-filter]:bg-[#07070d]/72">
       <div className="max-w-7xl mx-auto px-3 py-2.5 sm:px-5 sm:py-3.5 flex items-center justify-between gap-2 sm:gap-4">
         <div className="flex min-w-0 items-center gap-3 sm:gap-4">
           <Link href="/" className="flex items-center group">
@@ -176,6 +176,7 @@ function AppHeader() {
               {/* Wrong network warning */}
               {wrongNetwork && (
                 <button
+                  type="button"
                   onClick={() => switchChain?.({ chainId: LITVM_CHAIN_ID })}
                   disabled={isSwitching}
                   className="pixel-btn-soft pixel-btn-soft-amber pixel-btn-soft-sm hidden sm:block"
@@ -186,9 +187,11 @@ function AppHeader() {
 
               <div ref={addressMenuRef} className="relative">
                 <button
+                  type="button"
                   onClick={() => setAddressMenuOpen((v) => !v)}
                   aria-expanded={addressMenuOpen}
                   aria-haspopup="menu"
+                  title={address}
                   className="hidden sm:flex items-center gap-2 border border-[rgba(124,124,255,0.32)] bg-white/[0.045] px-3 py-2 shadow-[3px_3px_0_0_var(--pixel-shadow)] transition-all duration-150 hover:-translate-x-0.5 hover:-translate-y-0.5 hover:bg-white/[0.07]"
                 >
                   <span className={`w-2 h-2 ${wrongNetwork ? "bg-amber-400" : "bg-emerald-400 animate-pulse"}`} />
@@ -211,9 +214,10 @@ function AppHeader() {
                 {addressMenuOpen ? (
                   <div
                     role="menu"
-                    className="absolute right-0 mt-3 w-56 overflow-hidden border border-white/[0.1] bg-[#0b0b13]/96 shadow-[6px_6px_0_0_var(--pixel-shadow),0_24px_60px_rgba(0,0,0,0.45)] backdrop-blur-md animate-slideDown"
+                    className="absolute right-0 z-[90] mt-3 w-56 overflow-hidden border border-white/[0.1] bg-[#0b0b13]/98 shadow-[6px_6px_0_0_var(--pixel-shadow),0_24px_60px_rgba(0,0,0,0.45)] backdrop-blur-md animate-slideDown"
                   >
                     <button
+                      type="button"
                       role="menuitem"
                       onClick={handleCopyAddress}
                       className="w-full flex items-center gap-2 px-3.5 py-2.5 text-sm text-[#94A3B8] hover:text-white hover:bg-white/5 transition-colors text-left"
@@ -242,6 +246,7 @@ function AppHeader() {
                     </a>
                     {wrongNetwork && (
                       <button
+                        type="button"
                         role="menuitem"
                         onClick={() => {
                           setAddressMenuOpen(false);
@@ -258,6 +263,7 @@ function AppHeader() {
                     )}
                     <div className="h-px bg-white/[0.08]" />
                     <button
+                      type="button"
                       role="menuitem"
                       onClick={() => {
                         setAddressMenuOpen(false);
@@ -275,9 +281,11 @@ function AppHeader() {
                 ) : null}
 
                 <button
+                  type="button"
                   onClick={() => setAddressMenuOpen((v) => !v)}
                   aria-expanded={addressMenuOpen}
                   aria-haspopup="menu"
+                  title={address}
                   className="sm:hidden flex min-w-0 items-center gap-1.5 border border-[rgba(124,124,255,0.3)] bg-white/[0.045] px-2 py-1.5 shadow-[2px_2px_0_0_var(--pixel-shadow)]"
                 >
                   <span className={`w-2 h-2 ${wrongNetwork ? "bg-amber-400" : "bg-emerald-400"}`} />
@@ -289,6 +297,7 @@ function AppHeader() {
             </div>
           ) : mounted ? (
             <button
+              type="button"
               onClick={handleConnect}
               disabled={isPending}
               className="pixel-connect-wallet pixel-btn pixel-btn-indigo pixel-btn-sm relative overflow-hidden whitespace-nowrap"
@@ -323,6 +332,7 @@ function AppHeader() {
           )}
 
           <button
+            type="button"
             onClick={() => setMobileMenuOpen((v) => !v)}
             className="md:hidden flex h-10 w-10 flex-col items-center justify-center gap-1.5 border border-white/[0.08] bg-white/[0.035] shadow-[3px_3px_0_0_var(--pixel-shadow)] transition-colors hover:bg-white/[0.06]"
             aria-label="Toggle menu"
@@ -391,6 +401,7 @@ function AppHeader() {
           </>
           {mounted && isConnected ? (
             <button
+              type="button"
               onClick={() => disconnect()}
               className="pixel-nav-mobile pixel-nav-danger"
             >
