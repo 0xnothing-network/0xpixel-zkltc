@@ -4,7 +4,8 @@ import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useAccount, useReadContract } from "wagmi";
 import { useDexWrite, NATIVE_TOKEN, Token, useTokenBalance, useDexRead, useAllPools } from "@/lib/use0xDex";
-import { DEX_ADDRESS } from "@/lib/0xDexAbi";
+import { DEX_ADDRESS, NATIVE_ADDRESS } from "@/lib/0xDexAbi";
+import { NUSD_ADDRESS } from "@/lib/NUSDContract";
 import { formatUnits, parseUnits } from "viem";
 import { useToast } from "@/components/Toast";
 import { useChainId } from "wagmi";
@@ -19,7 +20,7 @@ const DEX_NAV = [
 const KNOWN_TOKENS: Token[] = [
   NATIVE_TOKEN,
   {
-    address: "0x6ffB02fa705A0DB3c8EbB31A63EdFE62c103363D",
+    address: NUSD_ADDRESS,
     symbol: "NUSD",
     decimals: 18,
     name: "NUSD Stablecoin",
@@ -66,7 +67,7 @@ export default function PoolsPage() {
     if (!allPools || !nusdAddress) return [];
     return allPools.map(({ pairId, token0, token1 }) => {
       const displayToken = token0 === nusdAddress ? token1 : token0;
-      const label = `${displayToken === "0x0000000000000000000000000000000000000000" ? "zkLTC" : "NUSD"} / NUSD`;
+      const label = `${displayToken === NATIVE_ADDRESS ? "zkLTC" : "NUSD"} / NUSD`;
       return {
         token0,
         token1,
@@ -152,14 +153,6 @@ export default function PoolsPage() {
     
     const amountAFormatted = parseUnits(amountA, tokenA.decimals);
     const amountBFormatted = parseUnits(amountB, tokenB.decimals);
-    
-    console.log("Add LP Debug:", {
-      tokenA: tokenA.address,
-      tokenB: tokenB.address,
-      amountA: amountAFormatted.toString(),
-      amountB: amountBFormatted.toString(),
-      pairId: pairId,
-    });
     
     try {
       addLiquidity(tokenA.address, tokenB.address, amountAFormatted, amountBFormatted);
@@ -302,7 +295,7 @@ export default function PoolsPage() {
                     setSelectedPoolIndex(idx);
                     const pool = poolOptions[idx];
                     if (pool) {
-                      setTokenA(pool.token0 === "0x0000000000000000000000000000000000000000" 
+                      setTokenA(pool.token0 === NATIVE_ADDRESS 
                         ? NATIVE_TOKEN 
                         : KNOWN_TOKENS.find(t => t.address === pool.token0) || null);
                       setTokenB(KNOWN_TOKENS.find(t => t.address === pool.token1) || null);
@@ -362,10 +355,10 @@ export default function PoolsPage() {
                     value={amountA}
                     onChange={(e) => setAmountA(e.target.value)}
                     placeholder="0.0"
-                    className="flex-1 bg-[#13131F] p-4 rounded-lg text-xl font-bold text-white outline-none border border-[#2D2D44] focus:border-indigo-500 transition-colors"
+                    className="min-w-0 flex-1 bg-[#13131F] p-4 rounded-lg text-xl font-bold text-white outline-none border border-[#2D2D44] focus:border-indigo-500 transition-colors"
                     style={{ fontFamily: "var(--font-departure)" }}
                   />
-                  <div className="bg-[#13131F] p-4 rounded-lg text-white border border-[#2D2D44] min-w-[100px] text-center">
+                  <div className="min-w-0 w-20 shrink-0 bg-[#13131F] p-4 rounded-lg text-white border border-[#2D2D44] text-center truncate sm:w-24">
                     {tokenA?.symbol || "—"}
                   </div>
                 </div>
@@ -400,10 +393,10 @@ export default function PoolsPage() {
                     value={amountB}
                     onChange={(e) => setAmountB(e.target.value)}
                     placeholder="0.0"
-                    className="flex-1 bg-[#13131F] p-4 rounded-lg text-xl font-bold text-white outline-none border border-[#2D2D44] focus:border-indigo-500 transition-colors"
+                    className="min-w-0 flex-1 bg-[#13131F] p-4 rounded-lg text-xl font-bold text-white outline-none border border-[#2D2D44] focus:border-indigo-500 transition-colors"
                     style={{ fontFamily: "var(--font-departure)" }}
                   />
-                  <div className="bg-[#13131F] p-4 rounded-lg text-white border border-[#2D2D44] min-w-[100px] text-center">
+                  <div className="min-w-0 w-20 shrink-0 bg-[#13131F] p-4 rounded-lg text-white border border-[#2D2D44] text-center truncate sm:w-24">
                     {tokenB?.symbol || "—"}
                   </div>
                 </div>
@@ -551,7 +544,7 @@ function PoolTopCard({ index, token0, token1 }: { index: number; token0: `0x${st
   
   const { data: poolData } = useDexRead<readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint]>("pools", pairId ? [pairId] : undefined);
   
-  const token0Symbol = token0 === "0x0000000000000000000000000000000000000000" ? "zkLTC" : "TKN";
+  const token0Symbol = token0 === NATIVE_ADDRESS ? "zkLTC" : "TKN";
   const token1Symbol = "NUSD";
   
   return (

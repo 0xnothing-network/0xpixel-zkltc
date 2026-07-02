@@ -100,13 +100,15 @@ function MarketplaceBody({ userAddress }: BodyProps) {
   const [data, setData] = useState<ListingsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
+  const [activityRefreshKey, setActivityRefreshKey] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
+  const forceRefreshRef = useRef(false);
 
   // Cache for API responses (persists across renders)
   const cacheRef = useRef<{ data: ListingsResponse | null; timestamp: number }>({ data: null, timestamp: 0 });
   const CACHE_DURATION = 15_000; // 15 seconds
 
-  const fetchListings = useCallback(async () => {
+  const fetchListings = useCallback(async (force = false) => {
     abortRef.current?.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -115,18 +117,22 @@ function MarketplaceBody({ userAddress }: BodyProps) {
     try {
       // Check cache first
       const now = Date.now();
-      if (cacheRef.current.data && now - cacheRef.current.timestamp < CACHE_DURATION) {
+      if (!force && cacheRef.current.data && now - cacheRef.current.timestamp < CACHE_DURATION) {
         setData(cacheRef.current.data);
         setLoading(false);
         return;
       }
 
-      const r = await fetch("/api/marketplace/listings", {
+      const url = force
+        ? `/api/marketplace/listings?force=1&t=${Date.now()}`
+        : "/api/marketplace/listings";
+      const r = await fetch(url, {
         signal: ctrl.signal,
+        cache: force ? "no-store" : "default",
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const body = (await r.json()) as ListingsResponse;
-      cacheRef.current = { data: body, timestamp: now };
+      cacheRef.current = { data: body, timestamp: Date.now() };
       setData(body);
     } catch (err) {
       if ((err as { name?: string }).name === "AbortError") return;
@@ -138,7 +144,9 @@ function MarketplaceBody({ userAddress }: BodyProps) {
   }, []);
 
   useEffect(() => {
-    void fetchListings();
+    const force = forceRefreshRef.current;
+    forceRefreshRef.current = false;
+    void fetchListings(force);
     return () => abortRef.current?.abort();
   }, [fetchListings, reloadKey]);
 
@@ -176,8 +184,11 @@ function MarketplaceBody({ userAddress }: BodyProps) {
   const pageItems = sorted.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   const handleRefresh = useCallback(() => {
+    cacheRef.current = { data: null, timestamp: 0 };
+    forceRefreshRef.current = true;
     setPage(1);
     setReloadKey((k) => k + 1);
+    setActivityRefreshKey((k) => k + 1);
   }, []);
 
   const handleActionComplete = useCallback(() => {
@@ -210,10 +221,20 @@ function MarketplaceBody({ userAddress }: BodyProps) {
           </select>
           <button
             onClick={handleRefresh}
-            className="px-3 py-2.5 sm:py-2 bg-[#8888ff]/10 border border-[#8888ff]/20 transition-colors"
+            aria-busy={loading || undefined}
+            className="pixel-btn-soft pixel-btn-soft-indigo px-3 py-2.5 sm:py-2 transition-colors"
             aria-label="Refresh"
+            title="Refresh"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg
+              className={loading ? "animate-spin" : ""}
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
               <path d="M21 12a9 9 0 0 0-9-9M3 12a9 9 0 0 0 9 9" />
               <path d="M21 3v6h-6M3 21v-6h6" />
             </svg>
@@ -255,7 +276,7 @@ function MarketplaceBody({ userAddress }: BodyProps) {
         </>
       )}
 
-      <MarketplaceActivity />
+      <MarketplaceActivity refreshKey={activityRefreshKey} />
     </div>
   );
 }
@@ -305,7 +326,7 @@ function EmptyState() {
   );
 }
 
-function MarketplaceActivity() {
+function MarketplaceActivity({ refreshKey = 0 }: { refreshKey?: number }) {
   const [filter, setFilter] = useState<ActivityFilter>("all");
   const [events, setEvents] = useState<MarketActivityEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -314,7 +335,7 @@ function MarketplaceActivity() {
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  const fetchActivity = useCallback(async (skip = 0) => {
+  const fetchActivity = useCallback(async (skip = 0, force = false) => {
     if (skip === 0) {
       abortRef.current?.abort();
     }
@@ -336,9 +357,11 @@ function MarketplaceActivity() {
       });
       const type = activityFilterToType(filter);
       if (type) params.set("type", type);
+      if (force) params.set("force", "1");
 
       const r = await fetch(`/api/marketplace/activity?${params.toString()}`, {
         signal: ctrl.signal,
+        cache: force ? "no-store" : "default",
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const body = (await r.json()) as ActivityResponse;
@@ -361,9 +384,9 @@ function MarketplaceActivity() {
   useEffect(() => {
     setEvents([]);
     setHasMore(false);
-    void fetchActivity(0);
+    void fetchActivity(0, refreshKey > 0);
     return () => abortRef.current?.abort();
-  }, [fetchActivity]);
+  }, [fetchActivity, refreshKey]);
 
   const handleLoadMore = useCallback(() => {
     if (loading || loadingMore) return;
@@ -416,7 +439,7 @@ function MarketplaceActivity() {
             {error}
           </p>
           <button
-            onClick={() => void fetchActivity(0)}
+            onClick={() => void fetchActivity(0, true)}
             className="mt-3 rounded-lg bg-[#8888ff] px-4 py-2.5 text-xs font-bold text-white transition-colors hover:bg-[#AAAADD]"
             style={{ fontFamily: "var(--font-departure)" }}
           >

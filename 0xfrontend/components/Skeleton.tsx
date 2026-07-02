@@ -1,15 +1,19 @@
 export function NFTCardSkeleton() {
   return (
-    <div className="bg-[#1A1A2E] rounded-xl overflow-hidden border border-[#2D2D44]">
-      <div className="aspect-square bg-[#0F0F23] p-4 flex items-center justify-center">
-        <div className="w-16 h-16 bg-[#2D2D44] rounded-lg animate-pulse" />
+    <div className="pixel-panel overflow-hidden">
+      <div className="flex aspect-square items-center justify-center border-b border-white/[0.08] bg-[#07070d] p-4">
+        <div className="grid h-20 w-20 grid-cols-4 gap-1" aria-hidden="true">
+          {Array.from({ length: 16 }).map((_, index) => (
+            <span key={index} className="skeleton-pixel" style={{ animationDelay: `${index * 35}ms` }} />
+          ))}
+        </div>
       </div>
       <div className="p-4 space-y-3">
-        <div className="h-5 bg-[#2D2D44] rounded animate-pulse w-3/4" />
-        <div className="h-4 bg-[#2D2D44] rounded animate-pulse w-1/2" />
-        <div className="h-3 bg-[#2D2D44] rounded animate-pulse w-full" />
-        <div className="pt-2 border-t border-[#2D2D44] space-y-2">
-          <div className="h-9 bg-[#2D2D44] rounded-lg animate-pulse" />
+        <div className="h-4 w-3/4 skeleton-pixel" />
+        <div className="h-3 w-1/2 skeleton-pixel" />
+        <div className="h-3 w-full skeleton-pixel" />
+        <div className="space-y-2 border-t border-white/[0.08] pt-2">
+          <div className="h-9 skeleton-pixel" />
         </div>
       </div>
     </div>

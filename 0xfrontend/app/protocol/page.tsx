@@ -1,11 +1,28 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import "../globals.css";
+
+const CONTRACTS = {
+  pixel: process.env.NEXT_PUBLIC_PIXEL_NFT_ADDRESS || "0x33A32b9b2BEe864f9e42BFa39cA7BDC72f655988",
+  marketplace: process.env.NEXT_PUBLIC_PIXEL_MARKETPLACE_ADDRESS || "0x13337cadA78d53C90E3c0EcE44C17c467C1a86F4",
+  dex: process.env.NEXT_PUBLIC_DEX_ADDRESS || "0x873cb0402F0e74Db66663255e6B3535ca134C818",
+  reward: process.env.NEXT_PUBLIC_REWARD_MANAGER_ADDRESS || "0xCEBbeE6CeAe309E647Be85600dA455C7B15C0de9",
+  nusd: process.env.NEXT_PUBLIC_NUSD_ADDRESS || "0xF2d0fd65d9f62D57255AF6350f807E6c11A4CFdb",
+  factory: process.env.NEXT_PUBLIC_FACTORY_ADDRESS || "0x93F9d4cF10cB785B47BFaD64ecccEA4D66C73508",
+};
 
 export const metadata: Metadata = {
   title: "Protocol — 0xNothing",
   description: "Technical documentation for 0xPixel NFT platform and 0xDex decentralized exchange on LitVM LiteForge.",
 };
+
+function AddressRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+      <span className="text-white/40 text-xs w-24 shrink-0">{label}:</span>
+      <code className="text-indigo-400 text-xs font-mono break-all">{value}</code>
+    </div>
+  );
+}
 
 export default function DocsPage() {
   return (
@@ -65,10 +82,10 @@ export default function DocsPage() {
             </p>
 
             <div className="bg-white/[0.03] border border-white/[0.08] rounded-none p-6 mb-6">
-              <h3 className="text-white/80 text-xs tracking-widest uppercase mb-4">Contract Address</h3>
-              <div className="flex items-center gap-3">
-                <span className="text-white/40 text-xs">0xPixel:</span>
-                <code className="text-indigo-400 text-xs font-mono">0x7bE3B9035AAAcB57b6634eCBa65402e37E30Bf66</code>
+              <h3 className="text-white/80 text-xs tracking-widest uppercase mb-4">Contract Addresses</h3>
+              <div className="space-y-3">
+                <AddressRow label="0xPixel" value={CONTRACTS.pixel} />
+                <AddressRow label="Marketplace" value={CONTRACTS.marketplace} />
               </div>
             </div>
 
@@ -135,14 +152,9 @@ export default function DocsPage() {
             <div className="bg-white/[0.03] border border-white/[0.08] rounded-none p-6 mb-6">
               <h3 className="text-white/80 text-xs tracking-widest uppercase mb-4">Contract Addresses</h3>
               <div className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <span className="text-white/40 text-xs w-12">DEX:</span>
-                  <code className="text-indigo-400 text-xs font-mono">0xd808DBF8b8d1Cd9ea9C5449336C764cCbC67D4B7</code>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-white/40 text-xs w-12">NUSD:</span>
-                  <code className="text-indigo-400 text-xs font-mono">0x6ffB02fa705A0DB3c8EbB31A63EdFE62c103363D</code>
-                </div>
+                <AddressRow label="DEX" value={CONTRACTS.dex} />
+                <AddressRow label="Reward" value={CONTRACTS.reward} />
+                <AddressRow label="NUSD" value={CONTRACTS.nusd} />
               </div>
             </div>
 
@@ -167,18 +179,23 @@ export default function DocsPage() {
                 },
                 {
                   name: "claimReward",
-                  desc: "Claim accumulated rewards from providing liquidity (based on NUSD volume).",
-                  signature: "claimReward()",
+                  desc: "Claim accumulated rewards from RewardManager after providing liquidity to NUSD base pools.",
+                  signature: "RewardManager.claimReward()",
                 },
                 {
-                  name: "getPoolInfo",
-                  desc: "Get pool info: reserves, totalLP, 24h volume, total volume.",
-                  signature: "getPoolInfo(pairId) → (token0, token1, reserve0, reserve1, totalLP, vol24h, totalVol)",
+                  name: "getPoolPriceInfo",
+                  desc: "Get pool price, reserves, and total LP for chart/UI.",
+                  signature: "getPoolPriceInfo(pairId) → (price, reserve0, reserve1, totalLP)",
                 },
                 {
                   name: "getUserPendingReward",
                   desc: "View pending claimable rewards for a user.",
-                  signature: "getUserPendingReward(user) → uint256",
+                  signature: "RewardManager.getUserPendingReward(user) → uint256",
+                },
+                {
+                  name: "rewardManager",
+                  desc: "Read the RewardManager linked to the DEX.",
+                  signature: "rewardManager() → address",
                 },
               ].map((fn) => (
                 <div key={fn.name} className="bg-white/[0.03] border border-white/[0.08] p-5">
@@ -199,10 +216,7 @@ export default function DocsPage() {
               <p className="text-white/50 text-sm mb-3">
                 USDC-benchmarked stablecoin used as base currency for swaps and reward calculations.
               </p>
-              <div className="flex items-center gap-2">
-                <span className="text-white/40 text-xs">CA:</span>
-                <code className="text-indigo-400 text-xs font-mono">0x6ffB02fa705A0DB3c8EbB31A63EdFE62c103363D</code>
-              </div>
+              <AddressRow label="CA" value={CONTRACTS.nusd} />
             </div>
           </section>
 
@@ -233,10 +247,7 @@ export default function DocsPage() {
 
             <div className="bg-white/[0.03] border border-white/[0.08] rounded-none p-6 mb-6">
               <h3 className="text-white/80 text-xs tracking-widest uppercase mb-4">Contract Address</h3>
-              <div className="flex items-center gap-3">
-                <span className="text-white/40 text-xs">Factory:</span>
-                <code className="text-indigo-400 text-xs font-mono">0x0704A6F0ddE78Dd3879f8Cc2ed1d47713f3291b8</code>
-              </div>
+              <AddressRow label="Factory" value={CONTRACTS.factory} />
             </div>
 
             <div className="space-y-4">

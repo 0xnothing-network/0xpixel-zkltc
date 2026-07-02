@@ -27,10 +27,11 @@ export async function GET(request: Request) {
   const limit = clampNumber(searchParams.get("limit"), 1, 100, 30);
   const skip = clampNumber(searchParams.get("skip"), 0, 10_000, 0);
   const eventTypes = parseEventTypes(searchParams.get("type"));
+  const force = searchParams.get("force") === "1";
   const cacheKey = `${limit}:${skip}:${eventTypes.join(",") || "all"}`;
   const cached = activityCache.get(cacheKey);
 
-  if (cached && Date.now() - cached.ts < ACTIVITY_TTL) {
+  if (!force && cached && Date.now() - cached.ts < ACTIVITY_TTL) {
     return NextResponse.json(cached.value);
   }
 

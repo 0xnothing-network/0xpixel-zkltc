@@ -44,19 +44,14 @@ export function PixelButton({
     .join(" ");
 
   return (
-    <button {...props} className={classes} disabled={disabled || loading}>
+    <button {...props} className={classes} disabled={disabled || loading} aria-busy={loading || undefined}>
       {loading ? (
-        <span
-          style={{
-            display: "inline-block",
-            width: 10,
-            height: 10,
-            border: "2px solid rgba(255,255,255,0.4)",
-            borderTopColor: "#fff",
-            borderRadius: "50%",
-            animation: "pixel-spin 0.6s linear infinite",
-          }}
-        />
+        <span className="inline-grid grid-cols-2 gap-[2px]" aria-hidden="true">
+          <span className="h-1.5 w-1.5 bg-white/45 animate-pulse" />
+          <span className="h-1.5 w-1.5 bg-white/80 animate-pulse [animation-delay:120ms]" />
+          <span className="h-1.5 w-1.5 bg-white/80 animate-pulse [animation-delay:240ms]" />
+          <span className="h-1.5 w-1.5 bg-white/45 animate-pulse [animation-delay:360ms]" />
+        </span>
       ) : (
         children
       )}

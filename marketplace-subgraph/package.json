@@ -5,7 +5,7 @@
   "scripts": {
     "codegen": "graph codegen",
     "build": "graph build",
-    "deploy": "npx goldsky subgraph deploy marketplace/1.0.7 --path .",
+    "deploy": "npx goldsky subgraph deploy marketplace/1.0.1 --path .",
     "create-local": "graph create --node http://127.0.0.1:8020 marketplace-subgraph",
     "remove-local": "graph remove --node http://127.0.0.1:8020 marketplace-subgraph",
     "deploy-local": "graph deploy --node http://127.0.0.1:8020 --ipfs http://127.0.0.1:5001 marketplace-subgraph"

@@ -36,7 +36,7 @@ export interface SwappedEvent {
 }
 
 export interface UseRealtimeSwapsParams {
-  /** 0xDex contract address. Defaults to ZEROXDEX_ADDRESS (0xd808...D4B7) */
+  /** 0xDex contract address. Defaults to ZEROXDEX_ADDRESS (0x873c...C818) */
   contractAddress?: `0x${string}`;
   /** Optional callback when a new swap is detected */
   onSwap?: (event: SwappedEvent) => void;
@@ -56,7 +56,7 @@ export interface UseRealtimeSwapsReturn {
 // ============================================================
 
 // Query keys to invalidate when new swaps occur
-const CANDLE_QUERY_KEYS = ['candles-edge-v11'];
+const CANDLE_QUERY_KEYS = ['candles-edge-v12'];
 
 // ============================================================
 // MAIN HOOK

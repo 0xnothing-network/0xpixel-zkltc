@@ -52,8 +52,8 @@ export interface CandlesResponse {
   latestPrice?: { price: number; timestamp: number; source?: string } | null;
 }
 
-export const CANDLE_QUERY_KEY = 'candles-edge-v11';
-const SUPPORTED_INTERVALS = new Set([60, 240, 1440]);
+export const CANDLE_QUERY_KEY = 'candles-edge-v14';
+const SUPPORTED_INTERVALS = new Set([1, 15, 60, 240, 1440]);
 const SWAP_REFETCH_THROTTLE_MS = 1_500;
 const PRICE_SCALE_MAX_RATIO = 100;
 const BYTES32_RE = /^0x[a-fA-F0-9]{64}$/;
@@ -211,7 +211,7 @@ function readCachedCandles(cacheKey: string): CandleData[] | null {
   if (typeof window === 'undefined') return null;
 
   try {
-    const raw = sessionStorage.getItem(`candles:v11:${cacheKey}`);
+    const raw = sessionStorage.getItem(`candles:v13:${cacheKey}`);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     const candles = sanitizeCandles(parsed);
@@ -488,7 +488,7 @@ export function useCandleData({
     ));
 
     try {
-      sessionStorage.setItem(`candles:v11:${cacheKey}`, JSON.stringify(validCandles));
+      sessionStorage.setItem(`candles:v13:${cacheKey}`, JSON.stringify(validCandles));
     } catch {}
   }, [candlesResponse, cacheKey, intervalMinutes]);
 

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
@@ -131,20 +130,12 @@ function AppHeader() {
   const wrongNetwork = isConnected && chainId && chainId !== LITVM_CHAIN_ID;
 
   return (
-    <header className="sticky top-0 z-50 bg-[#1A1A2E]/92 backdrop-blur-xl border-b border-[#2D2D44]">
+    <header className="pixel-app-header sticky top-0 z-50 border-b border-white/[0.08] bg-[#07070d]/86 backdrop-blur-xl supports-[backdrop-filter]:bg-[#07070d]/72">
       <div className="max-w-7xl mx-auto px-3 py-2.5 sm:px-5 sm:py-3.5 flex items-center justify-between gap-2 sm:gap-4">
         <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-          <Link href="/" className="flex items-center gap-2.5 group">
-            <Image
-              src="/icon.svg"
-              alt="0xPixel Logo"
-              width={36}
-              height={36}
-              priority
-              className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover transition-transform duration-200 group-hover:scale-105"
-            />
+          <Link href="/" className="flex items-center group">
             <span
-              className="text-white font-bold text-base sm:text-lg tracking-tight"
+              className="text-white font-bold text-sm sm:text-base uppercase tracking-[0.12em]"
               style={{ fontFamily: "var(--font-departure)" }}
             >
               0xPixel
@@ -187,7 +178,7 @@ function AppHeader() {
                 <button
                   onClick={() => switchChain?.({ chainId: LITVM_CHAIN_ID })}
                   disabled={isSwitching}
-                  className="hidden sm:block px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-400 text-xs font-bold hover:bg-amber-500/30 transition-colors"
+                  className="pixel-btn-soft pixel-btn-soft-amber pixel-btn-soft-sm hidden sm:block"
                 >
                   {isSwitching ? "Switching..." : "Switch to LitVM"}
                 </button>
@@ -198,9 +189,9 @@ function AppHeader() {
                   onClick={() => setAddressMenuOpen((v) => !v)}
                   aria-expanded={addressMenuOpen}
                   aria-haspopup="menu"
-                  className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/30 hover:bg-indigo-500/15 transition-colors"
+                  className="hidden sm:flex items-center gap-2 border border-[rgba(124,124,255,0.32)] bg-white/[0.045] px-3 py-2 shadow-[3px_3px_0_0_var(--pixel-shadow)] transition-all duration-150 hover:-translate-x-0.5 hover:-translate-y-0.5 hover:bg-white/[0.07]"
                 >
-                  <span className={`w-2 h-2 rounded-full ${wrongNetwork ? "bg-amber-400" : "bg-emerald-400 animate-pulse"}`} />
+                  <span className={`w-2 h-2 ${wrongNetwork ? "bg-amber-400" : "bg-emerald-400 animate-pulse"}`} />
                   <span className="text-white text-xs font-mono">
                     {shortenAddress(address)}
                   </span>
@@ -220,7 +211,7 @@ function AppHeader() {
                 {addressMenuOpen ? (
                   <div
                     role="menu"
-                    className="absolute right-0 mt-2 w-52 rounded-xl border border-[#2D2D44] bg-[#13133A]/95 backdrop-blur-md shadow-2xl shadow-black/40 overflow-hidden animate-slideDown"
+                    className="absolute right-0 mt-3 w-56 overflow-hidden border border-white/[0.1] bg-[#0b0b13]/96 shadow-[6px_6px_0_0_var(--pixel-shadow),0_24px_60px_rgba(0,0,0,0.45)] backdrop-blur-md animate-slideDown"
                   >
                     <button
                       role="menuitem"
@@ -265,7 +256,7 @@ function AppHeader() {
                         Switch to LitVM
                       </button>
                     )}
-                    <div className="h-px bg-[#2D2D44]" />
+                    <div className="h-px bg-white/[0.08]" />
                     <button
                       role="menuitem"
                       onClick={() => {
@@ -287,9 +278,9 @@ function AppHeader() {
                   onClick={() => setAddressMenuOpen((v) => !v)}
                   aria-expanded={addressMenuOpen}
                   aria-haspopup="menu"
-                  className="sm:hidden flex min-w-0 items-center gap-1.5 px-2 py-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/30"
+                  className="sm:hidden flex min-w-0 items-center gap-1.5 border border-[rgba(124,124,255,0.3)] bg-white/[0.045] px-2 py-1.5 shadow-[2px_2px_0_0_var(--pixel-shadow)]"
                 >
-                  <span className={`w-2 h-2 rounded-full ${wrongNetwork ? "bg-amber-400" : "bg-emerald-400"}`} />
+                  <span className={`w-2 h-2 ${wrongNetwork ? "bg-amber-400" : "bg-emerald-400"}`} />
                   <span className="text-white text-[10px] font-mono">
                     {shortenAddress(address)}
                   </span>
@@ -300,7 +291,7 @@ function AppHeader() {
             <button
               onClick={handleConnect}
               disabled={isPending}
-              className="relative px-3 sm:px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] sm:text-xs font-bold transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed active:translate-y-px overflow-hidden group whitespace-nowrap"
+              className="pixel-connect-wallet pixel-btn pixel-btn-indigo pixel-btn-sm relative overflow-hidden whitespace-nowrap"
               style={{ fontFamily: "var(--font-departure)" }}
             >
               <span
@@ -326,12 +317,14 @@ function AppHeader() {
               </span>
             </button>
           ) : (
-            <div className="w-28 h-9 bg-white/5 rounded-lg animate-pulse" />
+            <div className="pixel-connect-wallet flex h-9 w-32 items-center justify-center border text-[9px] font-bold">
+              CONNECT WALLET
+            </div>
           )}
 
           <button
             onClick={() => setMobileMenuOpen((v) => !v)}
-            className="md:hidden w-10 h-10 flex flex-col items-center justify-center gap-1.5 rounded-lg hover:bg-white/5 transition-colors"
+            className="md:hidden flex h-10 w-10 flex-col items-center justify-center gap-1.5 border border-white/[0.08] bg-white/[0.035] shadow-[3px_3px_0_0_var(--pixel-shadow)] transition-colors hover:bg-white/[0.06]"
             aria-label="Toggle menu"
             aria-expanded={mobileMenuOpen}
           >
@@ -357,7 +350,7 @@ function AppHeader() {
       {mobileMenuOpen ? (
         <nav
           key="mobile-menu"
-          className="md:hidden border-t border-[#2D2D44] px-4 py-3 space-y-1 animate-slideDown"
+          className="md:hidden space-y-1 border-t border-white/[0.08] bg-[#07070d]/96 px-4 py-3 animate-slideDown"
         >
           <div className="px-3.5 py-2 text-xs text-[#64748B] uppercase tracking-wider" style={{ fontFamily: "var(--font-departure)" }}>
             0xPixel

@@ -17,7 +17,7 @@ contract NUSD is ERC20, Ownable {
         _burn(msg.sender, amount);
     }
 
-    // Owner hoặc người được approve có thể burn token của người khác
+    
     function burnFrom(address from, uint256 amount) external {
         _spendAllowance(from, msg.sender, amount);
         _burn(from, amount);

@@ -2,19 +2,18 @@
 
 export function PageLoader() {
   return (
-    <div className="min-h-screen bg-[#0F0F23] flex flex-col items-center justify-center gap-4">
-      <div className="grid grid-cols-2 gap-1 w-12 h-12">
-        <div className="bg-indigo-500 animate-pulse" style={{ animationDelay: "0ms" }} />
-        <div className="bg-indigo-500 animate-pulse" style={{ animationDelay: "200ms" }} />
-        <div className="bg-indigo-500 animate-pulse" style={{ animationDelay: "400ms" }} />
-        <div className="bg-indigo-500 animate-pulse" style={{ animationDelay: "600ms" }} />
+    <div className="pixel-shell flex min-h-[100dvh] flex-col items-center justify-center overflow-hidden" role="status" aria-label="Loading">
+      <div className="pixel-grid-bg" />
+      <div className="pixel-noise" />
+      <div className="pixel-loader-card">
+        <div className="pixel-loader-logo" aria-hidden="true">N</div>
+        <div className="pixel-loader-track" aria-hidden="true">
+          {Array.from({ length: 12 }).map((_, index) => (
+            <span key={index} style={{ animationDelay: `${index * 55}ms` }} />
+          ))}
+        </div>
+        <span className="pixel-loader-label">LOADING</span>
       </div>
-      <span
-        className="text-[#94A3B8] animate-pulse"
-        style={{ fontFamily: "var(--font-departure), monospace", fontSize: "10px", fontWeight: 700, letterSpacing: "0.3em" }}
-      >
-        LOADING
-      </span>
     </div>
   );
 }

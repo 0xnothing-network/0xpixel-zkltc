@@ -219,4 +219,4 @@ export const NUSD_ABI = [
 
 export const NUSD_ADDRESS =
   (process.env.NEXT_PUBLIC_NUSD_ADDRESS as `0x${string}`) ||
-  "0x6ffB02fa705A0DB3c8EbB31A63EdFE62c103363D";
+  "0xF2d0fd65d9f62D57255AF6350f807E6c11A4CFdb";

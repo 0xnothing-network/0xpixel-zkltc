@@ -1,140 +1,92 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
-import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "0xNothing — Nothing to Every",
-  description: "Where pixels become possibilities. Create, collect, and trade unique pixel art NFTs on the LitVM LiteForge network.",
-  icons: {
-    icon: { url: "/favicon.svg", type: "image/svg+xml" },
-    other: [
-      { url: "/favicon.svg", rel: "alternate icon", type: "image/svg+xml" },
-    ],
+  title: "0xNothing | Nothing to everything",
+  description: "Draw on-chain pixel art, trade on 0xDex, create tokens, and explore the 0xNothing protocol on LitVm Testnet.",
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    title: "0xNothing | Nothing to everything",
+    description: "Pixel-native apps for art, trading, token creation, and protocol tools on LitVm Testnet.",
+    url: "/",
+    siteName: "0xNothing",
+    images: [{ url: "/0xNothing.jpg", width: 1200, height: 630, alt: "0xNothing" }],
+    type: "website",
   },
 };
 
+const links = [
+  { href: "/0xpixel", label: "0xPixel", tone: "light" },
+  { href: "/0xdex", label: "0xDex", tone: "dark" },
+  { href: "/0xfactory", label: "0xFactory", tone: "light" },
+  { href: "/protocol", label: "Protocol", tone: "dark" },
+] as const;
+
 export default function Home() {
   return (
-    <div className="min-h-screen flex flex-col" style={{ fontFamily: "var(--font-departure)" }}>
-      <div className="fixed inset-0 bg-[#080808] -z-10" />
+    <div className="nothing-home min-h-[100dvh] overflow-hidden">
+      <div className="nothing-home-grid" />
+      <div className="nothing-home-vignette" />
 
-      <header className="relative z-10 px-6 py-5 border-b border-white/[0.04]">
-        <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/0xNothing.jpg"
-              alt="0xNothing"
-              className="w-8 h-8 object-cover"
-            />
-            <span className="text-white/80 text-xs tracking-widest uppercase">
-              0xNothing
+      <header className="nothing-header relative z-10 border-b border-white/[0.04] px-5 py-5 sm:px-6">
+        <div className="mx-auto flex max-w-5xl items-center justify-between">
+          <Link href="/" className="group flex items-center gap-3" aria-label="0xNothing home">
+            <span className="nothing-mark grid h-8 w-8 place-items-center border border-white/[0.08] bg-black">
+              <Image
+                src="/0xNothing.jpg"
+                alt="0xNothing"
+                width={32}
+                height={32}
+                priority
+                className="h-7 w-7 object-cover opacity-90 transition-opacity duration-200 group-hover:opacity-100"
+              />
             </span>
-          </div>
+            <span className="nothing-brand text-[11px] uppercase tracking-[0.32em] text-white/72">0xNothing</span>
+          </Link>
 
           <a
             href="https://x.com/0xnothing_net"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-white/25 hover:text-white/60 transition-colors duration-200"
+            className="nothing-x"
             aria-label="X / Twitter"
           >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+            <svg className="nothing-x-logo" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817-5.966 6.817H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231 5.45-6.231Zm-1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77Z" />
             </svg>
           </a>
         </div>
       </header>
 
-      <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 py-24">
-        <div className="max-w-4xl mx-auto text-center">
-
-          <h1
-            className="text-white antialiased"
-            style={{
-              fontFamily: "var(--font-departure), monospace",
-              fontSize: "clamp(3.5rem, 13vw, 11rem)",
-              fontWeight: 700,
-              letterSpacing: "0.02em",
-              lineHeight: 1.05,
-            }}
-          >
-            NOTHING
+      <main className="nothing-main relative z-10 flex min-h-[calc(100dvh-147px)] items-center px-5 py-20 sm:px-6">
+        <section className="nothing-stage mx-auto w-full max-w-5xl text-center">
+          <div className="nothing-crosshair" aria-hidden="true" />
+          <h1 className="nothing-title">
+            <span>Nothing</span>
+            <span>to everything</span>
           </h1>
 
-          <h1
-            className="text-white antialiased mb-4"
-            style={{
-              fontFamily: "var(--font-departure), monospace",
-              fontSize: "clamp(2rem, 6vw, 4.5rem)",
-              fontWeight: 700,
-              letterSpacing: "0.02em",
-              lineHeight: 1.1,
-            }}
-          >
-            to everything
-          </h1>
-
-          <div className="mt-20 flex flex-col sm:flex-row gap-3 justify-center items-center">
-            <Link
-              href="/0xpixel"
-              className="inline-flex items-center gap-2 px-5 py-2.5 text-[11px] tracking-widest uppercase bg-white text-black hover:bg-white/90 transition-colors duration-150 rounded-none"
-              style={{ fontFamily: "var(--font-departure), monospace" }}
-            >
-              <span>0xPixel</span>
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" />
-              </svg>
-            </Link>
-            <Link
-              href="/0xdex"
-              className="inline-flex items-center gap-2 px-5 py-2.5 text-[11px] tracking-widest uppercase bg-indigo-600 text-white hover:bg-indigo-500 transition-colors duration-150 rounded-none"
-              style={{ fontFamily: "var(--font-departure), monospace" }}
-            >
-              <span>0xDex</span>
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" />
-              </svg>
-            </Link>
-            <Link
-              href="/0xfactory"
-              className="inline-flex items-center gap-2 px-5 py-2.5 text-[11px] tracking-widest uppercase bg-amber-600 text-white hover:bg-amber-500 transition-colors duration-150 rounded-none"
-              style={{ fontFamily: "var(--font-departure), monospace" }}
-            >
-              <span>0xFactory</span>
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" />
-              </svg>
-            </Link>
-            <Link
-              href="/protocol"
-              className="inline-flex items-center gap-2 px-5 py-2.5 text-[11px] tracking-widest uppercase bg-white/10 text-white hover:bg-white/20 transition-colors duration-150 rounded-none border border-white/20"
-              style={{ fontFamily: "var(--font-departure), monospace" }}
-            >
-              <span>Protocol</span>
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
-              </svg>
-            </Link>
-          </div>
-
-        </div>
+          <nav className="nothing-nav mt-16 flex flex-col items-center justify-center gap-3 sm:flex-row" aria-label="0xNothing apps">
+            {links.map((link) => (
+              <Link
+                key={link.href}
+                href={link.href}
+                className={`nothing-link nothing-link-${link.tone}`}
+              >
+                <span>{link.label}</span>
+                <span aria-hidden="true">&gt;</span>
+              </Link>
+            ))}
+          </nav>
+        </section>
       </main>
 
-      <footer className="relative z-10 px-6 py-8 border-t border-white/[0.04]">
-        <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <span
-            className="text-white/[0.06] uppercase"
-            style={{ fontFamily: "var(--font-departure), monospace", fontSize: "9px", letterSpacing: "0.4em" }}
-          >
-            LitVM LiteForge
-          </span>
-          <span
-            className="text-white/[0.06] uppercase"
-            style={{ fontFamily: "var(--font-departure), monospace", fontSize: "9px", letterSpacing: "0.4em" }}
-          >
-            2026
-          </span>
+      <footer className="nothing-footer relative z-10 border-t border-white/[0.04] px-5 py-6 sm:px-6">
+        <div className="mx-auto flex max-w-5xl items-center justify-start text-[9px] uppercase tracking-[0.38em] text-white/[0.08]">
+          <span>LitVm Testnet</span>
         </div>
       </footer>
     </div>

@@ -3,23 +3,23 @@ import { encodePacked, keccak256 } from 'viem';
 
 export const runtime = 'edge';
 
-const SUBGRAPH_URL =
-  process.env.NEXT_PUBLIC_SUBGRAPH_URL ||
-  'https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.4/gn';
+const SUBGRAPH_URL_RAW = process.env.NEXT_PUBLIC_SUBGRAPH_URL || '';
+const SUBGRAPH_URL = SUBGRAPH_URL_RAW === 'disabled' ? '' : SUBGRAPH_URL_RAW;
 
 const SWAP_PAGE_SIZE = 1000;
-const MAX_SWAPS_PER_DIRECTION = 5_000;
-const MAX_MERGED_SWAPS = MAX_SWAPS_PER_DIRECTION * 2;
+const RECENT_SWAPS_PER_DIRECTION = 30_000;
+const FULL_HISTORY_SWAPS_PER_DIRECTION = 30_000;
 const RESPONSE_CACHE_TTL_MS = 3_000;
 const GENESIS_CACHE_TTL_MS = 5 * 60_000;
-const SWAP_CACHE_TTL_MS = 60_000;
+const SWAP_CACHE_TTL_MS = 2_500;
 const LATEST_SWAP_CACHE_TTL_MS = 2_500;
 const INDEXED_SCHEMA_RETRY_MS = 60_000;
-const SUPPORTED_INTERVALS = new Set([60, 240, 1440]);
+const SUPPORTED_INTERVALS = new Set([1, 15, 60, 240, 1440]);
 
 interface SwapEvent {
   id: string;
   timestamp: string | { seconds?: string | number; nanos?: number };
+  timestamp_?: string | { seconds?: string | number; nanos?: number };
   amountIn: string;
   amountOut: string;
   fee: string;
@@ -67,6 +67,7 @@ interface LiquidityAddedEvent {
   amount0: string;
   amount1: string;
   timestamp: string | { seconds?: string | number; nanos?: number };
+  timestamp_?: string | { seconds?: string | number; nanos?: number };
 }
 
 interface CandleBuildContext {
@@ -85,6 +86,8 @@ const swapInFlight = new Map<string, Promise<SwapEvent[]>>();
 const latestSwapCache = new Map<string, { expires: number; value: SwapEvent | null }>();
 const latestSwapInFlight = new Map<string, Promise<SwapEvent | null>>();
 let indexedSchemaUnavailableUntil = 0;
+let useGoldskyRawSwapSchema = false;
+let useGoldskyRawLiquiditySchema = false;
 
 const PAIR_QUERY = `
   query GetCandleSwaps(
@@ -114,6 +117,34 @@ const PAIR_QUERY = `
   }
 `;
 
+const PAIR_QUERY_GOLDSKY_RAW = `
+  query GetCandleSwappeds(
+    $timestampGte: BigInt!
+    $tokenIn: String!
+    $tokenOut: String!
+    $limit: Int!
+  ) {
+    swaps: swappeds(
+      first: $limit
+      orderBy: timestamp_
+      orderDirection: asc
+      where: {
+        timestamp__gte: $timestampGte
+        tokenIn: $tokenIn
+        tokenOut: $tokenOut
+      }
+    ) {
+      id
+      timestamp: timestamp_
+      amountIn
+      amountOut
+      fee
+      tokenIn
+      tokenOut
+    }
+  }
+`;
+
 const GENESIS_QUERY = `
   query GetGenesisLiquidity($pairId: Bytes!) {
     liquidityAddeds(
@@ -127,6 +158,23 @@ const GENESIS_QUERY = `
       amount0
       amount1
       timestamp
+    }
+  }
+`;
+
+const GENESIS_QUERY_GOLDSKY_RAW = `
+  query GetGenesisLiquidityRaw($pairId: String!) {
+    liquidityAddeds(
+      first: 1
+      orderBy: timestamp_
+      orderDirection: asc
+      where: { pairId: $pairId }
+    ) {
+      id
+      pairId
+      amount0
+      amount1
+      timestamp: timestamp_
     }
   }
 `;
@@ -147,6 +195,31 @@ const LATEST_SWAP_QUERY = `
     ) {
       id
       timestamp
+      amountIn
+      amountOut
+      fee
+      tokenIn
+      tokenOut
+    }
+  }
+`;
+
+const LATEST_SWAP_QUERY_GOLDSKY_RAW = `
+  query GetLatestCandleSwapped(
+    $tokenIn: String!
+    $tokenOut: String!
+  ) {
+    swaps: swappeds(
+      first: 1
+      orderBy: timestamp_
+      orderDirection: desc
+      where: {
+        tokenIn: $tokenIn
+        tokenOut: $tokenOut
+      }
+    ) {
+      id
+      timestamp: timestamp_
       amountIn
       amountOut
       fee
@@ -183,10 +256,16 @@ const CANDLES_QUERY = `
   }
 `;
 
-function getDaysBack(intervalMinutes: number): number {
-  if (intervalMinutes <= 60) return 14;
-  if (intervalMinutes <= 240) return 45;
-  return 180;
+function getLookbackSeconds(intervalMinutes: number): number {
+  if (intervalMinutes <= 1) return 24 * 60 * 60;
+  if (intervalMinutes <= 15) return 3 * 24 * 60 * 60;
+  if (intervalMinutes <= 60) return 14 * 24 * 60 * 60;
+  if (intervalMinutes <= 240) return 45 * 24 * 60 * 60;
+  return 180 * 24 * 60 * 60;
+}
+
+function shouldLoadFullHistory(intervalMinutes: number): boolean {
+  return intervalMinutes >= 15;
 }
 
 function pairIdForTokens(a: string, b: string): string | null {
@@ -199,14 +278,14 @@ function pairIdForTokens(a: string, b: string): string | null {
 }
 
 function timestampOf(swap: SwapEvent): number {
-  const rawTs = swap.timestamp;
+  const rawTs = swap.timestamp ?? swap.timestamp_;
   return typeof rawTs === 'object' && rawTs !== null
     ? Number(rawTs.seconds ?? 0)
     : Number(rawTs);
 }
 
 function timestampOfLiquidity(event: LiquidityAddedEvent): number {
-  const rawTs = event.timestamp;
+  const rawTs = event.timestamp ?? event.timestamp_;
   return typeof rawTs === 'object' && rawTs !== null
     ? Number(rawTs.seconds ?? 0)
     : Number(rawTs);
@@ -244,7 +323,7 @@ async function fetchGenesisLiquidity(pairId: string): Promise<LiquidityAddedEven
   const existing = genesisInFlight.get(pairId);
   if (existing) return existing;
 
-  const request = fetchGenesisLiquidityUncached(pairId);
+  const request = fetchGenesisLiquidityUncached(pairId).catch(() => null);
   genesisInFlight.set(pairId, request);
   try {
     const value = await request;
@@ -260,7 +339,7 @@ async function fetchGenesisLiquidityUncached(pairId: string): Promise<LiquidityA
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      query: GENESIS_QUERY,
+      query: useGoldskyRawLiquiditySchema ? GENESIS_QUERY_GOLDSKY_RAW : GENESIS_QUERY,
       variables: { pairId },
     }),
     signal: AbortSignal.timeout(8_000),
@@ -270,6 +349,10 @@ async function fetchGenesisLiquidityUncached(pairId: string): Promise<LiquidityA
 
   const json = await res.json();
   if (json.errors?.length) {
+    if (!useGoldskyRawLiquiditySchema) {
+      useGoldskyRawLiquiditySchema = true;
+      return fetchGenesisLiquidityUncached(pairId);
+    }
     throw new Error(json.errors[0]?.message ?? 'Genesis subgraph query error');
   }
 
@@ -350,17 +433,18 @@ async function fetchSwapDirection(
   timestampGte: number,
   tokenIn: string,
   tokenOut: string,
+  maxSwaps: number,
 ): Promise<SwapEvent[]> {
   const out: SwapEvent[] = [];
   let cursor = timestampGte;
 
-  while (out.length < MAX_SWAPS_PER_DIRECTION) {
-    const limit = Math.min(SWAP_PAGE_SIZE, MAX_SWAPS_PER_DIRECTION - out.length);
+  while (out.length < maxSwaps) {
+    const limit = Math.min(SWAP_PAGE_SIZE, maxSwaps - out.length);
     const res = await fetch(SUBGRAPH_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        query: PAIR_QUERY,
+        query: useGoldskyRawSwapSchema ? PAIR_QUERY_GOLDSKY_RAW : PAIR_QUERY,
         variables: {
           timestampGte: String(cursor),
           tokenIn,
@@ -377,6 +461,10 @@ async function fetchSwapDirection(
 
     const json = await res.json();
     if (json.errors?.length) {
+      if (!useGoldskyRawSwapSchema) {
+        useGoldskyRawSwapSchema = true;
+        continue;
+      }
       throw new Error(json.errors[0]?.message ?? 'Subgraph query error');
     }
 
@@ -397,17 +485,18 @@ async function fetchSwaps(
   timestampGte: number,
   t0: string,
   t1: string,
+  maxSwapsPerDirection = RECENT_SWAPS_PER_DIRECTION,
 ): Promise<SwapEvent[]> {
   const sortedA = BigInt(t0) < BigInt(t1) ? t0 : t1;
   const sortedB = sortedA === t0 ? t1 : t0;
-  const cacheKey = `${sortedA}:${sortedB}:${timestampGte}`;
+  const cacheKey = `${sortedA}:${sortedB}:${timestampGte}:${maxSwapsPerDirection}`;
   const cached = swapCache.get(cacheKey);
   if (cached && cached.expires > Date.now()) return cached.value;
 
   const existing = swapInFlight.get(cacheKey);
   if (existing) return existing;
 
-  const request = fetchSwapsUncached(timestampGte, t0, t1);
+  const request = fetchSwapsUncached(timestampGte, t0, t1, maxSwapsPerDirection);
   swapInFlight.set(cacheKey, request);
   try {
     const value = await request;
@@ -422,10 +511,11 @@ async function fetchSwapsUncached(
   timestampGte: number,
   t0: string,
   t1: string,
+  maxSwapsPerDirection: number,
 ): Promise<SwapEvent[]> {
   const results = await Promise.allSettled([
-    fetchSwapDirection(timestampGte, t0, t1),
-    fetchSwapDirection(timestampGte, t1, t0),
+    fetchSwapDirection(timestampGte, t0, t1, maxSwapsPerDirection),
+    fetchSwapDirection(timestampGte, t1, t0, maxSwapsPerDirection),
   ]);
   const [forward, reverse] = results.map(result => (
     result.status === 'fulfilled' ? result.value : []
@@ -445,7 +535,7 @@ async function fetchSwapsUncached(
     return tsDiff || a.id.localeCompare(b.id);
   });
 
-  return merged.slice(0, MAX_MERGED_SWAPS);
+  return merged.slice(0, maxSwapsPerDirection * 2);
 }
 
 async function fetchLatestSwapDirection(tokenIn: string, tokenOut: string): Promise<SwapEvent | null> {
@@ -453,7 +543,7 @@ async function fetchLatestSwapDirection(tokenIn: string, tokenOut: string): Prom
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      query: LATEST_SWAP_QUERY,
+      query: useGoldskyRawSwapSchema ? LATEST_SWAP_QUERY_GOLDSKY_RAW : LATEST_SWAP_QUERY,
       variables: { tokenIn, tokenOut },
     }),
     signal: AbortSignal.timeout(5_000),
@@ -461,7 +551,13 @@ async function fetchLatestSwapDirection(tokenIn: string, tokenOut: string): Prom
 
   if (!res.ok) return null;
   const json = await res.json();
-  if (json.errors?.length) return null;
+  if (json.errors?.length) {
+    if (!useGoldskyRawSwapSchema) {
+      useGoldskyRawSwapSchema = true;
+      return fetchLatestSwapDirection(tokenIn, tokenOut);
+    }
+    return null;
+  }
   return json.data?.swaps?.[0] ?? null;
 }
 
@@ -583,6 +679,27 @@ function latestPriceFromCandles(candles: CandleData[]): LatestPrice | null {
   return { price: last.close, timestamp: last.time, source: 'candle' };
 }
 
+function appendLatestSwapIfMissing(swaps: SwapEvent[], latestSwap: SwapEvent | null): SwapEvent[] {
+  if (!latestSwap) return swaps;
+  const latestTs = timestampOf(latestSwap);
+  if (!Number.isFinite(latestTs) || latestTs <= 0) return swaps;
+
+  const existingIndex = swaps.findIndex(swap => swap.id === latestSwap.id);
+  if (existingIndex >= 0) {
+    const next = swaps.slice();
+    next[existingIndex] = latestSwap;
+    return next;
+  }
+
+  const lastTs = swaps.length ? timestampOf(swaps[swaps.length - 1]) : 0;
+  if (latestTs < lastTs) return swaps;
+
+  return [...swaps, latestSwap].sort((a, b) => {
+    const tsDiff = timestampOf(a) - timestampOf(b);
+    return tsDiff || a.id.localeCompare(b.id);
+  });
+}
+
 async function refreshCachedLatestPrice(
   body: CandlesResponseBody,
   t0: string,
@@ -617,11 +734,11 @@ function prependGenesisCandle(candles: CandleData[], genesis: CandleData | null)
   ];
 }
 
-function shouldFetchFromGenesis(genesis: LiquidityAddedEvent | null, fallbackTimestampGte: number): number {
-  if (!genesis) return fallbackTimestampGte;
+function fullHistoryStart(genesis: LiquidityAddedEvent | null): number {
+  if (!genesis) return 0;
   const genesisTs = timestampOfLiquidity(genesis);
-  if (!isFinite(genesisTs) || genesisTs <= 0) return fallbackTimestampGte;
-  return Math.min(fallbackTimestampGte, genesisTs);
+  if (!isFinite(genesisTs) || genesisTs <= 0) return 0;
+  return Math.max(0, genesisTs - 1);
 }
 
 async function buildCandlesResponse(
@@ -631,8 +748,7 @@ async function buildCandlesResponse(
   token0Decimals: number,
   token1Decimals: number,
 ): Promise<CandlesResponseBody> {
-  const daysBack = getDaysBack(interval);
-  const timestampGte = Math.floor(Date.now() / 1000) - daysBack * 86400;
+  const recentWindowStart = Math.floor(Date.now() / 1000) - getLookbackSeconds(interval);
   const pairId = pairIdForTokens(t0, t1);
   const ctx: CandleBuildContext = { t0, t1, token0Decimals, token1Decimals };
   const [genesisLiquidity, latestSwap] = await Promise.all([
@@ -641,7 +757,10 @@ async function buildCandlesResponse(
   ]);
   const genesisCandle = buildGenesisCandle(genesisLiquidity, interval, ctx);
   const sortedToken0 = BigInt(t0) < BigInt(t1) ? t0 : t1;
-  const indexedCandles = pairId ? await fetchIndexedCandles(pairId, interval, sortedToken0 !== t0, timestampGte) : null;
+  const historyStart = shouldLoadFullHistory(interval)
+    ? fullHistoryStart(genesisLiquidity)
+    : recentWindowStart;
+  const indexedCandles = pairId ? await fetchIndexedCandles(pairId, interval, sortedToken0 !== t0, historyStart) : null;
 
   if (indexedCandles && indexedCandles.length > 0) {
     const candles = prependGenesisCandle(indexedCandles, genesisCandle);
@@ -651,19 +770,25 @@ async function buildCandlesResponse(
       count: candles.length,
       interval,
       source: 'indexed-candles',
-      timestampGte: genesisCandle?.time ?? candles[0]?.time ?? timestampGte,
-      recentWindowStart: timestampGte,
+      timestampGte: genesisCandle?.time ?? candles[0]?.time ?? historyStart,
+      recentWindowStart,
       genesisTime: genesisCandle?.time ?? null,
       latestPrice,
     };
   }
 
-  const historyStart = interval === 1440
-    ? shouldFetchFromGenesis(genesisLiquidity, timestampGte)
-    : timestampGte;
-  const swaps = await fetchSwaps(historyStart, t0, t1);
+  const rawHistoryStart = shouldLoadFullHistory(interval)
+    ? historyStart
+    : recentWindowStart;
+  const maxSwapsPerDirection = shouldLoadFullHistory(interval)
+    ? FULL_HISTORY_SWAPS_PER_DIRECTION
+    : RECENT_SWAPS_PER_DIRECTION;
+  const swaps = appendLatestSwapIfMissing(
+    await fetchSwaps(rawHistoryStart, t0, t1, maxSwapsPerDirection),
+    latestSwap,
+  );
   const candles = prependGenesisCandle(buildCandlesFromSwaps(swaps, interval, ctx), genesisCandle);
-  const latestPrice = latestPriceFromSwap(latestSwap ?? swaps[swaps.length - 1] ?? null, ctx)
+  const latestPrice = latestPriceFromSwap(swaps[swaps.length - 1] ?? null, ctx)
     ?? latestPriceFromCandles(candles);
 
   return {
@@ -671,14 +796,18 @@ async function buildCandlesResponse(
     count: candles.length,
     interval,
     source: 'raw-swaps-fallback',
-    timestampGte: historyStart,
-    recentWindowStart: timestampGte,
+    timestampGte: rawHistoryStart,
+    recentWindowStart,
     genesisTime: genesisCandle?.time ?? null,
     latestPrice,
   };
 }
 
 export async function GET(request: NextRequest) {
+  if (!SUBGRAPH_URL) {
+    return NextResponse.json({ error: 'DEX subgraph URL is not configured' }, { status: 503 });
+  }
+
   const { searchParams } = request.nextUrl;
   const token0 = searchParams.get('token0') ?? '';
   const token1 = searchParams.get('token1') ?? '';

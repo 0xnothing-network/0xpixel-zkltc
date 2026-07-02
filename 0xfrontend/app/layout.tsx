@@ -26,8 +26,14 @@ const pressStart2P = Press_Start_2P({
 });
 
 export const metadata: Metadata = {
-  title: "0xNothing — Nothing to Every",
-  description: "Where pixels become possibilities. Create, collect, and trade unique pixel art NFTs on the LitVM LiteForge network.",
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? "https://0xnothing.net"),
+  title: "0xNothing | Nothing to everything",
+  description: "Pixel art, token factory, and DEX tools on LitVm Testnet.",
+  openGraph: {
+    title: "0xNothing | Nothing to everything",
+    description: "Pixel art, token factory, and DEX tools on LitVm Testnet.",
+    images: ["/0xNothing.jpg"],
+  },
   icons: {
     icon: { url: "/favicon.svg", type: "image/svg+xml" },
     other: [
@@ -44,7 +50,10 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark" data-scroll-behavior="smooth">
       <body className={`${inter.variable} ${jetbrainsMono.variable} ${pressStart2P.variable} font-sans antialiased`}>
-        <Providers>{children}</Providers>
+        <a href="#main-content" className="skip-link">Skip to content</a>
+        <Providers>
+          <div id="main-content">{children}</div>
+        </Providers>
       </body>
     </html>
   );

@@ -42,6 +42,9 @@ export function Toolbar({
 
   useGSAP(() => {
     if (!containerRef.current || !mounted) return;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const touchDevice = window.matchMedia("(hover: none)").matches;
+    if (reducedMotion || touchDevice) return;
 
     const children = Array.from(containerRef.current.children);
     gsap.fromTo(
@@ -269,6 +272,9 @@ function ColorButton({
 
   useGSAP(() => {
     if (!btnRef.current) return;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const touchDevice = window.matchMedia("(hover: none)").matches;
+    if (reducedMotion || touchDevice) return;
 
     const handleMouseEnter = () => {
       gsap.to(btnRef.current, { scale: 1.15, duration: 0.15, ease: "power2.out" });

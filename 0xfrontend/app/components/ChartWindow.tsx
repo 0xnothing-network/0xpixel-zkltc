@@ -14,15 +14,16 @@ interface ChartWindowProps {
   token0Decimals?: number;
   token1Decimals?: number;
   initialTimeframe?: TfValue;
+  onTimeframeChange?: (timeframe: TfValue) => void;
   onClose: () => void;
 }
 
 const COLORS = {
-  bg: '#0a0a12',
-  border: '#2a2a4a',
-  titleBg: '#0d0d18',
-  text: '#7878b0',
-  accent: '#8888ff',
+  bg: '#000000',
+  border: 'rgba(255,255,255,0.28)',
+  titleBg: '#030303',
+  text: '#cfcfcf',
+  accent: '#ffffff',
 };
 
 const DEFAULT_POS = { x: 100, y: 80 };
@@ -38,6 +39,7 @@ export default function ChartWindow({
   token0Decimals = 18,
   token1Decimals = 18,
   initialTimeframe = 240,
+  onTimeframeChange,
   onClose,
 }: ChartWindowProps) {
   const windowRef = useRef<HTMLDivElement>(null);
@@ -246,8 +248,8 @@ export default function ChartWindow({
               width: 18,
               height: 18,
               background: '#ff4466',
-              border: '2px solid #aa2244',
-              boxShadow: 'inset 1px 1px 0 #ff8899, inset -1px -1px 0 #660011',
+              border: '2px solid #ffffff',
+              boxShadow: 'inset 1px 1px 0 #ff9aac, inset -1px -1px 0 #660011',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
@@ -267,16 +269,16 @@ export default function ChartWindow({
             style={{
               width: 18,
               height: 18,
-              background: '#ffcc00',
-              border: '2px solid #aa8800',
-              boxShadow: 'inset 1px 1px 0 #ffee88, inset -1px -1px 0 #664400',
+              background: '#ffffff',
+              border: '2px solid #ffffff',
+              boxShadow: 'inset 1px 1px 0 #ffffff, inset -1px -1px 0 #777777',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               fontFamily: "'Press Start 2P', monospace",
               fontSize: 7,
-              color: '#443300',
+              color: '#000000',
               lineHeight: 1,
             }}
             title="Minimize"
@@ -289,16 +291,16 @@ export default function ChartWindow({
             style={{
               width: 18,
               height: 18,
-              background: '#00ff88',
-              border: '2px solid #00aa55',
-              boxShadow: 'inset 1px 1px 0 #88ffcc, inset -1px -1px 0 #005522',
+              background: '#0a0a0a',
+              border: '2px solid #ffffff',
+              boxShadow: 'inset 1px 1px 0 #444444, inset -1px -1px 0 #000000',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               fontFamily: "'Press Start 2P', monospace",
               fontSize: 5,
-              color: '#002211',
+              color: '#ffffff',
               lineHeight: 1,
             }}
             title={fs ? 'Restore' : 'Maximize'}
@@ -341,6 +343,7 @@ export default function ChartWindow({
           token0Decimals={token0Decimals}
           token1Decimals={token1Decimals}
           initialTimeframe={initialTimeframe}
+          onTimeframeChange={onTimeframeChange}
           height={Math.max(200, (fs ? fsHeight : size.h) - 60)}
           enableRealtime={!isMinimized}
         />

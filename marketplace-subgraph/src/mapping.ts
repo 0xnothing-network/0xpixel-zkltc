@@ -19,7 +19,7 @@ import {
 } from '../generated/Marketplace/Marketplace';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-const PIXEL_COLLECTION = Address.fromString('0x7bE3B9035AAAcB57b6634eCBa65402e37E30Bf66');
+const PIXEL_COLLECTION = Address.fromString('0x33A32b9b2BEe864f9e42BFa39cA7BDC72f655988');
 const STATS_ID = 'global';
 const ZERO_BI = BigInt.fromI32(0);
 const ONE_BI = BigInt.fromI32(1);
@@ -137,8 +137,8 @@ function hydrateTokenData(token: Token): void {
   if (result.reverted) return;
 
   const data = result.value;
-  token.name = data.getName().length > 0
-    ? data.getName()
+  token.name = data.getArtName().length > 0
+    ? data.getArtName()
     : 'Token #' + token.tokenId.toString();
   token.gridSize = data.getGridSize();
   token.pixelData = data.getPixelData();

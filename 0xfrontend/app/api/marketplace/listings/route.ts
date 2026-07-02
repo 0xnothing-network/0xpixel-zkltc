@@ -56,12 +56,13 @@ const subgraphPayloadCache = new Map<string, CacheEntry<ListingsPayload>>();
  * RPC calls. Backed by an in-memory cache and Next.js route caching.
  */
 export async function GET(request: Request) {
-  void request;
+  const { searchParams } = new URL(request.url);
+  const force = searchParams.get("force") === "1";
   const cacheKey = "listings:all";
 
   if (hasMarketplaceSubgraph()) {
     const cachedPayload = subgraphPayloadCache.get(cacheKey);
-    if (cachedPayload && Date.now() - cachedPayload.ts < LISTING_TTL) {
+    if (!force && cachedPayload && Date.now() - cachedPayload.ts < LISTING_TTL) {
       return NextResponse.json(cachedPayload.value);
     }
 
@@ -77,7 +78,7 @@ export async function GET(request: Request) {
   const cached = listingCache.get(cacheKey);
   let listings: ListingDTO[];
 
-  if (cached && Date.now() - cached.ts < LISTING_TTL) {
+  if (!force && cached && Date.now() - cached.ts < LISTING_TTL) {
     listings = cached.value;
   } else {
     try {

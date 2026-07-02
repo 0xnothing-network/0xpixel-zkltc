@@ -1,6 +1,6 @@
 /**
  * ABI for ZeroXDex (ZeroDex) Contract — deployed on LitVM LiteForge (chain id 4441)
- * Contract address: 0xd808DBF8b8d1Cd9ea9C5449336C764cCbC67D4B7
+ * Contract address: 0x873cb0402F0e74Db66663255e6B3535ca134C818
  * Contains only the events needed by the frontend chart & real-time invalidators.
  */
 
@@ -49,6 +49,7 @@ export const ZeroXDexAbi = [
       { indexed: true, name: 'pairId', type: 'bytes32' },
       { indexed: false, name: 'token0', type: 'address' },
       { indexed: false, name: 'token1', type: 'address' },
+      { indexed: false, name: 'creator', type: 'address' },
     ],
     name: 'PoolCreated',
     type: 'event',
@@ -75,8 +76,8 @@ export const ZeroXDexAbi = [
 
 // Contract address on LitVM LiteForge (must match lib/0xDexAbi.ts DEX_ADDRESS)
 export const ZEROXDEX_ADDRESS =
-  '0xd808DBF8b8d1Cd9ea9C5449336C764cCbC67D4B7' as const;
+  '0x873cb0402F0e74Db66663255e6B3535ca134C818' as const;
 
 // Subgraph URL — version pinned to match the deployed subgraph
 export const SUBGRAPH_URL =
-  'https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.2/gn' as const;
+  'https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.0/gn' as const;

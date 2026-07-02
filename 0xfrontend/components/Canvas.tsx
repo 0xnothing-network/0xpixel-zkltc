@@ -119,13 +119,15 @@ export function Canvas({
       const offsetX = (container.clientWidth - gridDisplaySize) / 2 - pan.x * zoom;
       const offsetY = (container.clientHeight - gridDisplaySize) / 2 - pan.y * zoom;
 
-      canvas.width = container.clientWidth;
-      canvas.height = container.clientHeight;
+      if (canvas.width !== container.clientWidth || canvas.height !== container.clientHeight) {
+        canvas.width = container.clientWidth;
+        canvas.height = container.clientHeight;
+      }
 
-      ctx.fillStyle = "#0F0F23";
+      ctx.fillStyle = "#050505";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      ctx.fillStyle = "#1A1A2E";
+      ctx.fillStyle = "#0f0f0f";
       ctx.fillRect(offsetX, offsetY, gridDisplaySize, gridDisplaySize);
 
       for (let y = 0; y < gridSize; y++) {
@@ -148,7 +150,7 @@ export function Canvas({
         }
       }
 
-      ctx.strokeStyle = zoom >= 1.5 ? "#252540" : "#1F1F3A";
+      ctx.strokeStyle = zoom >= 1.5 ? "#303030" : "#242424";
       ctx.lineWidth = zoom >= 1.5 ? 1 : 0.5;
       for (let i = 0; i <= gridSize; i++) {
         const px = offsetX + i * cs * zoom;
@@ -168,7 +170,7 @@ export function Canvas({
       const centerV = offsetY + gridDisplaySize / 2;
 
       if (symmetry === "horizontal" || symmetry === "both") {
-        ctx.strokeStyle = "rgba(255, 100, 100, 0.4)";
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.24)";
         ctx.lineWidth = 1;
         ctx.setLineDash([4, 4]);
         ctx.beginPath();
@@ -178,7 +180,7 @@ export function Canvas({
       }
 
       if (symmetry === "vertical" || symmetry === "both") {
-        ctx.strokeStyle = "rgba(100, 100, 255, 0.4)";
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.24)";
         ctx.lineWidth = 1;
         ctx.setLineDash([4, 4]);
         ctx.beginPath();
@@ -188,7 +190,7 @@ export function Canvas({
       }
 
       if (subdivision > 0) {
-        ctx.strokeStyle = "rgba(100, 255, 150, 0.25)";
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.16)";
         ctx.lineWidth = 1;
         ctx.setLineDash([2, 4]);
         const subCount = gridSize / subdivision;
@@ -224,8 +226,10 @@ export function Canvas({
     const offsetX = (container.clientWidth - gridDisplaySize) / 2 - pan.x * zoom;
     const offsetY = (container.clientHeight - gridDisplaySize) / 2 - pan.y * zoom;
 
-    previewCanvas.width = container.clientWidth;
-    previewCanvas.height = container.clientHeight;
+    if (previewCanvas.width !== container.clientWidth || previewCanvas.height !== container.clientHeight) {
+      previewCanvas.width = container.clientWidth;
+      previewCanvas.height = container.clientHeight;
+    }
 
     pctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
 
@@ -475,7 +479,7 @@ export function Canvas({
   return (
     <div className="flex w-full flex-col items-center gap-3">
       {/* Toolbar Bar */}
-      <div className="flex w-full max-w-[min(100%,640px)] flex-nowrap items-center gap-1.5 overflow-x-auto overscroll-x-contain pb-1 sm:flex-wrap sm:justify-center">
+      <div className="canvas-tool-strip flex w-full max-w-[min(100%,640px)] flex-nowrap items-center gap-1.5 overflow-x-auto overscroll-x-contain pb-1 sm:flex-wrap sm:justify-center">
         {/* Tools */}
         <div className="flex flex-shrink-0 gap-0.5 bg-[#1A1A2E] rounded-xl p-1 border border-[#2D2D44]">
           <ToolButton active={currentTool === "pencil"} onClick={() => setCurrentTool("pencil")} title="Pencil">
@@ -604,7 +608,7 @@ export function Canvas({
       {/* Canvas */}
       <div
         ref={containerRef}
-        className="relative flex w-full max-w-[min(100%,520px)] items-center justify-center overflow-hidden rounded-xl border border-[#2D2D44] bg-[#0F0F23] shadow-2xl shadow-black/20"
+        className="pixel-canvas-frame relative flex w-full max-w-[min(100%,520px)] items-center justify-center overflow-hidden rounded-xl border border-[#2D2D44] bg-[#0F0F23] shadow-2xl shadow-black/20"
         style={{
           aspectRatio: "1 / 1",
           touchAction: "none",

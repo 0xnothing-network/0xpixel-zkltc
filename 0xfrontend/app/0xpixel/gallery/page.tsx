@@ -233,20 +233,6 @@ function NotConnected() {
 
   return (
     <div ref={ref} className="text-center py-20">
-      <div className="w-24 h-24 mx-auto mb-6 bg-[#1A1A2E] rounded-2xl flex items-center justify-center border border-[#2D2D44]">
-        <svg
-          width="48"
-          height="48"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="#6366F1"
-          strokeWidth="1.5"
-        >
-          <path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h7" />
-          <path d="M16 21l3-3-3-3" />
-          <path d="M19 18H9" />
-        </svg>
-      </div>
       <h2
         className="text-xl font-bold text-white mb-2"
         style={{ fontFamily: "var(--font-departure)" }}

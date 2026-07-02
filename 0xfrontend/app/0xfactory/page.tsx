@@ -2,14 +2,15 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { useWriteContract, useReadContract, useWaitForTransactionReceipt } from "wagmi";
 import { formatUnits } from "viem";
 import { LITVM_CHAIN_ID } from "@/lib/chainSwitch";
 import { useToast } from "@/components/Toast";
 
-const FACTORY_ADDRESS = "0x0704A6F0ddE78Dd3879f8Cc2ed1d47713f3291b8";
+const FACTORY_ADDRESS =
+  (process.env.NEXT_PUBLIC_FACTORY_ADDRESS as `0x${string}`) ||
+  "0x93F9d4cF10cB785B47BFaD64ecccEA4D66C73508";
 
 const FACTORY_ABI = [
   {
@@ -194,63 +195,85 @@ export default function FactoryPage() {
   );
 
   return (
-    <div className="min-h-screen bg-[#0F0F23]">
+    <div className="factory-page min-h-screen bg-[#0F0F23]">
       {/* Header */}
       <header className="sticky top-0 z-50 bg-[#1A1A2E]/90 backdrop-blur-xl border-b border-[#2D2D44]">
-        <div className="max-w-6xl mx-auto px-4 py-3.5 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2.5 group">
-            <Image
-              src="/0xFactory_logo.jpg"
-              alt="0xFactory Logo"
-              width={36}
-              height={36}
-              priority
-              className="w-9 h-9 rounded-full object-cover"
-            />
+        <div className="max-w-6xl mx-auto px-3 sm:px-4 py-3.5 flex items-center justify-between gap-3">
+          <Link href="/" className="min-w-0 flex items-center group">
             <span
-              className="text-white font-bold text-lg tracking-tight"
+              className="min-w-0 truncate text-white font-bold text-base sm:text-lg tracking-tight"
               style={{ fontFamily: "var(--font-departure)" }}
             >
               0xFactory
             </span>
           </Link>
-          <div className="flex items-center gap-2">
+          <div className="hidden shrink-0 items-center gap-2 sm:flex">
             {mounted && isConnected && chainId && chainId !== LITVM_CHAIN_ID && (
               <button
                 onClick={() => switchChain?.({ chainId: LITVM_CHAIN_ID })}
                 disabled={isSwitching}
-                className="pixel-btn pixel-btn-amber px-3 py-2 text-xs"
+                className="pixel-btn pixel-btn-amber px-2.5 sm:px-3 py-2 text-[10px] sm:text-xs"
                 style={{ fontFamily: "var(--font-departure)" }}
               >
-                {isSwitching ? "Switching..." : "Switch to LitVM"}
+                {isSwitching ? "..." : <><span className="sm:hidden">LitVM</span><span className="hidden sm:inline">Switch to LitVM</span></>}
               </button>
             )}
             {!isConnected ? (
               <button
                 onClick={() => connect({ connector: connectors[0] })}
                 disabled={isConnecting}
-                className="pixel-btn pixel-btn-indigo px-4 py-2 text-xs"
+                className="pixel-btn pixel-btn-indigo px-2.5 sm:px-4 py-2 text-[10px] sm:text-xs"
                 style={{ fontFamily: "var(--font-departure)" }}
               >
-                {isConnecting ? "Connecting..." : "Connect Wallet"}
+                {isConnecting ? "..." : <><span className="sm:hidden">Connect</span><span className="hidden sm:inline">Connect Wallet</span></>}
               </button>
             ) : (
               <button
                 onClick={() => disconnect()}
-                className="pixel-btn pixel-btn-red px-4 py-2 text-xs"
+                className="pixel-btn pixel-btn-red px-2.5 sm:px-4 py-2 text-[10px] sm:text-xs"
                 style={{ fontFamily: "var(--font-departure)" }}
               >
-                Disconnect
+                <span className="sm:hidden">Exit</span><span className="hidden sm:inline">Disconnect</span>
               </button>
             )}
           </div>
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-8">
+      <div className="sm:hidden border-b border-[#2D2D44] bg-[#0F0F23] px-3 py-3">
+        {mounted && isConnected && chainId && chainId !== LITVM_CHAIN_ID ? (
+          <button
+            onClick={() => switchChain?.({ chainId: LITVM_CHAIN_ID })}
+            disabled={isSwitching}
+            className="pixel-btn pixel-btn-amber w-full py-2 text-[10px]"
+            style={{ fontFamily: "var(--font-departure)" }}
+          >
+            {isSwitching ? "..." : "Switch to LitVM"}
+          </button>
+        ) : !isConnected ? (
+          <button
+            onClick={() => connect({ connector: connectors[0] })}
+            disabled={isConnecting}
+            className="pixel-btn pixel-btn-indigo w-full py-2 text-[10px]"
+            style={{ fontFamily: "var(--font-departure)" }}
+          >
+            {isConnecting ? "..." : "Connect Wallet"}
+          </button>
+        ) : (
+          <button
+            onClick={() => disconnect()}
+            className="pixel-btn pixel-btn-red w-full py-2 text-[10px]"
+            style={{ fontFamily: "var(--font-departure)" }}
+          >
+            Disconnect
+          </button>
+        )}
+      </div>
+
+      <main className="max-w-5xl mx-auto px-3 sm:px-4 py-8">
         {/* Hero */}
         <div className="text-center mb-10 animate-fadeInUp">
-          <h1 className="text-3xl font-bold text-white mb-3" style={{ fontFamily: "var(--font-departure)" }}>
+          <h1 className="text-2xl sm:text-3xl font-bold text-white mb-3" style={{ fontFamily: "var(--font-departure)" }}>
             ◈ Token Factory
           </h1>
           <p className="text-[#64748B] text-sm" style={{ fontFamily: "var(--font-departure)" }}>
@@ -259,7 +282,7 @@ export default function FactoryPage() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-3 gap-3 mb-8 stagger-children">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-8 stagger-children">
           <div className="bg-[#1A1A2E] p-4 border border-[#2D2D44] animate-fadeInUp" style={{ clipPath: "polygon(0 8px, 8px 8px, 8px 0, calc(100% - 8px) 0, calc(100% - 8px) 8px, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 8px calc(100% - 8px), 0 calc(100% - 8px))" }}>
             <div className="text-[10px] text-[#64748B] uppercase tracking-widest mb-1" style={{ fontFamily: "var(--font-departure)" }}>Total Tokens</div>
             <div className="text-2xl font-bold text-purple-400" style={{ fontFamily: "var(--font-departure)" }}>
@@ -279,7 +302,7 @@ export default function FactoryPage() {
         </div>
 
         {/* Create Token Form */}
-        <div className="bg-[#1A1A2E] p-6 border border-[#2D2D44] mb-8 animate-fadeInUp-delay-2" style={{ clipPath: "polygon(0 8px, 8px 8px, 8px 0, calc(100% - 8px) 0, calc(100% - 8px) 8px, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 8px calc(100% - 8px), 0 calc(100% - 8px))" }}>
+        <div className="bg-[#1A1A2E] p-4 sm:p-6 border border-[#2D2D44] mb-8 animate-fadeInUp-delay-2" style={{ clipPath: "polygon(0 8px, 8px 8px, 8px 0, calc(100% - 8px) 0, calc(100% - 8px) 8px, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 8px calc(100% - 8px), 0 calc(100% - 8px))" }}>
           <h2 className="text-lg font-bold text-white mb-5 flex items-center gap-2" style={{ fontFamily: "var(--font-departure)" }}>
             <span className="text-purple-400">◆</span> Create New Token
           </h2>

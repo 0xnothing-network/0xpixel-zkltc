@@ -1,7 +1,7 @@
 // ============================================================
-// 0xDex ABI — generated from deployed contract
-// Address: 0xd808DBF8b8d1Cd9ea9C5449336C764cCbC67D4B7 (LitVM LiteForge, chain id 4441)
-// Source: 0xDex/0xDex.sol (ZeroDex contract)
+// 0xDex ABI - test-mainnet deployment
+// Contract: 0x873cb0402F0e74Db66663255e6B3535ca134C818
+// Chain: LitVM LiteForge, chain id 4441
 // ============================================================
 
 export const DEX_ABI = [
@@ -12,15 +12,6 @@ export const DEX_ABI = [
     ],
     stateMutability: "nonpayable",
     type: "constructor",
-  },
-  {
-    anonymous: false,
-    inputs: [
-      { indexed: false, internalType: "uint256", name: "oldFee", type: "uint256" },
-      { indexed: false, internalType: "uint256", name: "newFee", type: "uint256" },
-    ],
-    name: "FeeUpdated",
-    type: "event",
   },
   {
     anonymous: false,
@@ -52,6 +43,7 @@ export const DEX_ABI = [
       { indexed: true, internalType: "bytes32", name: "pairId", type: "bytes32" },
       { indexed: false, internalType: "address", name: "token0", type: "address" },
       { indexed: false, internalType: "address", name: "token1", type: "address" },
+      { indexed: false, internalType: "address", name: "creator", type: "address" },
     ],
     name: "PoolCreated",
     type: "event",
@@ -60,23 +52,36 @@ export const DEX_ABI = [
     anonymous: false,
     inputs: [
       { indexed: true, internalType: "address", name: "user", type: "address" },
-      { indexed: false, internalType: "uint256", name: "amount", type: "uint256" },
-    ],
-    name: "RewardClaimed",
-    type: "event",
-  },
-  {
-    anonymous: false,
-    inputs: [
-      { indexed: true, internalType: "address", name: "user", type: "address" },
-      { indexed: false, internalType: "address", name: "tokenIn", type: "address" },
-      { indexed: false, internalType: "address", name: "tokenOut", type: "address" },
+      { indexed: true, internalType: "address", name: "tokenIn", type: "address" },
+      { indexed: true, internalType: "address", name: "tokenOut", type: "address" },
       { indexed: false, internalType: "uint256", name: "amountIn", type: "uint256" },
       { indexed: false, internalType: "uint256", name: "amountOut", type: "uint256" },
       { indexed: false, internalType: "uint256", name: "fee", type: "uint256" },
     ],
     name: "Swapped",
     type: "event",
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: false, internalType: "uint256", name: "oldFee", type: "uint256" },
+      { indexed: false, internalType: "uint256", name: "newFee", type: "uint256" },
+    ],
+    name: "FeeUpdated",
+    type: "event",
+  },
+  {
+    anonymous: false,
+    inputs: [{ indexed: true, internalType: "address", name: "rewardManager", type: "address" }],
+    name: "RewardManagerSet",
+    type: "event",
+  },
+  {
+    inputs: [],
+    name: "CREATOR_LOCK_PERIOD",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
   },
   {
     inputs: [],
@@ -89,13 +94,6 @@ export const DEX_ABI = [
     inputs: [],
     name: "NUSD",
     outputs: [{ internalType: "address", name: "", type: "address" }],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [],
-    name: "accRewardPerNUSD",
-    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
     stateMutability: "view",
     type: "function",
   },
@@ -119,10 +117,27 @@ export const DEX_ABI = [
     type: "function",
   },
   {
-    inputs: [],
-    name: "claimReward",
+    inputs: [{ internalType: "address", name: "", type: "address" }],
+    name: "collectedFees",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [
+      { internalType: "address", name: "tokenA", type: "address" },
+      { internalType: "address", name: "tokenB", type: "address" },
+    ],
+    name: "createPool",
     outputs: [],
     stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [{ internalType: "bytes32", name: "", type: "bytes32" }],
+    name: "creatorUnlockTime",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
     type: "function",
   },
   {
@@ -155,27 +170,10 @@ export const DEX_ABI = [
     type: "function",
   },
   {
-    inputs: [
-      { internalType: "address", name: "tokenIn", type: "address" },
-      { internalType: "address", name: "tokenOut", type: "address" },
-    ],
-    name: "getPrice",
-    outputs: [{ internalType: "uint256", name: "price", type: "uint256" }],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [{ internalType: "bytes32", name: "pairId", type: "bytes32" }],
-    name: "getSpotPrice",
-    outputs: [{ internalType: "uint256", name: "price", type: "uint256" }],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [{ internalType: "address", name: "user", type: "address" }],
-    name: "getUserPendingReward",
-    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
-    stateMutability: "view",
+    inputs: [{ internalType: "bytes[]", name: "data", type: "bytes[]" }],
+    name: "multicall",
+    outputs: [{ internalType: "bytes[]", name: "results", type: "bytes[]" }],
+    stateMutability: "payable",
     type: "function",
   },
   {
@@ -211,6 +209,7 @@ export const DEX_ABI = [
       { internalType: "uint256", name: "volume24h", type: "uint256" },
       { internalType: "uint256", name: "totalVolume", type: "uint256" },
       { internalType: "uint256", name: "lastVolumeReset", type: "uint256" },
+      { internalType: "uint256", name: "createdAt", type: "uint256" },
     ],
     stateMutability: "view",
     type: "function",
@@ -221,6 +220,20 @@ export const DEX_ABI = [
       { internalType: "uint256", name: "lpAmount", type: "uint256" },
     ],
     name: "removeLiquidity",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "rewardManager",
+    outputs: [{ internalType: "contract IRewardManager", name: "", type: "address" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [{ internalType: "address", name: "_rewardManager", type: "address" }],
+    name: "setRewardManager",
     outputs: [],
     stateMutability: "nonpayable",
     type: "function",
@@ -252,17 +265,12 @@ export const DEX_ABI = [
     type: "function",
   },
   {
-    inputs: [],
-    name: "totalNUSDLocked",
-    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [],
-    name: "totalRewardPool",
-    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
-    stateMutability: "view",
+    inputs: [
+      { internalType: "address", name: "newOwner", type: "address" },
+    ],
+    name: "transferOwnership",
+    outputs: [],
+    stateMutability: "nonpayable",
     type: "function",
   },
   {
@@ -276,15 +284,11 @@ export const DEX_ABI = [
     type: "function",
   },
   {
-    inputs: [{ internalType: "address", name: "", type: "address" }],
-    name: "userNUSDLocked",
-    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [{ internalType: "address", name: "", type: "address" }],
-    name: "userRewardDebt",
+    inputs: [
+      { internalType: "bytes32", name: "", type: "bytes32" },
+      { internalType: "address", name: "", type: "address" },
+    ],
+    name: "userNUSDLockedByPool",
     outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
     stateMutability: "view",
     type: "function",
@@ -292,19 +296,12 @@ export const DEX_ABI = [
   { stateMutability: "payable", type: "receive" },
 ] as const;
 
-// ============================================================
-// Contract addresses (deployed on LitVM LiteForge, chain id 4441)
-// ============================================================
-
 export const DEX_ADDRESS: `0x${string}` =
   (process.env.NEXT_PUBLIC_DEX_ADDRESS as `0x${string}`) ||
-  "0xd808DBF8b8d1Cd9ea9C5449336C764cCbC67D4B7";
+  "0x873cb0402F0e74Db66663255e6B3535ca134C818";
 
-export const NATIVE_ADDRESS = "0x0000000000000000000000000000000000000000";
-
-// ============================================================
-// Types
-// ============================================================
+export const NATIVE_ADDRESS =
+  "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE" as const;
 
 export interface PoolInfo {
   token0: `0x${string}`;
@@ -315,6 +312,7 @@ export interface PoolInfo {
   volume24h: bigint;
   totalVolume: bigint;
   lastVolumeReset: bigint;
+  createdAt: bigint;
 }
 
 export interface PoolPriceInfo {

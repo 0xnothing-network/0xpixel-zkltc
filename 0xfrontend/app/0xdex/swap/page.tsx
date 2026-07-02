@@ -31,28 +31,28 @@ function TokenSelector({
   const availableTokens = KNOWN_TOKENS.filter(t => !otherToken || t.address !== otherToken.address);
   
   return (
-    <div className="relative">
+    <div className="relative w-[112px] shrink-0 sm:w-[140px]">
       <label className="block text-xs text-[#64748B] mb-2" style={{ fontFamily: "var(--font-departure)" }}>
         {label}
       </label>
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between p-4 rounded-lg bg-[#13131F] border border-[#2D2D44] hover:border-[#3D3D54] transition-colors"
+        className="w-full flex items-center justify-between gap-2 p-3 sm:p-4 rounded-lg bg-[#13131F] border border-[#2D2D44] hover:border-[#3D3D54] transition-colors"
       >
         {selected ? (
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-full bg-[#8888ff]/20 border border-[#8888ff]/40 flex items-center justify-center text-[#8888ff] text-xs font-bold">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="w-6 h-6 shrink-0 rounded-full bg-[#8888ff]/20 border border-[#8888ff]/40 flex items-center justify-center text-[#8888ff] text-xs font-bold">
               {selected.symbol[0]}
             </div>
-            <span className="font-medium text-white" style={{ fontFamily: "var(--font-departure)" }}>
+            <span className="truncate font-medium text-white" style={{ fontFamily: "var(--font-departure)" }}>
               {selected.symbol}
             </span>
           </div>
         ) : (
           <span className="text-[#64748B]">Select token</span>
         )}
-        <svg className="w-4 h-4 text-[#64748B]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="h-4 w-4 shrink-0 text-[#64748B]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </button>
@@ -68,11 +68,11 @@ function TokenSelector({
               <div className="w-7 h-7 rounded-full bg-[#8888ff]/20 border border-[#8888ff]/40 flex items-center justify-center text-[#8888ff] text-xs font-bold">
                 {token.symbol[0]}
               </div>
-              <div className="text-left">
+              <div className="min-w-0 text-left">
                 <div className="text-sm font-medium text-white" style={{ fontFamily: "var(--font-departure)" }}>
                   {token.symbol}
                 </div>
-                <div className="text-xs text-[#64748B]">{token.name}</div>
+                <div className="truncate text-xs text-[#64748B]">{token.name}</div>
               </div>
             </button>
           ))}
@@ -256,7 +256,7 @@ export default function SwapPage() {
                   value={amountIn}
                   onChange={(e) => handleAmountInChange(e.target.value)}
                   placeholder="0.0"
-                  className="flex-1 bg-transparent text-2xl font-bold text-white outline-none placeholder:text-[#3D3D54]"
+                  className="min-w-0 flex-1 bg-transparent text-2xl font-bold text-white outline-none placeholder:text-[#3D3D54]"
                   style={{ fontFamily: "var(--font-departure)" }}
                 />
                 <TokenSelector
@@ -285,7 +285,7 @@ export default function SwapPage() {
                 You Receive
               </label>
               <div className="flex gap-3">
-                <div className="flex-1 bg-transparent text-2xl font-bold text-white flex items-center">
+                <div className="min-w-0 flex-1 bg-transparent text-2xl font-bold text-white flex items-center overflow-hidden">
                   {quote?.amountOutFormatted ? parseFloat(quote.amountOutFormatted).toFixed(6) : "0.0"}
                 </div>
                 <TokenSelector

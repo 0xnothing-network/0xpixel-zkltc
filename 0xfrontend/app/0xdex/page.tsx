@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import dynamic from "next/dynamic";
@@ -9,12 +9,14 @@ const ChartWindow = dynamic(() => import("@/app/components/ChartWindow"), {
   ssr: false,
 });
 
-import { useAccount, useReadContract, useConnect, useDisconnect, useBlockNumber, useWriteContract, useSwitchChain } from "wagmi";
-import { erc20Abi, formatUnits, maxUint256, parseUnits } from "viem";
-import { useDexStats, useAllPools, useDexRead, useDexWrite, NATIVE_TOKEN, useTokenBalance, useTokenAllowance, Token } from "@/lib/use0xDex";
-import { DEX_ADDRESS, NATIVE_ADDRESS } from "@/lib/0xDexAbi";
+import { useAccount, useReadContract, useConnect, useDisconnect, useBlockNumber, useWriteContract, useSwitchChain, usePublicClient, useWatchContractEvent } from "wagmi";
+import { erc20Abi, formatUnits, maxUint256, parseUnits, parseAbiItem } from "viem";
+import { useDexStats, useAllPools, useDexRead, useRewardRead, useDexWrite, NATIVE_TOKEN, useTokenBalance, useTokenAllowance, Token } from "@/lib/use0xDex";
+import { DEX_ABI, DEX_ADDRESS, NATIVE_ADDRESS } from "@/lib/0xDexAbi";
 import { NUSD_ADDRESS, NUSD_ABI } from "@/lib/NUSDContract";
+import { REWARD_MANAGER_ADDRESS } from "@/lib/rewardAbi";
 import { useToast } from "@/components/Toast";
+import { PageLoader } from "@/components/PageLoader";
 import { useGSAP } from "@gsap/react";
 import { gsapPixelStagger } from "@/lib/gsap-animations";
 
@@ -24,11 +26,9 @@ import { gsapPixelStagger } from "@/lib/gsap-animations";
 function PixelSkeleton({ className = "" }: { className?: string }) {
   return (
     <div
-      className={`bg-[#1a1a2a] border border-[#2a2a4a] ${className}`}
+      className={`bg-white/5 border border-white/10 ${className}`}
       style={{
-        backgroundImage: `linear-gradient(90deg, #1a1a2a 0%, #2a2a4a 50%, #1a1a2a 100%)`,
-        backgroundSize: '200% 100%',
-        animation: 'shimmer 1.5s infinite',
+        backgroundImage: "none",
       }}
     />
   );
@@ -111,6 +111,20 @@ function castPoolData(data: unknown): PoolData | null {
 // ============================================================
 
 const BPS_DENOM = 10000n; // matches `swapFee / 10000` in 0xDex.sol
+type ChartTf = 1 | 15 | 60 | 240 | 1440;
+const DEFAULT_CHART_TF: ChartTf = 240;
+const CHART_TIMEFRAMES = new Set<number>([1, 15, 60, 240, 1440]);
+
+function parseChartTimeframe(value: string | null): ChartTf {
+  const parsed = Number(value);
+  return CHART_TIMEFRAMES.has(parsed) ? parsed as ChartTf : DEFAULT_CHART_TF;
+}
+
+function buildDexPairHref(pairId: string, view: "swap" | "chart", timeframe: ChartTf = DEFAULT_CHART_TF) {
+  const params = new URLSearchParams({ pair: pairId, view });
+  if (view === "chart") params.set("tf", String(timeframe));
+  return `/0xdex?${params.toString()}`;
+}
 
 /**
  * Display helper: "1 TokenIn = X TokenOut" with proper decimal scaling.
@@ -163,23 +177,262 @@ function formatNum(value: bigint, decimals = 18) {
   return num.toFixed(2);
 }
 
-function StatCard({ label, value, icon, color = "indigo" }: { label: string; value: string; icon: string; color?: string }) {
-  const gradient = color === "emerald"
-    ? "from-emerald-500/10 to-teal-500/10"
-    : color === "amber"
-    ? "from-amber-500/10 to-orange-500/10"
-    : "from-[#8888ff]/10 to-[#8888ff]/05";
+const SWAPPED_EVENT = parseAbiItem(
+  "event Swapped(address indexed user, address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut, uint256 fee)"
+);
+const SWAP_HISTORY_LOOKBACK_BLOCKS = 12_000n;
+const SWAP_HISTORY_COUNT_CHUNK_BLOCKS = 20_000n;
+const SWAP_HISTORY_PAGE_SIZE = 1000;
+const SWAP_HISTORY_DISPLAY_LIMIT = 80;
+const SWAP_HISTORY_MAX_COUNT_PAGES = 100;
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+
+const SWAP_HISTORY_QUERY = `
+  query GetSwapHistory($limit: Int!, $skip: Int!) {
+    swaps(first: $limit, skip: $skip, orderBy: timestamp, orderDirection: desc) {
+      id
+      user
+      tokenIn
+      tokenOut
+      amountIn
+      amountOut
+      fee
+      timestamp
+    }
+  }
+`;
+
+const SWAP_HISTORY_RAW_QUERY = `
+  query GetSwapHistoryRaw($limit: Int!, $skip: Int!) {
+    swaps: swappeds(first: $limit, skip: $skip, orderBy: timestamp_, orderDirection: desc) {
+      id
+      user
+      tokenIn
+      tokenOut
+      amountIn
+      amountOut
+      fee
+      timestamp: timestamp_
+    }
+  }
+`;
+
+function configuredDexStartBlock(latestBlock: bigint) {
+  const value = process.env.NEXT_PUBLIC_DEX_START_BLOCK;
+  if (value && /^\d+$/.test(value)) {
+    const block = BigInt(value);
+    return block <= latestBlock ? block : latestBlock;
+  }
+  return latestBlock > SWAP_HISTORY_LOOKBACK_BLOCKS
+    ? latestBlock - SWAP_HISTORY_LOOKBACK_BLOCKS
+    : 0n;
+}
+
+type TokenMeta = {
+  symbol: string;
+  decimals: number;
+};
+
+type SwapHistoryItem = {
+  id: string;
+  txHash?: `0x${string}`;
+  blockNumber: bigint;
+  logIndex: number;
+  user: `0x${string}`;
+  tokenIn: `0x${string}`;
+  tokenOut: `0x${string}`;
+  amountIn: bigint;
+  amountOut: bigint;
+  fee: bigint;
+  timestamp: number;
+  live: boolean;
+};
+
+type SwappedLogArgs = {
+  user: `0x${string}`;
+  tokenIn: `0x${string}`;
+  tokenOut: `0x${string}`;
+  amountIn: bigint;
+  amountOut: bigint;
+  fee: bigint;
+};
+
+type SwapLogLike = {
+  args?: SwappedLogArgs;
+  transactionHash?: `0x${string}`;
+  blockHash?: `0x${string}`;
+  blockNumber?: bigint;
+  logIndex?: number;
+};
+
+type SubgraphSwap = {
+  id: string;
+  user?: string;
+  tokenIn?: string;
+  tokenOut?: string;
+  amountIn?: string;
+  amountOut?: string;
+  fee?: string;
+  timestamp?: string | number | { seconds?: string | number };
+};
+
+function hasSwapArgs(log: SwapLogLike): log is SwapLogLike & { args: SwappedLogArgs } {
+  return !!log.args;
+}
+
+function shortAddress(value?: string) {
+  if (!value) return "--";
+  return `${value.slice(0, 6)}...${value.slice(-4)}`;
+}
+
+function tokenKey(value: string) {
+  return value.toLowerCase();
+}
+
+function normalizeSwapHistoryId(value: string) {
+  return value.toLowerCase();
+}
+
+function makeSwapHistoryId(log: SwapLogLike) {
+  return normalizeSwapHistoryId(`${log.transactionHash ?? log.blockHash ?? log.blockNumber}-${Number(log.logIndex ?? 0)}`);
+}
+
+function asAddress(value: unknown): `0x${string}` {
+  return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value)
+    ? (value as `0x${string}`)
+    : ZERO_ADDRESS;
+}
+
+function asTxHash(value: unknown): `0x${string}` | undefined {
+  if (typeof value !== "string") return undefined;
+  const match = value.match(/0x[a-fA-F0-9]{64}/);
+  return match ? (match[0] as `0x${string}`) : undefined;
+}
+
+function parseSubgraphTimestamp(value: unknown): number {
+  if (typeof value === "string" || typeof value === "number") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  if (value && typeof value === "object" && "seconds" in value) {
+    const parsed = Number((value as { seconds?: string | number }).seconds);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function getTokenMeta(map: Map<string, TokenMeta>, address: `0x${string}`): TokenMeta {
+  return map.get(tokenKey(address)) ?? {
+    symbol: shortAddress(address),
+    decimals: 18,
+  };
+}
+
+function formatTokenAmount(value: bigint, decimals: number) {
+  const num = Number(formatUnits(value, decimals));
+  if (!Number.isFinite(num)) return "0";
+  if (num === 0) return "0";
+  if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(2)}M`;
+  if (num >= 1_000) return `${(num / 1_000).toFixed(2)}K`;
+  if (num >= 1) return num.toFixed(num >= 100 ? 2 : 4).replace(/\.?0+$/, "");
+  return num.toFixed(8).replace(/\.?0+$/, "");
+}
+
+function formatSwapTime(timestamp: number) {
+  if (!timestamp) return "syncing";
+  return new Date(timestamp * 1000).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function getSwapSide(item: SwapHistoryItem) {
+  const tokenInIsNusd = item.tokenIn.toLowerCase() === NUSD_ADDRESS.toLowerCase();
+  const tokenOutIsNusd = item.tokenOut.toLowerCase() === NUSD_ADDRESS.toLowerCase();
+  if (tokenInIsNusd) return "BUY";
+  if (tokenOutIsNusd) return "SELL";
+  return "SWAP";
+}
+
+function parseSubgraphSwap(item: SubgraphSwap, index: number): SwapHistoryItem | null {
+  if (!item.id || !item.tokenIn || !item.tokenOut || !item.amountIn || !item.amountOut) return null;
+  const timestamp = parseSubgraphTimestamp(item.timestamp);
+  const id = normalizeSwapHistoryId(item.id);
+  const logIndexFromId = Number(item.id.split("-").pop() || index);
+
+  try {
+    return {
+      id,
+      txHash: asTxHash(item.id),
+      blockNumber: BigInt(timestamp || 0),
+      logIndex: Number.isFinite(logIndexFromId) ? logIndexFromId : index,
+      user: asAddress(item.user),
+      tokenIn: asAddress(item.tokenIn),
+      tokenOut: asAddress(item.tokenOut),
+      amountIn: BigInt(item.amountIn),
+      amountOut: BigInt(item.amountOut),
+      fee: BigInt(item.fee || "0"),
+      timestamp,
+      live: false,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeDecimalInput(value: string) {
+  return value.replace(/,/g, ".").replace(/[^0-9.]/g, "").replace(/(\..*)\./g, "$1");
+}
+
+function isDecimalInput(value: string) {
+  return /^(?:\d+|\d*\.\d+)$/.test(value);
+}
+
+function safeParseUnits(value: string, decimals: number): bigint | null {
+  const trimmed = value.trim();
+  if (!isDecimalInput(trimmed)) return null;
+  try {
+    return parseUnits(trimmed, decimals);
+  } catch {
+    return null;
+  }
+}
+
+function isPositiveDecimal(value: string) {
+  const parsed = safeParseUnits(value, 18);
+  return parsed !== null && parsed > 0n;
+}
+
+function formatDecimalForInput(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "";
+  return value.toLocaleString("en-US", {
+    useGrouping: false,
+    maximumFractionDigits: 18,
+  });
+}
+
+function StatCard({ label, value, icon, color }: { label: string; value: string; icon: string; color?: string }) {
+  const tone =
+    color ||
+    (label.toLowerCase().includes("volume")
+      ? "violet"
+      : label.toLowerCase().includes("pool")
+        ? "amber"
+        : label.toLowerCase().includes("reward")
+          ? "green"
+          : "cyan");
+
   return (
-    <div className="relative overflow-hidden rounded-lg bg-gradient-to-br from-[#1A1A2E] to-[#13131F] border border-[#2D2D44] p-4">
-      <div className={`absolute top-0 right-0 w-16 h-16 bg-gradient-to-br ${gradient} rounded-bl-full`} />
+    <div data-stat-tone={tone} className="pixel-stat-card relative overflow-hidden border border-[#2D2D44] bg-[#13131F] p-4">
       <div className="relative">
         <div className="flex items-center gap-2 mb-2">
-          <span className="text-sm opacity-60">{icon}</span>
+          <span className="pixel-stat-icon text-sm opacity-80">{icon}</span>
           <span className="text-[10px] md:text-xs uppercase tracking-wider text-[#64748B]" style={{ fontFamily: "var(--font-departure)" }}>
             {label}
           </span>
         </div>
-        <div className="text-lg md:text-xl xl:text-2xl font-bold text-white whitespace-nowrap" style={{ fontFamily: "var(--font-departure)" }}>
+        <div className="pixel-stat-value text-lg md:text-xl xl:text-2xl font-bold text-white whitespace-nowrap" style={{ fontFamily: "var(--font-departure)" }}>
           {value}
         </div>
       </div>
@@ -187,15 +440,34 @@ function StatCard({ label, value, icon, color = "indigo" }: { label: string; val
   );
 }
 
-function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, lpTotal, rank, onSelect, onViewChart, tokenSymbol, tokenDecimals = 18 }: {
+function PoolCard({
+  token0,
+  token1,
+  reserve0,
+  reserve1,
+  volume24h,
+  totalVolume,
+  lpTotal,
+  rank,
+  pairId,
+  swapHref,
+  chartHref,
+  onSelect,
+  onViewChart,
+  tokenSymbol,
+  tokenDecimals = 18,
+}: {
   token0: `0x${string}`; token1: `0x${string}`; reserve0: bigint; reserve1: bigint; volume24h: bigint; totalVolume: bigint; lpTotal: bigint; rank: number;
+  pairId: `0x${string}`;
+  swapHref: string;
+  chartHref: string;
   onSelect?: (data: { token: `0x${string}`, nusd: `0x${string}`, reserve0: bigint, reserve1: bigint }) => void;
   onViewChart?: (data: { price: number | null; tokenDecimals: number }) => void;
   tokenSymbol?: string;
   tokenDecimals?: number;
 }) {
-  const NUSD_ADDRESS_LOCAL = "0x6ffB02fa705A0DB3c8EbB31A63EdFE62c103363D";
-  const NATIVE = "0x0000000000000000000000000000000000000000";
+  const NUSD_ADDRESS_LOCAL = NUSD_ADDRESS;
+  const NATIVE = NATIVE_ADDRESS;
   const isToken0NUSD = token0.toLowerCase() === NUSD_ADDRESS_LOCAL.toLowerCase();
   const isToken1NUSD = token1.toLowerCase() === NUSD_ADDRESS_LOCAL.toLowerCase();
   const isToken0Native = token0.toLowerCase() === NATIVE.toLowerCase();
@@ -223,6 +495,7 @@ function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, 
 
   return (
     <div
+      data-pair-id={pairId}
       className="pool-card-item p-4 xl:p-5 rounded-xl bg-[#13131F] border border-[#2D2D44] hover:border-[#8888ff]/50 transition-all cursor-pointer"
       onClick={handleClick}
     >
@@ -234,51 +507,153 @@ function PoolCard({ token0, token1, reserve0, reserve1, volume24h, totalVolume, 
           <span className="font-bold text-white text-sm" style={{ fontFamily: "var(--font-departure)" }}>
             {displaySymbol}/$NUSD
           </span>
-          <span className="text-xs text-emerald-400 font-medium" style={{ fontFamily: "var(--font-departure)" }}>
+          <span className="pixel-live-price text-xs text-emerald-400 font-medium" style={{ fontFamily: "var(--font-departure)" }}>
             ${pricePerToken > 0 ? pricePerToken.toFixed(6) : "0"}
           </span>
         </div>
-        {onViewChart && (
-          <button
+        <div className="flex items-center gap-1">
+          <Link
+            href={swapHref}
             onClick={(e) => {
               e.stopPropagation();
-              onViewChart({ price: pricePerToken > 0 ? pricePerToken : null, tokenDecimals });
+              handleClick();
             }}
-            className="pixel-btn-soft pixel-btn-soft-indigo pixel-btn-soft-sm"
+            className="pixel-btn-soft pixel-btn-soft-secondary pixel-btn-soft-sm"
+            title={`Swap ${displaySymbol}/NUSD`}
           >
-            CHART
-          </button>
-        )}
+            SWAP
+          </Link>
+          {onViewChart && (
+            <Link
+              href={chartHref}
+              onClick={(e) => {
+                e.stopPropagation();
+                onViewChart({ price: pricePerToken > 0 ? pricePerToken : null, tokenDecimals });
+              }}
+              className="pixel-btn-soft pixel-btn-soft-indigo pixel-btn-soft-sm"
+              title={`Chart ${displaySymbol}/NUSD`}
+            >
+              CHART
+            </Link>
+          )}
+        </div>
       </div>
       
       {/* Stats Row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 lg:gap-3 mt-2">
         <div className="bg-[#1A1A2E]/50 rounded-lg p-2">
           <div className="text-[10px] text-[#64748B] uppercase">TVL</div>
-          <div className="text-xs font-bold text-white truncate" style={{ fontFamily: "var(--font-departure)" }}>
+          <div className="pixel-metric-value pixel-metric-tvl text-xs font-bold text-white truncate" style={{ fontFamily: "var(--font-departure)" }}>
             {formatUSDFloat(tvlUSD)}
           </div>
         </div>
         <div className="bg-[#1A1A2E]/50 rounded-lg p-2">
           <div className="text-[10px] text-[#64748B] uppercase">LP Shares</div>
-          <div className="text-xs font-bold text-amber-400 truncate" style={{ fontFamily: "var(--font-departure)" }}>
+          <div className="pixel-metric-value pixel-metric-lp text-xs font-bold text-amber-400 truncate" style={{ fontFamily: "var(--font-departure)" }}>
             {formatNum(lpTotal)}
           </div>
         </div>
         <div className="bg-[#1A1A2E]/50 rounded-lg p-2">
           <div className="text-[10px] text-[#64748B] uppercase">24h Volume</div>
-          <div className="text-xs font-bold text-[#8888ff] truncate" style={{ fontFamily: "var(--font-departure)" }}>
+          <div className="pixel-metric-value pixel-metric-volume text-xs font-bold text-[#8888ff] truncate" style={{ fontFamily: "var(--font-departure)" }}>
             {formatUSD(volume24h)}
           </div>
         </div>
         <div className="bg-[#1A1A2E]/50 rounded-lg p-2">
           <div className="text-[10px] text-[#64748B] uppercase">Total Volume</div>
-          <div className="text-xs font-bold text-[#8888ff] truncate" style={{ fontFamily: "var(--font-departure)" }}>
+          <div className="pixel-metric-value pixel-metric-total text-xs font-bold text-[#8888ff] truncate" style={{ fontFamily: "var(--font-departure)" }}>
             {formatUSD(totalVolume)}
           </div>
         </div>
       </div>
     </div>
+  );
+}
+
+function SwapHistoryPanel({
+  swaps,
+  loading,
+  totalCount,
+  tokenMetaByAddress,
+}: {
+  swaps: SwapHistoryItem[];
+  loading: boolean;
+  totalCount: number | null;
+  tokenMetaByAddress: Map<string, TokenMeta>;
+}) {
+  const txCountLabel = totalCount === null
+    ? swaps.length.toLocaleString()
+    : totalCount.toLocaleString();
+
+  return (
+    <section className="dex-swap-history pixel-panel">
+      <div className="dex-history-head">
+        <div>
+          <p className="dex-eyebrow">ONCHAIN</p>
+          <h2>Swap History</h2>
+        </div>
+        <div className="dex-history-meta">
+          <div className="dex-tx-count">TX {txCountLabel}</div>
+          <div className="dex-live-badge">
+            <span className="dex-live-dot" />
+            {loading ? "SYNCING" : "LIVE"}
+          </div>
+        </div>
+      </div>
+
+      <div className="dex-history-table">
+        <div className="dex-history-row dex-history-row-head">
+          <span>Pair</span>
+          <span>Trade</span>
+          <span>Wallet</span>
+          <span>Time</span>
+        </div>
+
+        {swaps.length === 0 ? (
+          <div className="dex-history-empty">
+            {loading ? "Loading onchain swaps..." : "No swaps found yet"}
+          </div>
+        ) : (
+          swaps.slice(0, 80).map((item) => {
+            const tokenInMeta = getTokenMeta(tokenMetaByAddress, item.tokenIn);
+            const tokenOutMeta = getTokenMeta(tokenMetaByAddress, item.tokenOut);
+            const side = getSwapSide(item);
+            const otherSymbol =
+              side === "BUY"
+                ? tokenOutMeta.symbol
+                : side === "SELL"
+                  ? tokenInMeta.symbol
+                  : tokenInMeta.symbol;
+            const pairLabel =
+              side === "SWAP"
+                ? `${tokenInMeta.symbol}/${tokenOutMeta.symbol}`
+                : `${otherSymbol}/NUSD`;
+
+            return (
+              <div key={item.id} className="dex-history-row">
+                <div className="dex-history-pair">
+                  <span className={`dex-side dex-side-${side.toLowerCase()}`}>{side}</span>
+                  <span>{pairLabel}</span>
+                  {item.live && <span className="dex-new-chip">NEW</span>}
+                </div>
+                <div className="dex-history-flow">
+                  <span>{formatTokenAmount(item.amountIn, tokenInMeta.decimals)} {tokenInMeta.symbol}</span>
+                  <span className="dex-history-arrow">-&gt;</span>
+                  <span>{formatTokenAmount(item.amountOut, tokenOutMeta.decimals)} {tokenOutMeta.symbol}</span>
+                </div>
+                <div className="dex-history-wallet">
+                  <span>{shortAddress(item.user)}</span>
+                  <span className="dex-history-block">
+                    {item.txHash ? shortAddress(item.txHash) : `#${item.blockNumber.toString()}`}
+                  </span>
+                </div>
+                <div className="dex-history-time">{formatSwapTime(item.timestamp)}</div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -302,6 +677,13 @@ export default function DexAllInOne() {
   const { addLiquidity, removeLiquidity, swap, claimReward } = useDexWrite();
   const LITVM_CHAIN_ID = 4441;
   const poolListRef = useRef<HTMLDivElement>(null);
+  const publicClient = usePublicClient();
+  const [swapHistory, setSwapHistory] = useState<SwapHistoryItem[]>([]);
+  const [swapHistoryLoading, setSwapHistoryLoading] = useState(false);
+  const [swapHistoryTotalCount, setSwapHistoryTotalCount] = useState<number | null>(null);
+  const lastSwapHistoryBlockRef = useRef<bigint>(0n);
+  const swapHistoryPollingRef = useRef(false);
+  const swapHistorySeenIdsRef = useRef<Set<string>>(new Set());
 
   // Pixel-style stagger entry for pool cards
   useGSAP(
@@ -377,21 +759,41 @@ export default function DexAllInOne() {
     price: number | null;
     tokenDecimals: number;
   } | null>(null);
+  const [selectedChartTimeframe, setSelectedChartTimeframe] = useState<ChartTf>(DEFAULT_CHART_TF);
   const [showChart, setShowChart] = useState(false);
+  const routePairAppliedRef = useRef(false);
 
   // Data
   const stats = useDexStats();
   const { data: allPools } = useAllPools();
   const { data: nusdAddress } = useDexRead<`0x${string}`>("NUSD");
-  const { data: totalRewardPool } = useDexRead<bigint>("totalRewardPool");
+  const { data: rewardPoolNusdBalance } = useReadContract({
+    address: NUSD_ADDRESS as `0x${string}`,
+    abi: erc20Abi,
+    functionName: "balanceOf",
+    args: [REWARD_MANAGER_ADDRESS],
+    query: { refetchInterval: 6_000 },
+  });
 
   // Check allowance for create pool token
   const { data: createTokenAllowance, refetch: refetchAllowance } = useTokenAllowance(
     createTokenA && /^0x[a-fA-F0-9]{40}$/.test(createTokenA) ? { address: createTokenA as `0x${string}`, symbol: tokenSymbol || "TOKEN", decimals: tokenDecimals || 18, name: tokenName || "Token" } : null,
     DEX_ADDRESS as `0x${string}`
   );
-  const needsCreateApproval = createTokenA && createAmountA && Number(createAmountA) > 0 && 
-    (!createTokenAllowance || (createTokenAllowance as bigint) < parseUnits(createAmountA, tokenDecimals || 18));
+  const createAmountAParsed = useMemo(
+    () => safeParseUnits(createAmountA, Number(tokenDecimals ?? 18)),
+    [createAmountA, tokenDecimals],
+  );
+  const createAmountBParsed = useMemo(
+    () => safeParseUnits(createAmountB, 18),
+    [createAmountB],
+  );
+  const needsCreateApproval =
+    !!createTokenA &&
+    !!createAmountAParsed &&
+    createAmountAParsed > 0n &&
+    createTokenA.toLowerCase() !== NATIVE_ADDRESS.toLowerCase() &&
+    (!createTokenAllowance || (createTokenAllowance as bigint) < createAmountAParsed);
 
   // Pool options - dedupe by pairId
   const poolOptions = useMemo(() => {
@@ -540,14 +942,419 @@ export default function DexAllInOne() {
     query: { enabled: !!poolOptions[7]?.token && poolOptions[7]?.token !== NATIVE_ADDRESS }
   });
 
-  const tokenSymbols = [token0Symbol, token1Symbol, token2Symbol, token3Symbol, token4Symbol, token5Symbol, token6Symbol, token7Symbol];
-  const tokenDecimalsList = [token0Decimals, token1Decimals, token2Decimals, token3Decimals, token4Decimals, token5Decimals, token6Decimals, token7Decimals];
+  const tokenSymbols = useMemo(
+    () => [token0Symbol, token1Symbol, token2Symbol, token3Symbol, token4Symbol, token5Symbol, token6Symbol, token7Symbol],
+    [token0Symbol, token1Symbol, token2Symbol, token3Symbol, token4Symbol, token5Symbol, token6Symbol, token7Symbol]
+  );
+  const tokenDecimalsList = useMemo(
+    () => [token0Decimals, token1Decimals, token2Decimals, token3Decimals, token4Decimals, token5Decimals, token6Decimals, token7Decimals],
+    [token0Decimals, token1Decimals, token2Decimals, token3Decimals, token4Decimals, token5Decimals, token6Decimals, token7Decimals]
+  );
+
+  const tokenMetaByAddress = useMemo(() => {
+    const map = new Map<string, TokenMeta>();
+    for (const token of KNOWN_TOKENS) {
+      map.set(tokenKey(token.address), {
+        symbol: token.symbol.replace(/^\$/, ""),
+        decimals: token.decimals,
+      });
+    }
+    poolOptions.forEach((pool, index) => {
+      const symbol = pool.token.toLowerCase() === NATIVE_ADDRESS.toLowerCase()
+        ? "zkLTC"
+        : (tokenSymbols[index] as string) || shortAddress(pool.token);
+      map.set(tokenKey(pool.token), {
+        symbol: symbol.replace(/^\$/, ""),
+        decimals: pool.token.toLowerCase() === NATIVE_ADDRESS.toLowerCase()
+          ? 18
+          : Number(tokenDecimalsList[index] ?? 18),
+      });
+    });
+    return map;
+  }, [poolOptions, tokenDecimalsList, tokenSymbols]);
+
+  const addSwapHistoryItems = useCallback((items: SwapHistoryItem[]) => {
+    if (!items.length) return 0;
+
+    let newItemCount = 0;
+    for (const item of items) {
+      if (swapHistorySeenIdsRef.current.has(item.id)) continue;
+      swapHistorySeenIdsRef.current.add(item.id);
+      newItemCount += 1;
+    }
+
+    setSwapHistory((current) => {
+      const byId = new Map<string, SwapHistoryItem>();
+      for (const item of current) byId.set(item.id, item);
+      for (const item of items) byId.set(item.id, item);
+      return Array.from(byId.values())
+        .sort((a, b) => {
+          if (a.timestamp !== b.timestamp) return b.timestamp - a.timestamp;
+          if (a.blockNumber === b.blockNumber) return b.logIndex - a.logIndex;
+          return a.blockNumber > b.blockNumber ? -1 : 1;
+        })
+        .slice(0, SWAP_HISTORY_DISPLAY_LIMIT);
+    });
+
+    return newItemCount;
+  }, []);
+
+  const fetchSubgraphSwapPage = useCallback(async (skip: number, rawSchema: boolean) => {
+    const response = await fetch("/api/subgraph", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: rawSchema ? SWAP_HISTORY_RAW_QUERY : SWAP_HISTORY_QUERY,
+        variables: {
+          limit: SWAP_HISTORY_PAGE_SIZE,
+          skip,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Subgraph request failed: ${response.status}`);
+    }
+
+    const json = await response.json();
+    if (json.errors?.length) {
+      throw new Error(json.errors[0]?.message || "Subgraph returned errors");
+    }
+
+    const swaps = json.data?.swaps;
+    return Array.isArray(swaps) ? swaps as SubgraphSwap[] : [];
+  }, []);
+
+  const loadSwapHistoryFromSubgraph = useCallback(async () => {
+    let rawSchema = false;
+    let firstPage: SubgraphSwap[];
+
+    try {
+      firstPage = await fetchSubgraphSwapPage(0, false);
+    } catch {
+      rawSchema = true;
+      firstPage = await fetchSubgraphSwapPage(0, true);
+    }
+
+    if (firstPage.length === 0) return false;
+
+    const firstItems = firstPage
+      .map((swap, index) => parseSubgraphSwap(swap, index))
+      .filter((item): item is SwapHistoryItem => !!item);
+    addSwapHistoryItems(firstItems);
+
+    let totalCount = firstPage.length;
+    setSwapHistoryTotalCount(totalCount);
+
+    for (let page = 1; page < SWAP_HISTORY_MAX_COUNT_PAGES && firstPage.length === SWAP_HISTORY_PAGE_SIZE; page += 1) {
+      const nextPage = await fetchSubgraphSwapPage(page * SWAP_HISTORY_PAGE_SIZE, rawSchema);
+      totalCount += nextPage.length;
+      setSwapHistoryTotalCount(totalCount);
+      if (nextPage.length < SWAP_HISTORY_PAGE_SIZE) break;
+      firstPage = nextPage;
+    }
+
+    return true;
+  }, [addSwapHistoryItems, fetchSubgraphSwapPage]);
+
+  const fetchSwapHistoryRange = useCallback(async (fromBlock: bigint, toBlock: bigint, live: boolean) => {
+    if (!publicClient || toBlock < fromBlock) return 0;
+
+    const logs = await publicClient.getLogs({
+      address: DEX_ADDRESS as `0x${string}`,
+      event: SWAPPED_EVENT,
+      fromBlock,
+      toBlock,
+    }) as SwapLogLike[];
+
+    const recentLogs = logs
+      .filter(hasSwapArgs)
+      .filter((log) => log.blockNumber !== undefined)
+      .sort((a, b) => {
+        if (a.blockNumber === b.blockNumber) return Number(b.logIndex ?? 0) - Number(a.logIndex ?? 0);
+        return (a.blockNumber ?? 0n) > (b.blockNumber ?? 0n) ? -1 : 1;
+      })
+      .slice(0, 80);
+
+    const now = Math.floor(Date.now() / 1000);
+    const blockTimes = new Map<string, number>();
+    if (!live) {
+      const blockNumbers = Array.from(new Set(recentLogs.map((log) => log.blockNumber?.toString()).filter(Boolean))) as string[];
+      await Promise.all(
+        blockNumbers.map(async (blockNumberValue) => {
+          try {
+            const block = await publicClient.getBlock({ blockNumber: BigInt(blockNumberValue) });
+            blockTimes.set(blockNumberValue, Number(block.timestamp));
+          } catch {
+            blockTimes.set(blockNumberValue, now);
+          }
+        })
+      );
+    }
+
+    const historyItems = recentLogs.map((log) => ({
+      id: makeSwapHistoryId(log),
+      txHash: log.transactionHash,
+      blockNumber: log.blockNumber ?? 0n,
+      logIndex: Number(log.logIndex ?? 0),
+      user: log.args.user,
+      tokenIn: log.args.tokenIn,
+      tokenOut: log.args.tokenOut,
+      amountIn: log.args.amountIn,
+      amountOut: log.args.amountOut,
+      fee: log.args.fee,
+      timestamp: live ? now : blockTimes.get((log.blockNumber ?? 0n).toString()) ?? now,
+      live,
+    }));
+    const newItemCount = addSwapHistoryItems(historyItems);
+
+    if (live && newItemCount > 0) {
+      setSwapHistoryTotalCount((current) => current === null ? newItemCount : current + newItemCount);
+    }
+
+    if (toBlock > lastSwapHistoryBlockRef.current) {
+      lastSwapHistoryBlockRef.current = toBlock;
+    }
+
+    return logs.length;
+  }, [addSwapHistoryItems, publicClient]);
+
+  const countSwapHistoryRange = useCallback(async (fromBlock: bigint, toBlock: bigint) => {
+    if (!publicClient || toBlock < fromBlock) return 0;
+
+    let total = 0;
+    let cursor = fromBlock;
+    let chunkSize = SWAP_HISTORY_COUNT_CHUNK_BLOCKS;
+
+    while (cursor <= toBlock) {
+      const chunkTo = cursor + chunkSize > toBlock ? toBlock : cursor + chunkSize;
+      try {
+        const logs = await publicClient.getLogs({
+          address: DEX_ADDRESS as `0x${string}`,
+          event: SWAPPED_EVENT,
+          fromBlock: cursor,
+          toBlock: chunkTo,
+        });
+        total += logs.length;
+        cursor = chunkTo + 1n;
+        if (chunkSize < SWAP_HISTORY_COUNT_CHUNK_BLOCKS) {
+          chunkSize = chunkSize * 2n > SWAP_HISTORY_COUNT_CHUNK_BLOCKS
+            ? SWAP_HISTORY_COUNT_CHUNK_BLOCKS
+            : chunkSize * 2n;
+        }
+      } catch (error) {
+        if (chunkSize <= 500n) throw error;
+        chunkSize = chunkSize / 2n;
+      }
+    }
+
+    return total;
+  }, [publicClient]);
+
+  useEffect(() => {
+    if (!publicClient) return;
+    let cancelled = false;
+
+    async function loadSwapHistory() {
+      setSwapHistoryLoading(true);
+      try {
+        const loadedFromSubgraph = await loadSwapHistoryFromSubgraph();
+        if (cancelled) return;
+        if (loadedFromSubgraph) return;
+
+        const latestBlock = await publicClient.getBlockNumber();
+        const fromBlock = latestBlock > SWAP_HISTORY_LOOKBACK_BLOCKS
+          ? latestBlock - SWAP_HISTORY_LOOKBACK_BLOCKS
+          : 0n;
+        const loadedCount = await fetchSwapHistoryRange(fromBlock, latestBlock, false);
+        if (cancelled) return;
+        setSwapHistoryTotalCount((current) => Math.max(current ?? 0, loadedCount));
+
+        const countFromBlock = configuredDexStartBlock(latestBlock);
+        if (countFromBlock < fromBlock) {
+          const totalCount = await countSwapHistoryRange(countFromBlock, latestBlock);
+          if (!cancelled) {
+            setSwapHistoryTotalCount((current) => Math.max(current ?? 0, totalCount));
+          }
+        }
+      } catch (error) {
+        console.warn("Failed to load swap history", error);
+      } finally {
+        if (!cancelled) setSwapHistoryLoading(false);
+      }
+    }
+
+    loadSwapHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, [countSwapHistoryRange, fetchSwapHistoryRange, loadSwapHistoryFromSubgraph, publicClient]);
+
+  useWatchContractEvent({
+    address: DEX_ADDRESS as `0x${string}`,
+    abi: DEX_ABI,
+    eventName: "Swapped",
+    onLogs(logs) {
+      const now = Math.floor(Date.now() / 1000);
+      const newItemCount = addSwapHistoryItems((logs as SwapLogLike[])
+        .filter(hasSwapArgs)
+        .map((log) => ({
+          id: makeSwapHistoryId(log),
+          txHash: log.transactionHash,
+          blockNumber: log.blockNumber ?? 0n,
+          logIndex: Number(log.logIndex ?? 0),
+          user: log.args.user,
+          tokenIn: log.args.tokenIn,
+          tokenOut: log.args.tokenOut,
+          amountIn: log.args.amountIn,
+          amountOut: log.args.amountOut,
+          fee: log.args.fee,
+          timestamp: now,
+          live: true,
+        })));
+      if (newItemCount > 0) {
+        setSwapHistoryTotalCount((current) => current === null ? newItemCount : current + newItemCount);
+      }
+      for (const log of logs as SwapLogLike[]) {
+        if (log.blockNumber && log.blockNumber > lastSwapHistoryBlockRef.current) {
+          lastSwapHistoryBlockRef.current = log.blockNumber;
+        }
+      }
+    },
+  });
+
+  useEffect(() => {
+    if (!publicClient) return;
+    let cancelled = false;
+
+    async function pollNewSwapLogs() {
+      if (cancelled || swapHistoryPollingRef.current) return;
+      swapHistoryPollingRef.current = true;
+      try {
+        const latestBlock = await publicClient.getBlockNumber();
+        const lastSeen = lastSwapHistoryBlockRef.current;
+        const fromBlock = lastSeen > 0n
+          ? lastSeen + 1n
+          : latestBlock > 80n
+            ? latestBlock - 80n
+            : 0n;
+        if (latestBlock >= fromBlock) {
+          await fetchSwapHistoryRange(fromBlock, latestBlock, true);
+        } else if (latestBlock > lastSwapHistoryBlockRef.current) {
+          lastSwapHistoryBlockRef.current = latestBlock;
+        }
+      } catch (error) {
+        console.warn("Failed to poll swap history", error);
+      } finally {
+        swapHistoryPollingRef.current = false;
+      }
+    }
+
+    const intervalId = window.setInterval(pollNewSwapLogs, 6_000);
+    pollNewSwapLogs();
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [fetchSwapHistoryRange, publicClient]);
 
   // Collect all pool data
   type PoolDataTuple = readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint];
   const allPoolData = useMemo<(PoolDataTuple | undefined)[]>(() => {
     return [pool0Data, pool1Data, pool2Data, pool3Data, pool4Data, pool5Data, pool6Data, pool7Data] as (PoolDataTuple | undefined)[];
   }, [pool0Data, pool1Data, pool2Data, pool3Data, pool4Data, pool5Data, pool6Data, pool7Data]);
+
+  const getPoolTokenDecimals = useCallback((poolIndex: number) => {
+    const pool = poolOptions[poolIndex];
+    if (!pool) return 18;
+    return pool.token.toLowerCase() === NATIVE_ADDRESS.toLowerCase()
+      ? 18
+      : Number(tokenDecimalsList[poolIndex] ?? 18);
+  }, [poolOptions, tokenDecimalsList]);
+
+  const getPoolTokenSymbol = useCallback((poolIndex: number) => {
+    const pool = poolOptions[poolIndex];
+    if (!pool) return "TOKEN";
+    return pool.token.toLowerCase() === NATIVE_ADDRESS.toLowerCase()
+      ? "zkLTC"
+      : (tokenSymbols[poolIndex] as string) || "TOKEN";
+  }, [poolOptions, tokenSymbols]);
+
+  const replaceDexPairUrl = useCallback((pairId: string, view: "swap" | "chart", timeframe: ChartTf = selectedChartTimeframe) => {
+    if (typeof window === "undefined") return;
+    window.history.replaceState(null, "", buildDexPairHref(pairId, view, timeframe));
+  }, [selectedChartTimeframe]);
+
+  const selectPoolForSwap = useCallback((poolIndex: number, updateUrl = true) => {
+    const pool = poolOptions[poolIndex];
+    if (!pool) return;
+
+    setActiveTab("swap");
+    setSwapTokenIn(KNOWN_TOKENS[1]);
+    if (pool.token.toLowerCase() === NATIVE_ADDRESS.toLowerCase()) {
+      setSwapTokenOut(NATIVE_TOKEN);
+    } else {
+      setSwapTokenOut({
+        address: pool.token,
+        symbol: getPoolTokenSymbol(poolIndex),
+        decimals: getPoolTokenDecimals(poolIndex),
+        name: "Token",
+      });
+    }
+    if (updateUrl) replaceDexPairUrl(pool.pairId, "swap");
+  }, [getPoolTokenDecimals, getPoolTokenSymbol, poolOptions, replaceDexPairUrl]);
+
+  const getChartAnchorForPool = useCallback((poolIndex: number) => {
+    const pool = poolOptions[poolIndex];
+    const pd = allPoolData[poolIndex];
+    const tokenDecimalsForPool = getPoolTokenDecimals(poolIndex);
+    if (!pool || !pd) return { price: null, tokenDecimals: tokenDecimalsForPool };
+
+    const isToken0NUSD = pd[0].toLowerCase() === NUSD_ADDRESS.toLowerCase();
+    const isToken1NUSD = pd[1].toLowerCase() === NUSD_ADDRESS.toLowerCase();
+    const reserveOther = isToken0NUSD ? pd[3] : (isToken1NUSD ? pd[2] : pd[3]);
+    const reserveNUSD = isToken0NUSD ? pd[2] : (isToken1NUSD ? pd[3] : pd[2]);
+    const price = reserveNUSD > 0n && reserveOther > 0n
+      ? Number(formatUnits(reserveNUSD, 18)) / Number(formatUnits(reserveOther, tokenDecimalsForPool))
+      : 0;
+
+    return { price: price > 0 ? price : null, tokenDecimals: tokenDecimalsForPool };
+  }, [allPoolData, getPoolTokenDecimals, poolOptions]);
+
+  const openChartForPool = useCallback((
+    poolIndex: number,
+    anchor?: { price: number | null; tokenDecimals: number },
+    timeframe: ChartTf = selectedChartTimeframe,
+    updateUrl = true,
+  ) => {
+    const pool = poolOptions[poolIndex];
+    if (!pool) return;
+
+    setSelectedChartPair(pool.pairId);
+    setSelectedChartAnchor(anchor ?? getChartAnchorForPool(poolIndex));
+    setSelectedChartTimeframe(timeframe);
+    setShowChart(true);
+    if (updateUrl) replaceDexPairUrl(pool.pairId, "chart", timeframe);
+  }, [getChartAnchorForPool, poolOptions, replaceDexPairUrl, selectedChartTimeframe]);
+
+  useEffect(() => {
+    if (routePairAppliedRef.current || !poolOptions.length || typeof window === "undefined") return;
+
+    const params = new URLSearchParams(window.location.search);
+    const pairParam = params.get("pair")?.toLowerCase();
+    if (!pairParam) return;
+
+    const poolIndex = poolOptions.findIndex(pool => pool.pairId.toLowerCase() === pairParam);
+    if (poolIndex < 0) return;
+
+    routePairAppliedRef.current = true;
+    const view = params.get("view");
+    const timeframe = parseChartTimeframe(params.get("tf"));
+    selectPoolForSwap(poolIndex, false);
+    if (view === "chart") {
+      openChartForPool(poolIndex, undefined, timeframe, false);
+    }
+  }, [openChartForPool, poolOptions, selectPoolForSwap]);
 
   // Sort pools based on filter
   const sortedPoolIndices = useMemo(() => {
@@ -596,7 +1403,7 @@ export default function DexAllInOne() {
   const { data: farmLPData, refetch: refetchFarmLP } = useDexRead<bigint>("userLP",
     farmPairId && address ? [farmPairId, address as `0x${string}`] : undefined
   );
-  const { data: farmPendingReward, refetch: refetchPendingReward } = useDexRead<bigint>("getUserPendingReward",
+  const { data: farmPendingReward, refetch: refetchPendingReward } = useRewardRead<bigint>("getUserPendingReward",
     address ? [address as `0x${string}`] : undefined
   );
   
@@ -648,12 +1455,12 @@ export default function DexAllInOne() {
 
   // Calculate swap output
   useEffect(() => {
-    if (!poolData || !swapAmountIn || parseFloat(swapAmountIn) === 0) {
+    const amountIn = safeParseUnits(swapAmountIn, swapTokenIn.decimals);
+    if (!poolData || !amountIn || amountIn === 0n) {
       setSwapAmountOut("");
       return;
     }
     const pd = poolData as PoolDataTuple;
-    const amountIn = parseUnits(swapAmountIn, swapTokenIn.decimals);
     const t0 = pd[0];
     const r0 = pd[2];
     const r1 = pd[3];
@@ -747,8 +1554,13 @@ export default function DexAllInOne() {
       toast.error("Approval required", `Please approve ${swapTokenIn.symbol} first`);
       return;
     }
-    const amountIn = parseUnits(swapAmountIn, swapTokenIn.decimals);
-    const minOut = parseUnits(String(parseFloat(swapAmountOut) * 0.99), swapTokenOut.decimals);
+    const amountIn = safeParseUnits(swapAmountIn, swapTokenIn.decimals);
+    const quotedOut = safeParseUnits(swapAmountOut, swapTokenOut.decimals);
+    if (!amountIn || !quotedOut) {
+      toast.error("Invalid amount", "Enter a normal decimal number, for example 0.1 or 10000");
+      return;
+    }
+    const minOut = (quotedOut * 99n) / 100n;
     swap(swapTokenIn.address, swapTokenOut.address, amountIn, minOut);
     toast.info("Swapping", "Please confirm transaction...");
   };
@@ -756,12 +1568,16 @@ export default function DexAllInOne() {
   const handleAddLiquidity = () => {
     if (!isConnected || !ensureCorrectChain()) return;
     if (!poolToken || !poolAmountToken || !poolAmountNUSD) return;
-    if (poolToken.address !== NATIVE_ADDRESS && (!allowancePoolToken || allowancePoolToken < parseUnits(poolAmountToken, poolToken.decimals))) {
+    const amountToken = safeParseUnits(poolAmountToken, poolToken.decimals);
+    const amountNUSD = safeParseUnits(poolAmountNUSD, 18);
+    if (!amountToken || !amountNUSD) {
+      toast.error("Invalid amount", "Enter a normal decimal number, for example 0.1 or 10000");
+      return;
+    }
+    if (poolToken.address !== NATIVE_ADDRESS && (!allowancePoolToken || allowancePoolToken < amountToken)) {
       toast.error("Approval required", `Please approve ${poolToken.symbol} first`);
       return;
     }
-    const amountToken = parseUnits(poolAmountToken, poolToken.decimals);
-    const amountNUSD = parseUnits(poolAmountNUSD, 18);
     addLiquidity(poolToken.address, nusdAddress!, amountToken, amountNUSD);
     toast.info("Adding liquidity", "Please confirm transaction...");
   };
@@ -772,7 +1588,11 @@ export default function DexAllInOne() {
     if (!farmNUSDAmount || !farmPairId) return;
     if (!farmPoolToken) return;
     
-    const amountNUSD = parseUnits(farmNUSDAmount, 18);
+    const amountNUSD = safeParseUnits(farmNUSDAmount, 18);
+    if (!amountNUSD) {
+      toast.error("Invalid amount", "Enter a normal decimal number, for example 10000");
+      return;
+    }
     const pd = allPoolData[selectedFarmPool];
     
     if (!pd) return;
@@ -813,10 +1633,8 @@ export default function DexAllInOne() {
   const handleFarmRemove = () => {
     if (!isConnected || !ensureCorrectChain()) return;
     if (!farmLpAmount || !farmPairId || !farmUserLP) return;
-    let amount: bigint;
-    try {
-      amount = parseUnits(farmLpAmount, 18);
-    } catch {
+    const amount = safeParseUnits(farmLpAmount, 18);
+    if (!amount) {
       toast.error("Invalid amount", "Enter a valid LP amount");
       return;
     }
@@ -902,8 +1720,12 @@ export default function DexAllInOne() {
 
     const tokenA = createTokenA.trim() as `0x${string}`;
     const tokenB = nusdAddress!;
-    const amountA = parseUnits(createAmountA, tokenDecimals || 18);
-    const amountB = parseUnits(createAmountB, 18);
+    const amountA = createAmountAParsed;
+    const amountB = createAmountBParsed;
+    if (!amountA || !amountB) {
+      toast.error("Invalid amount", "Enter normal decimals like 0.1 and 10000, not 1e+35");
+      return;
+    }
     
     // Check approval for tokenA
     if (tokenA !== NATIVE_ADDRESS && needsCreateApproval) {
@@ -919,32 +1741,16 @@ export default function DexAllInOne() {
   const needsSwapApproval = swapTokenIn && swapTokenIn.address !== NATIVE_ADDRESS && !allowanceInError && allowanceIn !== undefined && allowanceIn === 0n;
   const needsPoolApproval = poolToken && poolToken.address !== NATIVE_ADDRESS && !allowancePoolError && allowancePoolToken !== undefined && allowancePoolToken === 0n;
 
-  if (!mounted) return (
-    <div className="min-h-screen bg-[#0F0F23] flex flex-col items-center justify-center">
-      <div className="relative">
-        <div className="w-16 h-16 border-4 border-[#8888ff]/30 border-t-[#8888ff] animate-spin rounded-full" />
-        <div className="absolute inset-0 w-16 h-16 border-4 border-[#8888ff]/20 border-t-[#8888ff] animate-spin rounded-full" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }} />
-      </div>
-      <div className="mt-6 text-lg text-[#8888ff] animate-pulse" style={{ fontFamily: "var(--font-departure)" }}>
-        LOADING
-      </div>
-      <div className="flex gap-1 mt-2">
-        <span className="w-2 h-2 bg-[#8888ff] animate-bounce" style={{ animationDelay: '0ms' }} />
-        <span className="w-2 h-2 bg-[#8888ff] animate-bounce" style={{ animationDelay: '150ms' }} />
-        <span className="w-2 h-2 bg-[#8888ff] animate-bounce" style={{ animationDelay: '300ms' }} />
-      </div>
-    </div>
-  );
+  if (!mounted) return <PageLoader />;
 
   return (
     <>
       <style>{shimmerStyle}</style>
-      <div className="min-h-screen bg-[#0F0F23]">
+      <div className="dex-page min-h-screen bg-[#0F0F23]">
       {/* Header */}
       <header className="sticky top-0 z-50 bg-[#1A1A2E]/90 backdrop-blur-xl border-b border-[#2D2D44]">
         <div className="w-full mx-auto px-4 sm:px-6 xl:px-8 py-2 sm:py-3 max-w-[100rem] flex items-center justify-between gap-2">
-          <Link href="/" className="flex items-center gap-2">
-            <Image src="/NUSD_LOGO.jpg" alt="0xDex" width={32} height={32} className="w-8 h-8 rounded-full" />
+          <Link href="/" className="flex items-center">
             <span className="text-white font-bold" style={{ fontFamily: "var(--font-departure)" }}>0xDex</span>
           </Link>
           <div className="flex items-center gap-3">
@@ -983,7 +1789,7 @@ export default function DexAllInOne() {
               <StatCard label="TVL" value={formatUSD(stats.totalNUSDLocked)} icon="◫" />
               <StatCard label="Total Volume" value={formatUSD(totalVolume)} icon="◈" />
               <StatCard label="Pools" value={String(allPools?.length || 0)} icon="◫" />
-              <StatCard label="Total Reward Pool" value={totalRewardPool ? formatUSD(totalRewardPool) : "$0.00"} icon="✦" color="amber" />
+              <StatCard label="Total Reward Pool" value={rewardPoolNusdBalance ? formatUSD(rewardPoolNusdBalance as bigint) : "$0.00"} icon="✦" color="amber" />
             </>
           )}
         </div>
@@ -1031,9 +1837,10 @@ export default function DexAllInOne() {
                   </div>
                   <div className="bg-[#13131F] rounded-xl border border-[#2D2D44] p-4">
                     <input
-                      type="number"
+                      type="text"
+                      inputMode="decimal"
                       value={swapAmountIn}
-                      onChange={(e) => setSwapAmountIn(e.target.value)}
+                      onChange={(e) => setSwapAmountIn(normalizeDecimalInput(e.target.value))}
                       placeholder="0.0"
                       className="w-full bg-transparent text-xl sm:text-2xl xl:text-3xl font-bold text-white outline-none"
                       style={{ fontFamily: "var(--font-departure)" }}
@@ -1070,22 +1877,22 @@ export default function DexAllInOne() {
                       alignItems: 'center',
                       justifyContent: 'center',
                       fontSize: 14,
-                      color: '#d8d8ff',
-                      background: 'linear-gradient(180deg, #6366F1 0%, #4F46E5 100%)',
-                      border: 'none',
+                      color: '#050505',
+                      background: '#f2f2f2',
+                      border: '1px solid rgba(255,255,255,0.72)',
                       cursor: 'pointer',
                       clipPath: 'polygon(0 3px, 3px 3px, 3px 0, calc(100% - 3px) 0, calc(100% - 3px) 3px, 100% 3px, 100% calc(100% - 3px), calc(100% - 3px) calc(100% - 3px), calc(100% - 3px) 100%, 3px 100%, 3px calc(100% - 3px), 0 calc(100% - 3px))',
-                      boxShadow: '0 0 0 1px rgba(99,102,241,0.4), 3px 3px 0 0 rgba(99,102,241,0.25)',
+                      boxShadow: '3px 3px 0 0 #000',
                       transition: 'all 0.15s cubic-bezier(0.4, 0, 0.2, 1)',
                       fontFamily: 'var(--font-departure)',
                     }}
                     onMouseEnter={e => {
-                      (e.target as HTMLElement).style.background = 'linear-gradient(180deg, #818CF8 0%, #6366F1 100%)';
-                      (e.target as HTMLElement).style.boxShadow = '0 0 0 1px rgba(99,102,241,0.6), 3px 3px 0 0 rgba(99,102,241,0.3), 0 0 12px rgba(99,102,241,0.3)';
+                      (e.target as HTMLElement).style.background = '#ffffff';
+                      (e.target as HTMLElement).style.boxShadow = '4px 4px 0 0 #000';
                     }}
                     onMouseLeave={e => {
-                      (e.target as HTMLElement).style.background = 'linear-gradient(180deg, #6366F1 0%, #4F46E5 100%)';
-                      (e.target as HTMLElement).style.boxShadow = '0 0 0 1px rgba(99,102,241,0.4), 3px 3px 0 0 rgba(99,102,241,0.25)';
+                      (e.target as HTMLElement).style.background = '#f2f2f2';
+                      (e.target as HTMLElement).style.boxShadow = '3px 3px 0 0 #000';
                     }}
                   >
                     ⇅
@@ -1102,7 +1909,8 @@ export default function DexAllInOne() {
                   </div>
                   <div className="bg-[#13131F] rounded-xl border border-[#2D2D44] p-4">
                     <input
-                      type="number"
+                      type="text"
+                      inputMode="decimal"
                       value={swapAmountOut}
                       readOnly
                       placeholder="0.0"
@@ -1151,7 +1959,8 @@ export default function DexAllInOne() {
                     <div className="flex justify-between">
                       <span className="text-[#64748B]">Price Impact</span>
                       {(() => {
-                        const amountInWei = parseUnits(swapAmountIn || "0", swapTokenIn.decimals);
+                        const amountInWei = safeParseUnits(swapAmountIn || "0", swapTokenIn.decimals);
+                        if (!amountInWei) return <span className="text-white">-</span>;
                         const pd = poolData as PoolDataTuple;
                         const t0 = pd[0];
                         const r0 = pd[2];
@@ -1230,9 +2039,10 @@ export default function DexAllInOne() {
                   </div>
                   <div className="flex gap-2">
                     <input
-                      type="number"
+                      type="text"
+                      inputMode="decimal"
                       value={poolAmountToken}
-                      onChange={(e) => setPoolAmountToken(e.target.value)}
+                      onChange={(e) => setPoolAmountToken(normalizeDecimalInput(e.target.value))}
                       placeholder="0.0"
                       className="flex-1 bg-[#13131F] p-3 rounded-lg text-base md:text-lg font-bold text-white outline-none border border-[#2D2D44] focus:border-emerald-500"
                       style={{ fontFamily: "var(--font-departure)" }}
@@ -1256,9 +2066,10 @@ export default function DexAllInOne() {
                     </span>
                   </div>
                   <input
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
                     value={poolAmountNUSD}
-                    onChange={(e) => setPoolAmountNUSD(e.target.value)}
+                    onChange={(e) => setPoolAmountNUSD(normalizeDecimalInput(e.target.value))}
                     placeholder="0.0"
                     className="w-full bg-[#13131F] p-3 rounded-lg text-base md:text-lg font-bold text-white outline-none border border-[#2D2D44] focus:border-emerald-500"
                     style={{ fontFamily: "var(--font-departure)" }}
@@ -1319,9 +2130,10 @@ export default function DexAllInOne() {
                     <span className="text-xs text-[#64748B]">Token Amount</span>
                   </div>
                   <input
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
                     value={createAmountA}
-                    onChange={(e) => setCreateAmountA(e.target.value)}
+                    onChange={(e) => setCreateAmountA(normalizeDecimalInput(e.target.value))}
                     placeholder="0.0"
                     className="w-full bg-[#13131F] px-4 py-3 rounded-lg text-base md:text-lg font-bold text-white outline-none border border-[#2D2D44] focus:border-rose-500 transition-colors"
                     style={{ fontFamily: "var(--font-departure)" }}
@@ -1333,7 +2145,7 @@ export default function DexAllInOne() {
                           key={pct}
                           onClick={() => {
                             const bal = tokenDecimals && createTokenBalance ? Number(formatUnits(createTokenBalance as bigint, tokenDecimals)) : 0;
-                            setCreateAmountA((bal * pct / 100).toString());
+                            setCreateAmountA(formatDecimalForInput(bal * pct / 100));
                           }}
                           className="flex-1 py-1 text-[10px] bg-[#2D2D44] hover:bg-rose-500/30 rounded text-[#64748B] hover:text-white transition-colors font-bold"
                           style={{ fontFamily: "var(--font-departure)" }}
@@ -1365,9 +2177,10 @@ export default function DexAllInOne() {
                     <span className="text-xs text-[#64748B]">$NUSD Amount</span>
                   </div>
                   <input
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
                     value={createAmountB}
-                    onChange={(e) => setCreateAmountB(e.target.value)}
+                    onChange={(e) => setCreateAmountB(normalizeDecimalInput(e.target.value))}
                     placeholder="0.0"
                     className="w-full bg-[#13131F] px-4 py-3 rounded-lg text-base md:text-lg font-bold text-white outline-none border border-[#2D2D44] focus:border-rose-500 transition-colors"
                     style={{ fontFamily: "var(--font-departure)" }}
@@ -1379,7 +2192,7 @@ export default function DexAllInOne() {
                           key={pct}
                           onClick={() => {
                             const bal = Number(formatUnits(balanceNUSD as bigint, 18));
-                            setCreateAmountB((bal * pct / 100).toString());
+                            setCreateAmountB(formatDecimalForInput(bal * pct / 100));
                           }}
                           className="flex-1 py-1 text-[10px] bg-[#2D2D44] hover:bg-rose-500/30 rounded text-[#64748B] hover:text-white transition-colors font-bold"
                           style={{ fontFamily: "var(--font-departure)" }}
@@ -1392,13 +2205,19 @@ export default function DexAllInOne() {
                 </div>
 
                 {/* Price Info */}
-                {createAmountA && createAmountB && Number(createAmountB) > 0 && Number(createAmountA) > 0 && (
-                  <div className="mt-4 px-1 text-xs flex justify-between">
-                    <span className="text-[#64748B]">Initial Price</span>
-                    <span className="text-emerald-400 font-bold">
-                      1 {(tokenSymbol as string) || "Token"} = {(Number(createAmountB) / Number(createAmountA)).toFixed(6)} $NUSD
-                    </span>
-                  </div>
+                {createAmountAParsed && createAmountBParsed && createAmountAParsed > 0n && createAmountBParsed > 0n && (
+                  (() => {
+                    const price = Number(formatUnits(createAmountBParsed, 18)) /
+                      Number(formatUnits(createAmountAParsed, Number(tokenDecimals ?? 18)));
+                    return (
+                      <div className="mt-4 px-1 text-xs flex justify-between">
+                        <span className="text-[#64748B]">Initial Price</span>
+                        <span className="text-emerald-400 font-bold">
+                          1 {(tokenSymbol as string) || "Token"} = {Number.isFinite(price) ? price.toFixed(6) : "-"} $NUSD
+                        </span>
+                      </div>
+                    );
+                  })()
                 )}
 
                 {/* Create Pool Button */}
@@ -1460,21 +2279,16 @@ export default function DexAllInOne() {
                       volume24h={(pData[5] as bigint) || 0n}
                       totalVolume={(pData[6] as bigint) || 0n}
                       lpTotal={(pData[4] as bigint) || 0n}
-                      tokenSymbol={pool.token === NATIVE_ADDRESS ? "zkLTC" : (tokenSymbols[poolIndex] as string) || undefined}
-                      tokenDecimals={pool.token === NATIVE_ADDRESS ? 18 : Number(tokenDecimalsList[poolIndex] ?? 18)}
+                      pairId={pool.pairId}
+                      swapHref={buildDexPairHref(pool.pairId, "swap")}
+                      chartHref={buildDexPairHref(pool.pairId, "chart", selectedChartTimeframe)}
+                      tokenSymbol={getPoolTokenSymbol(poolIndex)}
+                      tokenDecimals={getPoolTokenDecimals(poolIndex)}
                       onSelect={() => {
-                        setActiveTab("swap");
-                        setSwapTokenIn(KNOWN_TOKENS[1]);
-                        if (pool.token.toLowerCase() === NATIVE_ADDRESS.toLowerCase()) {
-                          setSwapTokenOut(NATIVE_TOKEN);
-                        } else {
-                          setSwapTokenOut({ address: pool.token, symbol: (tokenSymbols[poolIndex] as string) || "TOKEN", decimals: 18, name: "Token" });
-                        }
+                        selectPoolForSwap(poolIndex);
                       }}
                       onViewChart={(chartAnchor) => {
-                        setSelectedChartPair(pool.pairId);
-                        setSelectedChartAnchor(chartAnchor);
-                        setShowChart(true);
+                        openChartForPool(poolIndex, chartAnchor);
                       }}
                     />
                   );
@@ -1557,9 +2371,10 @@ export default function DexAllInOne() {
                   </button>
                 </div>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   value={farmNUSDAmount}
-                  onChange={(e) => setFarmNUSDAmount(e.target.value)}
+                  onChange={(e) => setFarmNUSDAmount(normalizeDecimalInput(e.target.value))}
                   placeholder="0.0"
                   className="w-full bg-[#13131F] p-3 rounded-xl text-base md:text-lg font-bold text-white outline-none border border-[#2D2D44] focus:border-amber-500"
                   style={{ fontFamily: "var(--font-departure)" }}
@@ -1577,7 +2392,8 @@ export default function DexAllInOne() {
                         const reserve0 = pd[2] as bigint;
                         const reserve1 = pd[3] as bigint;
                         const totalLP = pd[4] as bigint;
-                        const amountNUSD = parseUnits(farmNUSDAmount, 18);
+                        const amountNUSD = safeParseUnits(farmNUSDAmount, 18);
+                        if (!amountNUSD) return "0.0000";
                         let tokenAmt: bigint;
                         if (totalLP === 0n) {
                           tokenAmt = amountNUSD;
@@ -1622,14 +2438,14 @@ export default function DexAllInOne() {
               <div className="flex gap-3">
                 <button
                   onClick={handleFarmAdd}
-                  disabled={!farmNUSDAmount || !farmNUSDAmount || parseFloat(farmNUSDAmount) <= 0}
+                  disabled={!isPositiveDecimal(farmNUSDAmount)}
                   className="flex-1 py-3 pixel-btn-soft pixel-btn-soft-emerald"
                 >
                   ADD LIQUIDITY
                 </button>
                 <button
                   onClick={handleFarmRemove}
-                  disabled={!farmLpAmount || !farmUserLP || parseFloat(farmLpAmount) <= 0}
+                  disabled={!farmUserLP || !isPositiveDecimal(farmLpAmount)}
                   className="flex-1 py-3 pixel-btn-soft pixel-btn-soft-amber"
                 >
                   REMOVE LP
@@ -1649,9 +2465,10 @@ export default function DexAllInOne() {
                   </button>
                 </div>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   value={farmLpAmount}
-                  onChange={(e) => setFarmLpAmount(e.target.value)}
+                  onChange={(e) => setFarmLpAmount(normalizeDecimalInput(e.target.value))}
                   placeholder="0.0"
                   className="w-full bg-[#13131F] p-3 rounded-xl text-base md:text-lg font-bold text-white outline-none border border-[#2D2D44] focus:border-amber-500"
                   style={{ fontFamily: "var(--font-departure)" }}
@@ -1668,6 +2485,15 @@ export default function DexAllInOne() {
               </button>
             </div>
           </div>
+        </div>
+
+        <div className="mt-4 md:mt-6">
+          <SwapHistoryPanel
+            swaps={swapHistory}
+            loading={swapHistoryLoading}
+            totalCount={swapHistoryTotalCount}
+            tokenMetaByAddress={tokenMetaByAddress}
+          />
         </div>
 
       </main>
@@ -1708,8 +2534,18 @@ export default function DexAllInOne() {
             initialPrice={initialChartPrice}
             token0Decimals={18}
             token1Decimals={selectedTokenDecimals}
-            initialTimeframe={240}
-            onClose={() => { setShowChart(false); setSelectedChartPair(null); setSelectedChartAnchor(null); }}
+            initialTimeframe={selectedChartTimeframe}
+            onTimeframeChange={(timeframe) => {
+              setSelectedChartTimeframe(timeframe);
+              if (selectedChartPair) replaceDexPairUrl(selectedChartPair, "chart", timeframe);
+            }}
+            onClose={() => {
+              const closingPair = selectedChartPair;
+              setShowChart(false);
+              setSelectedChartPair(null);
+              setSelectedChartAnchor(null);
+              if (closingPair) replaceDexPairUrl(closingPair, "swap");
+            }}
           />
         );
       })()}

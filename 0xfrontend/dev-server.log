@@ -1,0 +1,96 @@
+
+> frontend@1.0.0 dev
+> next dev
+
+   ▲ Next.js 15.5.18
+   - Local:        http://localhost:3000
+   - Network:      http://172.16.0.2:3000
+   - Environments: .env.local
+   - Experiments (use with caution):
+     · optimizePackageImports
+
+ ✓ Starting...
+ ✓ Ready in 3.7s
+ ○ Compiling /0xdex ...
+ ✓ Compiled /0xdex in 29.5s (10223 modules)
+ GET /0xdex 200 in 30578ms
+ ✓ Compiled in 1988ms (4783 modules)
+ ✓ Compiled in 1126ms (4783 modules)
+ ✓ Compiled in 1241ms (4783 modules)
+ ✓ Compiled in 1302ms (4783 modules)
+ ✓ Compiled in 1014ms (4783 modules)
+ ✓ Compiled in 1411ms (4783 modules)
+ ✓ Compiled in 1627ms (4783 modules)
+ ✓ Compiled in 1089ms (4783 modules)
+ ✓ Compiled in 1181ms (4783 modules)
+ ✓ Compiled in 1347ms (4783 modules)
+ ✓ Compiled in 840ms (4783 modules)
+ ✓ Compiled in 1080ms (4783 modules)
+ ✓ Compiled in 844ms (4783 modules)
+ ✓ Compiled in 1011ms (4783 modules)
+ ✓ Compiled in 969ms (4783 modules)
+ ✓ Compiled in 639ms (4783 modules)
+ ✓ Compiled in 1039ms (4783 modules)
+ ✓ Compiled in 645ms (4783 modules)
+ ○ Compiling / ...
+ ✓ Compiled /0xdex in 2.5s (10200 modules)
+ GET /0xdex 200 in 2852ms
+ GET / 200 in 3462ms
+ GET / 200 in 96ms
+ GET / 200 in 308ms
+ HEAD / 200 in 126ms
+ ✓ Compiled in 1083ms (4784 modules)
+ ○ Compiling / ...
+ ✓ Compiled / in 1024ms (5308 modules)
+ GET / 200 in 1814ms
+ HEAD / 200 in 93ms
+ ✓ Compiled in 1773ms (10092 modules)
+ GET / 200 in 581ms
+ HEAD / 200 in 78ms
+ ✓ Compiled in 1977ms (10092 modules)
+ GET / 200 in 379ms
+ HEAD / 200 in 89ms
+ GET / 200 in 126ms
+ HEAD / 200 in 87ms
+ GET / 200 in 109ms
+ ○ Compiling /0xdex ...
+ ✓ Compiled /0xdex in 2.2s (5430 modules)
+ GET /0xdex 200 in 3185ms
+ ✓ Compiled in 1836ms (4784 modules)
+ ✓ Compiled in 1148ms (4784 modules)
+ ○ Compiling / ...
+ ✓ Compiled / in 3.2s (5308 modules)
+ GET / 200 in 4136ms
+ ✓ Compiled in 1212ms (4784 modules)
+ ✓ Compiled in 1020ms (4784 modules)
+ ○ Compiling / ...
+ ✓ Compiled / in 3.3s (5308 modules)
+ GET / 200 in 4214ms
+ ✓ Compiled in 1764ms (4784 modules)
+ ✓ Compiled in 864ms (4784 modules)
+ ✓ Compiled in 967ms (4784 modules)
+ ✓ Compiled in 886ms (4784 modules)
+ ○ Compiling /0xpixel/gallery ...
+ ✓ Compiled /0xpixel/gallery in 7s (10221 modules)
+ GET /0xpixel/gallery 200 in 8172ms
+ GET /0xpixel 200 in 8249ms
+ GET /0xpixel/gallery 200 in 196ms
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 1623ms (10226 modules)
+ GET /0xpixel/gallery 404 in 2219ms
+ HEAD /0xpixel/gallery 200 in 368ms
+ GET /0xpixel/gallery 200 in 174ms
+ HEAD /0xpixel/gallery 200 in 130ms
+ GET /0xpixel/gallery 200 in 231ms
+ HEAD /0xpixel/gallery 200 in 115ms
+ ✓ Compiled in 3.5s (10215 modules)
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 1448ms (10206 modules)
+ GET /0xpixel/gallery 404 in 2384ms
+ GET /0xpixel/gallery 200 in 256ms
+ ○ Compiling /0xpixel ...
+ ✓ Compiled /0xpixel in 1187ms (5424 modules)
+ GET /0xpixel 200 in 2005ms
+ ✓ Compiled in 3.9s (10198 modules)
+ ✓ Compiled in 2.9s (10198 modules)
+ ✓ Compiled in 1214ms (4812 modules)

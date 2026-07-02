@@ -16,6 +16,8 @@ import {
   NATIVE_ADDRESS,
   PoolInfo,
 } from "./0xDexAbi";
+import { REWARD_MANAGER_ABI, REWARD_MANAGER_ADDRESS } from "./rewardAbi";
+import { NUSD_ADDRESS } from "./NUSDContract";
 
 // ============================================================
 // Tokens registry — NUSD + native (zkLTC on LitVM)
@@ -39,7 +41,7 @@ export interface Token {
 export const KNOWN_TOKENS: Token[] = [
   NATIVE_TOKEN,
   {
-    address: "0x6ffB02fa705A0DB3c8EbB31A63EdFE62c103363D",
+    address: NUSD_ADDRESS,
     symbol: "NUSD",
     decimals: 18,
     name: "NUSD Stablecoin",
@@ -58,6 +60,23 @@ export function useDexRead<T = unknown>(
   const result = useReadContract({
     address: DEX_ADDRESS,
     abi: DEX_ABI,
+    functionName: functionName as never,
+    args: args as never,
+  });
+
+  return {
+    ...result,
+    data: result.data as T | undefined,
+  };
+}
+
+export function useRewardRead<T = unknown>(
+  functionName: string,
+  args?: readonly unknown[],
+) {
+  const result = useReadContract({
+    address: REWARD_MANAGER_ADDRESS,
+    abi: REWARD_MANAGER_ABI,
     functionName: functionName as never,
     args: args as never,
   });
@@ -130,8 +149,8 @@ export function useDexWrite() {
 
   const claimReward = useCallback(() => {
     return writeContract({
-      address: DEX_ADDRESS,
-      abi: DEX_ABI,
+      address: REWARD_MANAGER_ADDRESS,
+      abi: REWARD_MANAGER_ABI,
       functionName: "claimReward",
       args: [],
     });
@@ -220,6 +239,7 @@ export function useAllPools() {
     bigint,
     bigint,
     bigint,
+    bigint,
   ];
 
   const result = useMemo<
@@ -231,8 +251,8 @@ export function useAllPools() {
       const info = poolInfos?.[i]?.result as PoolTuple | undefined;
       return {
         pairId,
-        token0: (info?.[0] ?? "0x0000000000000000000000000000000000000000") as `0x${string}`,
-        token1: (info?.[1] ?? "0x0000000000000000000000000000000000000000") as `0x${string}`,
+        token0: (info?.[0] ?? NATIVE_ADDRESS) as `0x${string}`,
+        token1: (info?.[1] ?? NATIVE_ADDRESS) as `0x${string}`,
       };
     });
   }, [pairIds, poolInfos]);
@@ -248,11 +268,12 @@ export function usePoolExists(pairId: `0x${string}` | undefined) {
 }
 
 export function usePoolInfo(pairId: `0x${string}` | undefined) {
-  // New ABI returns [token0, token1, reserve0, reserve1, totalLP, volume24h, totalVolume, lastVolumeReset]
+  // New ABI returns [token0, token1, reserve0, reserve1, totalLP, volume24h, totalVolume, lastVolumeReset, createdAt]
   const { data: poolData } = useDexRead<
     readonly [
       string,
       string,
+      bigint,
       bigint,
       bigint,
       bigint,
@@ -273,6 +294,7 @@ export function usePoolInfo(pairId: `0x${string}` | undefined) {
       volume24h: poolData[5],
       totalVolume: poolData[6],
       lastVolumeReset: poolData[7],
+      createdAt: poolData[8],
     };
   }, [poolData]);
 }
@@ -297,15 +319,36 @@ export function usePoolPriceInfo(pairId: `0x${string}` | undefined) {
 }
 
 export function useSpotPrice(tokenIn: `0x${string}` | undefined, tokenOut: `0x${string}` | undefined) {
-  const result = useDexRead<bigint>(
-    "getPrice",
+  const { data: pairId, isLoading: loadingPair, error: pairError } = useDexRead<`0x${string}`>(
+    "getPairId",
     tokenIn && tokenOut ? [tokenIn, tokenOut] : undefined,
   );
+  const { data: poolData, isLoading: loadingPool, error: poolError } = useDexRead<
+    readonly [
+      `0x${string}`,
+      `0x${string}`,
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+      bigint,
+    ]
+  >("pools", pairId ? [pairId] : undefined);
 
-  return useMemo(
-    () => ({ ...result }),
-    [result],
-  );
+  const data = useMemo(() => {
+    if (!poolData || !tokenIn || poolData[2] === 0n || poolData[3] === 0n) return undefined;
+    return tokenIn.toLowerCase() === poolData[0].toLowerCase()
+      ? (poolData[2] * 10n ** 18n) / poolData[3]
+      : (poolData[3] * 10n ** 18n) / poolData[2];
+  }, [poolData, tokenIn]);
+
+  return {
+    data,
+    isLoading: loadingPair || loadingPool,
+    error: pairError || poolError,
+  };
 }
 
 // ============================================================
@@ -314,7 +357,7 @@ export function useSpotPrice(tokenIn: `0x${string}` | undefined, tokenOut: `0x${
 
 export function useUserPendingReward() {
   const { address } = useAccount();
-  return useDexRead<bigint>(
+  return useRewardRead<bigint>(
     "getUserPendingReward",
     address ? [address] : undefined,
   );
@@ -322,16 +365,16 @@ export function useUserPendingReward() {
 
 export function useUserNUSDLocked() {
   const { address } = useAccount();
-  return useDexRead<bigint>(
+  return useRewardRead<bigint>(
     "userNUSDLocked",
     address ? [address] : undefined,
   );
 }
 
 export function useDexStats() {
-  const { data: totalNUSDLocked, isLoading: loadingNUSD } = useDexRead<bigint>("totalNUSDLocked");
-  const { data: totalRewardPool, isLoading: loadingReward } = useDexRead<bigint>("totalRewardPool");
-  const { data: accRewardPerNUSD, isLoading: loadingAcc } = useDexRead<bigint>("accRewardPerNUSD");
+  const { data: totalNUSDLocked, isLoading: loadingNUSD } = useRewardRead<bigint>("totalNUSDLocked");
+  const { data: totalRewardPool, isLoading: loadingReward } = useRewardRead<bigint>("totalRewardPool");
+  const { data: accRewardPerNUSD, isLoading: loadingAcc } = useRewardRead<bigint>("accRewardPerNUSD");
   const { data: swapFee, isLoading: loadingFee } = useDexRead<bigint>("swapFee");
 
   const isLoading = loadingNUSD || loadingReward || loadingAcc || loadingFee;

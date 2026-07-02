@@ -152,7 +152,7 @@ function ToastViewport({
     <div
       aria-live="polite"
       aria-atomic="true"
-      className="pointer-events-none fixed z-[100] top-4 right-4 left-4 sm:left-auto sm:max-w-sm flex flex-col gap-2"
+      className="pointer-events-none fixed z-[100] top-4 left-4 w-[calc(100dvw-2rem)] max-w-[calc(100dvw-2rem)] sm:left-auto sm:right-4 sm:w-full sm:max-w-sm flex flex-col gap-2"
     >
       {toasts.map((toast) => (
         <ToastCard key={toast.id} toast={toast} onDismiss={onDismiss} />
@@ -199,7 +199,7 @@ function ToastCard({
       data-toast-kind={toast.kind}
       className={[
         "toast-card pointer-events-auto",
-        "rounded-xl border backdrop-blur-md shadow-2xl shadow-black/40",
+        "border backdrop-blur-md shadow-[6px_6px_0_0_var(--pixel-shadow),0_24px_70px_rgba(0,0,0,0.42)]",
         "ring-1 px-3.5 py-3 min-w-0",
         styles.ring,
       ].join(" ")}
@@ -263,7 +263,7 @@ function ToastCard({
           type="button"
           onClick={() => onDismiss(toast.id)}
           aria-label="Dismiss notification"
-          className="flex-shrink-0 -mr-1 -mt-1 w-6 h-6 rounded-md flex items-center justify-center text-[#64748B] hover:text-white hover:bg-white/10 transition-colors"
+          className="flex-shrink-0 -mr-1 -mt-1 flex h-6 w-6 items-center justify-center border border-white/[0.08] text-[#64748B] transition-colors hover:bg-white/10 hover:text-white"
         >
           <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.4" viewBox="0 0 24 24">
             <path strokeLinecap="round" d="M6 6l12 12M18 6L6 18" />

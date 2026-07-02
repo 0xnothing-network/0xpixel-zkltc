@@ -4,10 +4,12 @@ import { pixelDataToSVG } from "./gridParser";
 import { litvm, LITVM_RPC_URL } from "@/config/wagmi";
 
 export const PIXEL_NFT_CONTRACT_ADDRESS: `0x${string}` =
-  "0x7bE3B9035AAAcB57b6634eCBa65402e37E30Bf66";
+  (process.env.NEXT_PUBLIC_PIXEL_NFT_ADDRESS as `0x${string}`) ||
+  "0x33A32b9b2BEe864f9e42BFa39cA7BDC72f655988";
 
 export const PIXEL_MARKETPLACE_ADDRESS: `0x${string}` =
-  "0x8f3B1f42e671097001f9FBEec5635d51C8Ed14fd";
+  (process.env.NEXT_PUBLIC_PIXEL_MARKETPLACE_ADDRESS as `0x${string}`) ||
+  "0x13337cadA78d53C90E3c0EcE44C17c467C1a86F4";
 
 export const LITVM_EXPLORER_URL = "https://liteforge.explorer.caldera.xyz";
 

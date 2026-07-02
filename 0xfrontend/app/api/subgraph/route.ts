@@ -21,9 +21,8 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'edge';
 
-const SUBGRAPH_URL =
-  process.env.NEXT_PUBLIC_SUBGRAPH_URL ||
-  'https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.4/gn';
+const SUBGRAPH_URL_RAW = process.env.NEXT_PUBLIC_SUBGRAPH_URL || '';
+const SUBGRAPH_URL = SUBGRAPH_URL_RAW === 'disabled' ? '' : SUBGRAPH_URL_RAW;
 
 interface CacheEntry {
   body: string;
@@ -67,6 +66,10 @@ function evictLRU(): void {
 }
 
 export async function POST(request: NextRequest) {
+  if (!SUBGRAPH_URL) {
+    return NextResponse.json({ error: 'DEX subgraph URL is not configured' }, { status: 503 });
+  }
+
   let payload: { query?: string; variables?: Record<string, unknown> };
   try {
     payload = await request.json();
