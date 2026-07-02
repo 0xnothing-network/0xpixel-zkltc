@@ -1,7 +1,8 @@
 import { PIXEL_NFT_CONTRACT_ADDRESS } from "@/lib/contract";
 import { pixelDataToSVG } from "@/lib/gridParser";
 
-const DEFAULT_MARKETPLACE_SUBGRAPH_URL = "";
+const DEFAULT_MARKETPLACE_SUBGRAPH_URL =
+  "https://api.goldsky.com/api/public/project_cmr0mev6548fr01xtd92rc135/subgraphs/marketplace/1.0.1/gn";
 
 const MARKETPLACE_SUBGRAPH_URL_RAW =
   process.env.NEXT_PUBLIC_MARKETPLACE_SUBGRAPH_URL ||
