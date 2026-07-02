@@ -633,6 +633,14 @@ export default function CandleChart({
     Math.floor(Date.now() / Math.max(1, initialTimeframe) / 60_000)
   ));
 
+  const cancelPendingChartWork = useCallback(() => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    pendingRef.current = null;
+  }, []);
+
   useEffect(() => {
     timeframeRef.current = timeframe;
   }, [timeframe]);
@@ -698,22 +706,23 @@ export default function CandleChart({
     token1Decimals,
   ]);
 
-  const clearChartForSeries = useCallback((seriesKey: string) => {
-    if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
-    pendingRef.current = null;
+  const prepareChartForSeries = useCallback((seriesKey: string) => {
+    cancelPendingChartWork();
     lastRawCandlesRef.current = [];
     chartFirstTimeRef.current = null;
     chartLastTimeRef.current = null;
     chartSeriesKeyRef.current = seriesKey;
     liveSyntheticCandlesRef.current.delete(seriesKey);
     dataInitializedRef.current = false;
+    if (ohlcvRef.current) ohlcvRef.current.innerHTML = '';
+  }, [cancelPendingChartWork]);
+
+  const clearChartForSeries = useCallback((seriesKey: string) => {
+    prepareChartForSeries(seriesKey);
     setHasData(false);
     if (candleRef.current) candleRef.current.setData([]);
     if (ohlcvRef.current) ohlcvRef.current.innerHTML = '';
-  }, []);
+  }, [prepareChartForSeries]);
 
   useEffect(() => {
     const nextTimeframe = TF.find(t => t.value === initialTimeframe)?.value ?? 240;
@@ -722,10 +731,10 @@ export default function CandleChart({
     if (nextTimeframe === timeframe) return;
 
     const nextSeriesKey = makeSeriesKey(pairId, nextTimeframe, invertPrice);
-    clearChartForSeries(nextSeriesKey);
+    prepareChartForSeries(nextSeriesKey);
     setLoadingSeriesKey(nextSeriesKey);
     setTimeframe(nextTimeframe);
-  }, [clearChartForSeries, initialTimeframe, invertPrice, pairId, timeframe]);
+  }, [initialTimeframe, invertPrice, pairId, prepareChartForSeries, timeframe]);
 
   const flushPending = useCallback(() => {
     rafRef.current = null;
@@ -955,6 +964,7 @@ export default function CandleChart({
       ),
     );
     const hasCachedSeriesData = Boolean(cachedSeries?.candles?.length);
+    const hasLiveSeriesSeed = isValidNumber(livePrice) && livePrice > 0;
     const isNewSeries =
       lastPairRef.current !== pairId ||
       lastTfRef.current !== timeframe ||
@@ -964,11 +974,10 @@ export default function CandleChart({
       lastPairRef.current = pairId;
       lastTfRef.current = timeframe;
       lastInvertRef.current = invertPrice;
-      if (!hasCachedSeriesData && candles.length === 0) {
+      if (!hasCachedSeriesData && candles.length === 0 && !hasLiveSeriesSeed && !hasData) {
         clearChartForSeries(seriesKey);
       } else {
-        chartSeriesKeyRef.current = seriesKey;
-        if (ohlcvRef.current) ohlcvRef.current.innerHTML = '';
+        prepareChartForSeries(seriesKey);
       }
       setLoadingSeriesKey(seriesKey);
     }
@@ -992,6 +1001,10 @@ export default function CandleChart({
     }
 
     if (!chartCandles.length) {
+      if (isLoading) {
+        return;
+      }
+
       lastRawCandlesRef.current = [];
       setLoadingSeriesKey(current => (current === seriesKey ? '' : current));
       pendingRef.current = {
@@ -1054,7 +1067,11 @@ export default function CandleChart({
     pairId,
     timeframe,
     invertPrice,
+    hasData,
+    isLoading,
+    loadingSeriesKey,
     clearChartForSeries,
+    prepareChartForSeries,
     queuePendingFlush,
     queryClient,
     normalizedToken0,
@@ -1087,7 +1104,7 @@ export default function CandleChart({
         onClick={() => {
           if (tf.value === timeframe) return;
           const nextSeriesKey = makeSeriesKey(pairId, tf.value, invertPrice);
-          clearChartForSeries(nextSeriesKey);
+          prepareChartForSeries(nextSeriesKey);
           setLoadingSeriesKey(nextSeriesKey);
           setTimeframe(tf.value);
           onTimeframeChange?.(tf.value);
@@ -1095,9 +1112,9 @@ export default function CandleChart({
       />
     )),
     [
-      clearChartForSeries,
       invertPrice,
       pairId,
+      prepareChartForSeries,
       timeframe,
       onTimeframeChange,
     ],
