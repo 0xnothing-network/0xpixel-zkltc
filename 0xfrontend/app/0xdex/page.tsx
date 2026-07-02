@@ -114,16 +114,52 @@ const BPS_DENOM = 10000n; // matches `swapFee / 10000` in 0xDex.sol
 type ChartTf = 1 | 15 | 60 | 240 | 1440;
 const DEFAULT_CHART_TF: ChartTf = 240;
 const CHART_TIMEFRAMES = new Set<number>([1, 15, 60, 240, 1440]);
+const SWAP_SLIPPAGE_BPS = 300n;
+const SWAP_PRICE_REFRESH_MS = 2_000;
+
+type PoolDataTuple = readonly [
+  `0x${string}`,
+  `0x${string}`,
+  bigint,
+  bigint,
+  bigint,
+  bigint,
+  bigint,
+  bigint,
+  bigint,
+];
 
 function parseChartTimeframe(value: string | null): ChartTf {
   const parsed = Number(value);
   return CHART_TIMEFRAMES.has(parsed) ? parsed as ChartTf : DEFAULT_CHART_TF;
 }
 
-function buildDexPairHref(pairId: string, view: "swap" | "chart", timeframe: ChartTf = DEFAULT_CHART_TF) {
-  const params = new URLSearchParams({ pair: pairId, view });
-  if (view === "chart") params.set("tf", String(timeframe));
-  return `/0xdex?${params.toString()}`;
+function quoteSwapFromPool(
+  amountIn: bigint,
+  pool: PoolDataTuple,
+  tokenIn: `0x${string}`,
+  swapFeeBps: bigint,
+) {
+  const isToken0In = tokenIn.toLowerCase() === pool[0].toLowerCase();
+  const reserveIn = isToken0In ? pool[2] : pool[3];
+  const reserveOut = isToken0In ? pool[3] : pool[2];
+
+  if (amountIn <= 0n || reserveIn <= 0n || reserveOut <= 0n) {
+    return { amountOut: 0n, reserveIn, reserveOut, fee: 0n, amountInAfterFee: 0n };
+  }
+
+  const fee = (amountIn * swapFeeBps) / BPS_DENOM;
+  const amountInAfterFee = amountIn - fee;
+  const amountOut = amountInAfterFee <= 0n
+    ? 0n
+    : (amountInAfterFee * reserveOut) / (reserveIn + amountInAfterFee);
+
+  return { amountOut, reserveIn, reserveOut, fee, amountInAfterFee };
+}
+
+function minOutWithSlippage(amountOut: bigint, slippageBps = SWAP_SLIPPAGE_BPS) {
+  if (amountOut <= 0n || slippageBps >= BPS_DENOM) return 0n;
+  return (amountOut * (BPS_DENOM - slippageBps)) / BPS_DENOM;
 }
 
 /**
@@ -185,6 +221,7 @@ const SWAP_HISTORY_COUNT_CHUNK_BLOCKS = 20_000n;
 const SWAP_HISTORY_PAGE_SIZE = 1000;
 const SWAP_HISTORY_DISPLAY_LIMIT = 80;
 const SWAP_HISTORY_MAX_COUNT_PAGES = 100;
+const DEFAULT_DEX_START_BLOCK = 24_937_136n;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 
 const SWAP_HISTORY_QUERY = `
@@ -223,9 +260,7 @@ function configuredDexStartBlock(latestBlock: bigint) {
     const block = BigInt(value);
     return block <= latestBlock ? block : latestBlock;
   }
-  return latestBlock > SWAP_HISTORY_LOOKBACK_BLOCKS
-    ? latestBlock - SWAP_HISTORY_LOOKBACK_BLOCKS
-    : 0n;
+  return DEFAULT_DEX_START_BLOCK <= latestBlock ? DEFAULT_DEX_START_BLOCK : 0n;
 }
 
 type TokenMeta = {
@@ -672,9 +707,9 @@ export default function DexAllInOne() {
   const { connect, connectors } = useConnect();
   const { disconnect } = useDisconnect();
   const { switchChain } = useSwitchChain();
-  const { writeContract } = useWriteContract();
+  const { writeContract, writeContractAsync } = useWriteContract();
   const toast = useToast();
-  const { addLiquidity, removeLiquidity, swap, claimReward } = useDexWrite();
+  const { addLiquidity, removeLiquidity, claimReward } = useDexWrite();
   const LITVM_CHAIN_ID = 4441;
   const poolListRef = useRef<HTMLDivElement>(null);
   const publicClient = usePublicClient();
@@ -720,6 +755,7 @@ export default function DexAllInOne() {
   const [swapTokenOut, setSwapTokenOut] = useState<Token | null>(NATIVE_TOKEN); // zkLTC
   const [swapAmountIn, setSwapAmountIn] = useState("");
   const [swapAmountOut, setSwapAmountOut] = useState("");
+  const [isSwapSubmitting, setIsSwapSubmitting] = useState(false);
 
   // Pool state
   const [poolToken, setPoolToken] = useState<Token>(NATIVE_TOKEN);
@@ -1160,21 +1196,22 @@ export default function DexAllInOne() {
       try {
         const loadedFromSubgraph = await loadSwapHistoryFromSubgraph();
         if (cancelled) return;
-        if (loadedFromSubgraph) return;
 
         const latestBlock = await publicClient.getBlockNumber();
-        const fromBlock = latestBlock > SWAP_HISTORY_LOOKBACK_BLOCKS
-          ? latestBlock - SWAP_HISTORY_LOOKBACK_BLOCKS
-          : 0n;
-        const loadedCount = await fetchSwapHistoryRange(fromBlock, latestBlock, false);
-        if (cancelled) return;
-        setSwapHistoryTotalCount((current) => Math.max(current ?? 0, loadedCount));
-
         const countFromBlock = configuredDexStartBlock(latestBlock);
-        if (countFromBlock < fromBlock) {
+        const recentFromBlock = latestBlock > SWAP_HISTORY_LOOKBACK_BLOCKS
+          ? latestBlock - SWAP_HISTORY_LOOKBACK_BLOCKS
+          : countFromBlock;
+
+        if (!loadedFromSubgraph) {
+          await fetchSwapHistoryRange(recentFromBlock, latestBlock, false);
+          if (cancelled) return;
+        }
+
+        if (countFromBlock <= latestBlock) {
           const totalCount = await countSwapHistoryRange(countFromBlock, latestBlock);
           if (!cancelled) {
-            setSwapHistoryTotalCount((current) => Math.max(current ?? 0, totalCount));
+            setSwapHistoryTotalCount(totalCount);
           }
         }
       } catch (error) {
@@ -1214,6 +1251,20 @@ export default function DexAllInOne() {
         })));
       if (newItemCount > 0) {
         setSwapHistoryTotalCount((current) => current === null ? newItemCount : current + newItemCount);
+      }
+      const hasSelectedPairSwap = (logs as SwapLogLike[]).some((log) => {
+        if (!hasSwapArgs(log) || !swapTokenOut) return false;
+        const tokenIn = log.args.tokenIn.toLowerCase();
+        const tokenOut = log.args.tokenOut.toLowerCase();
+        const selectedIn = swapTokenIn.address.toLowerCase();
+        const selectedOut = swapTokenOut.address.toLowerCase();
+        return (
+          (tokenIn === selectedIn && tokenOut === selectedOut) ||
+          (tokenIn === selectedOut && tokenOut === selectedIn)
+        );
+      });
+      if (hasSelectedPairSwap) {
+        void refetchPool?.();
       }
       for (const log of logs as SwapLogLike[]) {
         if (log.blockNumber && log.blockNumber > lastSwapHistoryBlockRef.current) {
@@ -1259,7 +1310,6 @@ export default function DexAllInOne() {
   }, [fetchSwapHistoryRange, publicClient]);
 
   // Collect all pool data
-  type PoolDataTuple = readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint];
   const allPoolData = useMemo<(PoolDataTuple | undefined)[]>(() => {
     return [pool0Data, pool1Data, pool2Data, pool3Data, pool4Data, pool5Data, pool6Data, pool7Data] as (PoolDataTuple | undefined)[];
   }, [pool0Data, pool1Data, pool2Data, pool3Data, pool4Data, pool5Data, pool6Data, pool7Data]);
@@ -1280,10 +1330,12 @@ export default function DexAllInOne() {
       : (tokenSymbols[poolIndex] as string) || "TOKEN";
   }, [poolOptions, tokenSymbols]);
 
-  const replaceDexPairUrl = useCallback((pairId: string, view: "swap" | "chart", timeframe: ChartTf = selectedChartTimeframe) => {
+  const clearDexPairUrl = useCallback(() => {
     if (typeof window === "undefined") return;
-    window.history.replaceState(null, "", buildDexPairHref(pairId, view, timeframe));
-  }, [selectedChartTimeframe]);
+    if (window.location.pathname === "/0xdex" && window.location.search) {
+      window.history.replaceState(null, "", "/0xdex");
+    }
+  }, []);
 
   const selectPoolForSwap = useCallback((poolIndex: number, updateUrl = true) => {
     const pool = poolOptions[poolIndex];
@@ -1301,8 +1353,8 @@ export default function DexAllInOne() {
         name: "Token",
       });
     }
-    if (updateUrl) replaceDexPairUrl(pool.pairId, "swap");
-  }, [getPoolTokenDecimals, getPoolTokenSymbol, poolOptions, replaceDexPairUrl]);
+    if (updateUrl) clearDexPairUrl();
+  }, [clearDexPairUrl, getPoolTokenDecimals, getPoolTokenSymbol, poolOptions]);
 
   const getChartAnchorForPool = useCallback((poolIndex: number) => {
     const pool = poolOptions[poolIndex];
@@ -1334,8 +1386,8 @@ export default function DexAllInOne() {
     setSelectedChartAnchor(anchor ?? getChartAnchorForPool(poolIndex));
     setSelectedChartTimeframe(timeframe);
     setShowChart(true);
-    if (updateUrl) replaceDexPairUrl(pool.pairId, "chart", timeframe);
-  }, [getChartAnchorForPool, poolOptions, replaceDexPairUrl, selectedChartTimeframe]);
+    if (updateUrl) clearDexPairUrl();
+  }, [clearDexPairUrl, getChartAnchorForPool, poolOptions, selectedChartTimeframe]);
 
   useEffect(() => {
     if (routePairAppliedRef.current || !poolOptions.length || typeof window === "undefined") return;
@@ -1453,7 +1505,7 @@ export default function DexAllInOne() {
   // Live swap fee from contract — defaults to 10 (0.1%) until first read returns.
   const { data: swapFeeBps } = useDexRead<bigint>("swapFee");
 
-  // Calculate swap output
+  // Calculate swap output from the latest pool cache; the submit path refreshes once more.
   useEffect(() => {
     const amountIn = safeParseUnits(swapAmountIn, swapTokenIn.decimals);
     if (!poolData || !amountIn || amountIn === 0n) {
@@ -1461,22 +1513,17 @@ export default function DexAllInOne() {
       return;
     }
     const pd = poolData as PoolDataTuple;
-    const t0 = pd[0];
-    const r0 = pd[2];
-    const r1 = pd[3];
-    const isReversed = swapTokenIn.address !== t0;
-    const reserveIn = isReversed ? r1 : r0;
-    const reserveOut = isReversed ? r0 : r1;
-    // Mirror ZeroDex.sol exactly: fee then constant-product.
-    // Contract fee math: fee = amountIn * swapFee / 10000, then (amountIn-fee)*reserveOut/(reserveIn+amountIn-fee)
-    const feeBps = swapFeeBps ?? 10n;
-    const fee = (amountIn * feeBps) / BPS_DENOM;
-    const amountInAfterFee = amountIn - fee;
-    const amountOut = amountInAfterFee <= 0n
-      ? 0n
-      : (amountInAfterFee * reserveOut) / (reserveIn + amountInAfterFee);
+    const { amountOut } = quoteSwapFromPool(amountIn, pd, swapTokenIn.address, swapFeeBps ?? 10n);
     setSwapAmountOut(Number(formatUnits(amountOut, swapTokenOut?.decimals || 18)).toFixed(6));
   }, [swapAmountIn, poolData, swapTokenIn, swapTokenOut, swapFeeBps]);
+
+  useEffect(() => {
+    if (!swapAmountIn || !pairId || !refetchPool) return;
+    const intervalId = window.setInterval(() => {
+      void refetchPool();
+    }, SWAP_PRICE_REFRESH_MS);
+    return () => window.clearInterval(intervalId);
+  }, [pairId, refetchPool, swapAmountIn]);
 
   // Auto-refetch when new block arrives
   useEffect(() => {
@@ -1547,22 +1594,68 @@ export default function DexAllInOne() {
     }
   };
 
-  const handleFixedSwap = () => {
+  const handleFixedSwap = async () => {
     if (!isConnected || !ensureCorrectChain()) return;
-    if (!swapAmountIn || !poolData || !swapTokenOut) return;
+    if (!swapAmountIn || !poolData || !swapTokenOut || !pairId || !address || !publicClient) return;
+    if (isSwapSubmitting) return;
     if (swapTokenIn.address !== NATIVE_ADDRESS && needsSwapApproval) {
       toast.error("Approval required", `Please approve ${swapTokenIn.symbol} first`);
       return;
     }
     const amountIn = safeParseUnits(swapAmountIn, swapTokenIn.decimals);
-    const quotedOut = safeParseUnits(swapAmountOut, swapTokenOut.decimals);
-    if (!amountIn || !quotedOut) {
+    if (!amountIn) {
       toast.error("Invalid amount", "Enter a normal decimal number, for example 0.1 or 10000");
       return;
     }
-    const minOut = (quotedOut * 99n) / 100n;
-    swap(swapTokenIn.address, swapTokenOut.address, amountIn, minOut);
-    toast.info("Swapping", "Please confirm transaction...");
+    setIsSwapSubmitting(true);
+    try {
+      toast.info("Refreshing price", "Checking the latest pool reserves...");
+      const freshPool = await publicClient.readContract({
+        address: DEX_ADDRESS as `0x${string}`,
+        abi: DEX_ABI,
+        functionName: "pools",
+        args: [pairId],
+      }) as PoolDataTuple;
+
+      const quote = quoteSwapFromPool(amountIn, freshPool, swapTokenIn.address, swapFeeBps ?? 10n);
+      if (quote.amountOut <= 0n) {
+        toast.error("No output", "Pool liquidity changed. Please try again.");
+        return;
+      }
+
+      const minOut = minOutWithSlippage(quote.amountOut);
+      setSwapAmountOut(Number(formatUnits(quote.amountOut, swapTokenOut.decimals)).toFixed(6));
+
+      await publicClient.simulateContract({
+        account: address,
+        address: DEX_ADDRESS as `0x${string}`,
+        abi: DEX_ABI,
+        functionName: "swap",
+        args: [swapTokenIn.address, swapTokenOut.address, amountIn, minOut],
+        value: swapTokenIn.address === NATIVE_ADDRESS ? amountIn : undefined,
+      });
+
+      await writeContractAsync({
+        address: DEX_ADDRESS as `0x${string}`,
+        abi: DEX_ABI,
+        functionName: "swap",
+        args: [swapTokenIn.address, swapTokenOut.address, amountIn, minOut],
+        value: swapTokenIn.address === NATIVE_ADDRESS ? amountIn : undefined,
+      });
+
+      toast.info(
+        "Swapping",
+        `Live quote refreshed. Min out: ${formatTokenAmount(minOut, swapTokenOut.decimals)} ${swapTokenOut.symbol}`,
+      );
+      void refetchPool?.();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Swap failed";
+      toast.error("Swap blocked", message.includes("Slippage")
+        ? "Price moved too fast. Try again with the refreshed quote."
+        : "Transaction could not be simulated with the current pool price.");
+    } finally {
+      setIsSwapSubmitting(false);
+    }
   };
 
   const handleAddLiquidity = () => {
@@ -1976,7 +2069,7 @@ export default function DexAllInOne() {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-[#64748B]">Slippage</span>
-                      <span className="text-white">1.0%</span>
+                      <span className="text-white">{Number(SWAP_SLIPPAGE_BPS) / 100}% live quote</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-[#64748B]">Fee</span>
@@ -1997,12 +2090,12 @@ export default function DexAllInOne() {
                 {/* Button */}
                 <button
                   onClick={handleFixedSwap}
-                  disabled={!swapAmountIn || !poolData || !swapTokenIn || needsSwapApproval}
+                  disabled={isSwapSubmitting || !swapAmountIn || !poolData || !swapTokenIn || needsSwapApproval}
                   className={`w-full py-4 font-bold text-white pixel-btn-soft pixel-btn-soft-full ${
                     needsSwapApproval ? "pixel-btn-soft-secondary" : "pixel-btn-soft-indigo"
                   }`}
                 >
-                  {!isConnected ? "CONNECT WALLET" : !swapAmountIn ? "ENTER AMOUNT" : !poolData ? "NO POOL FOUND" : needsSwapApproval ? `APPROVE ${swapTokenIn.symbol}` : "SWAP"}
+                  {!isConnected ? "CONNECT WALLET" : isSwapSubmitting ? "REFRESHING PRICE..." : !swapAmountIn ? "ENTER AMOUNT" : !poolData ? "NO POOL FOUND" : needsSwapApproval ? `APPROVE ${swapTokenIn.symbol}` : "SWAP"}
                 </button>
               </>
             )}
@@ -2280,8 +2373,8 @@ export default function DexAllInOne() {
                       totalVolume={(pData[6] as bigint) || 0n}
                       lpTotal={(pData[4] as bigint) || 0n}
                       pairId={pool.pairId}
-                      swapHref={buildDexPairHref(pool.pairId, "swap")}
-                      chartHref={buildDexPairHref(pool.pairId, "chart", selectedChartTimeframe)}
+                      swapHref="/0xdex"
+                      chartHref="/0xdex"
                       tokenSymbol={getPoolTokenSymbol(poolIndex)}
                       tokenDecimals={getPoolTokenDecimals(poolIndex)}
                       onSelect={() => {
@@ -2537,14 +2630,12 @@ export default function DexAllInOne() {
             initialTimeframe={selectedChartTimeframe}
             onTimeframeChange={(timeframe) => {
               setSelectedChartTimeframe(timeframe);
-              if (selectedChartPair) replaceDexPairUrl(selectedChartPair, "chart", timeframe);
             }}
             onClose={() => {
-              const closingPair = selectedChartPair;
               setShowChart(false);
               setSelectedChartPair(null);
               setSelectedChartAnchor(null);
-              if (closingPair) replaceDexPairUrl(closingPair, "swap");
+              clearDexPairUrl();
             }}
           />
         );
