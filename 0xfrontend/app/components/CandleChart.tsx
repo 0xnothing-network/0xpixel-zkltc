@@ -1075,7 +1075,8 @@ export default function CandleChart({
 
   const currentSeriesKey = makeSeriesKey(pairId, timeframe, invertPrice);
   const isSeriesLoading = isLoading || loadingSeriesKey === currentSeriesKey;
-  const showLoadingOverlay = isSeriesLoading && (!hasData || candles.length === 0);
+  const hasInstantPrice = isValidNumber(livePrice) && livePrice > 0;
+  const showLoadingOverlay = isSeriesLoading && !hasData && !hasInstantPrice;
 
   const timeframeButtons = useMemo(
     () => TF.map(tf => (
@@ -1165,7 +1166,7 @@ export default function CandleChart({
         <ChartLoadingOverlay label={`LOADING ${TF.find(tf => tf.value === timeframe)?.label ?? ''}`} />
       )}
 
-      {!showLoadingOverlay && !isSeriesLoading && !hasData && (
+      {!showLoadingOverlay && !isSeriesLoading && !hasData && !hasInstantPrice && (
         <div style={{ position: 'absolute', top: 52, left: 0, right: 0, bottom: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontFamily: "'Press Start 2P', monospace", fontSize: 6, color: COLORS.text, gap: 4 }}>
           <span>NO DATA</span>
           <span style={{ color: '#2D2D44', fontSize: 5 }}>Swap on this pair to generate candles</span>

@@ -5,7 +5,8 @@ import Link from "next/link";
 import Image from "next/image";
 import dynamic from "next/dynamic";
 
-const ChartWindow = dynamic(() => import("@/app/components/ChartWindow"), {
+const loadChartWindow = () => import("@/app/components/ChartWindow");
+const ChartWindow = dynamic(loadChartWindow, {
   ssr: false,
 });
 
@@ -112,7 +113,7 @@ function castPoolData(data: unknown): PoolData | null {
 
 const BPS_DENOM = 10000n; // matches `swapFee / 10000` in 0xDex.sol
 type ChartTf = 1 | 15 | 60 | 240 | 1440;
-const DEFAULT_CHART_TF: ChartTf = 240;
+const DEFAULT_CHART_TF: ChartTf = 1;
 const CHART_TIMEFRAMES = new Set<number>([1, 15, 60, 240, 1440]);
 const SWAP_SLIPPAGE_BPS = 300n;
 const SWAP_PRICE_REFRESH_MS = 2_000;
@@ -798,6 +799,26 @@ export default function DexAllInOne() {
   const [selectedChartTimeframe, setSelectedChartTimeframe] = useState<ChartTf>(DEFAULT_CHART_TF);
   const [showChart, setShowChart] = useState(false);
   const routePairAppliedRef = useRef(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const warmChart = () => {
+      void loadChartWindow();
+    };
+    const win = window as typeof window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+
+    if (win.requestIdleCallback) {
+      const handle = win.requestIdleCallback(warmChart, { timeout: 2500 });
+      return () => win.cancelIdleCallback?.(handle);
+    }
+
+    const handle = window.setTimeout(warmChart, 1200);
+    return () => window.clearTimeout(handle);
+  }, []);
 
   // Data
   const stats = useDexStats();
