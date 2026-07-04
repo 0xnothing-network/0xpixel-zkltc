@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "prediction:settle": "node scripts/auto-settle-prediction.mjs",
     "lint": "next lint"
   },
   "dependencies": {

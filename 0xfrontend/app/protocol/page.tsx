@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { PREDICTION_ADDRESS } from "@/lib/0xPredictionAbi";
 
 const CONTRACTS = {
   pixel: process.env.NEXT_PUBLIC_PIXEL_NFT_ADDRESS || "0x33A32b9b2BEe864f9e42BFa39cA7BDC72f655988",
@@ -8,6 +9,7 @@ const CONTRACTS = {
   reward: process.env.NEXT_PUBLIC_REWARD_MANAGER_ADDRESS || "0xCEBbeE6CeAe309E647Be85600dA455C7B15C0de9",
   nusd: process.env.NEXT_PUBLIC_NUSD_ADDRESS || "0xF2d0fd65d9f62D57255AF6350f807E6c11A4CFdb",
   factory: process.env.NEXT_PUBLIC_FACTORY_ADDRESS || "0x93F9d4cF10cB785B47BFaD64ecccEA4D66C73508",
+  prediction: PREDICTION_ADDRESS,
 };
 
 export const metadata: Metadata = {
@@ -222,6 +224,71 @@ export default function DocsPage() {
 
           {/* Divider */}
           <div className="border-t border-white/[0.04] my-12" />
+
+          {/* 0xPrediction Section */}
+          <section className="mb-16">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-10 h-10 bg-emerald-400 text-black flex items-center justify-center" style={{ fontFamily: "var(--font-departure), monospace" }}>
+                P
+              </div>
+              <h2
+                className="text-white"
+                style={{
+                  fontFamily: "var(--font-departure), monospace",
+                  fontSize: "1.5rem",
+                  fontWeight: 700,
+                }}
+              >
+                0xPrediction
+              </h2>
+            </div>
+
+            <p className="text-white/60 mb-8 leading-relaxed">
+              DIA oracle prediction rounds using NUSD. Users bet UP or DOWN during the first 5 minutes after each oracle heartbeat.
+            </p>
+
+            <div className="bg-white/[0.03] border border-white/[0.08] rounded-none p-6 mb-6">
+              <h3 className="text-white/80 text-xs tracking-widest uppercase mb-4">Contract Address</h3>
+              <AddressRow label="Prediction" value={CONTRACTS.prediction} />
+            </div>
+
+            <div className="space-y-4">
+              <h3 className="text-white/80 text-xs tracking-widest uppercase">Key Functions</h3>
+
+              {[
+                {
+                  name: "placeBet",
+                  desc: "Bet NUSD on UP or DOWN for the current DIA heartbeat round. A round auto-starts from the latest oracle update.",
+                  signature: "placeBet(symbol, side, amount) -> roundId",
+                },
+                {
+                  name: "settleLatestRound",
+                  desc: "Settle a closed round using the first DIA oracle round after close time.",
+                  signature: "settleLatestRound(roundId)",
+                },
+                {
+                  name: "claim",
+                  desc: "Claim payout or refund after a round is settled or cancelled.",
+                  signature: "claim(roundId) -> amount",
+                },
+                {
+                  name: "setAssetDefault",
+                  desc: "Owner function to add or update an oracle pair with the default 1h heartbeat and 5m bet window.",
+                  signature: "setAssetDefault(symbol, feed, enabled)",
+                },
+              ].map((fn) => (
+                <div key={fn.name} className="bg-white/[0.03] border border-white/[0.08] p-5">
+                  <div className="flex items-start gap-4">
+                    <span className="text-indigo-400 text-xs font-mono mt-0.5 shrink-0">{fn.name}</span>
+                    <div>
+                      <p className="text-white/60 text-sm mb-2">{fn.desc}</p>
+                      <code className="text-white/40 text-xs font-mono block">{fn.signature}</code>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
 
           {/* 0xFactory Section */}
           <section className="mb-16">

@@ -1,0 +1,32 @@
+
+> frontend@1.0.0 dev
+> next dev
+
+   ▲ Next.js 15.5.18
+   - Local:        http://localhost:3000
+   - Network:      http://172.23.192.1:3000
+   - Environments: .env.local
+   - Experiments (use with caution):
+     · optimizePackageImports
+
+ ✓ Starting...
+ ✓ Ready in 3s
+ ○ Compiling /0xprediction ...
+ ✓ Compiled /0xprediction in 26.6s (10126 modules)
+ GET /0xprediction 200 in 27687ms
+ ✓ Compiled in 1593ms (4734 modules)
+ ✓ Compiled in 1941ms (4734 modules)
+ ✓ Compiled in 711ms (4734 modules)
+ ✓ Compiled in 1456ms (4734 modules)
+ ✓ Compiled in 1332ms (4734 modules)
+   Reload env: .env.local
+ ✓ Compiled in 18.9s (4761 modules)
+ ○ Compiling / ...
+ ✓ Compiled / in 25.8s (10046 modules)
+ ✓ Compiled in 1981ms (4749 modules)
+ ✓ Compiled in 2.1s (4749 modules)
+ ✓ Compiled in 677ms (4749 modules)
+ ✓ Compiled in 1412ms (4749 modules)
+ ✓ Compiled in 1116ms (4749 modules)
+   Reload env: .env.local
+ ✓ Compiled in 1012ms (4735 modules)
