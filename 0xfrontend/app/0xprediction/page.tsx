@@ -220,7 +220,7 @@ function PairStatusButton({
     args: [symbol],
     query: {
       enabled: ready,
-      refetchInterval: 5_000,
+      refetchInterval: 3_000,
       retry: false,
     },
   });
@@ -390,14 +390,14 @@ export default function PredictionPage() {
     abi: PREDICTION_ABI,
     functionName: "canBetNow",
     args: [selectedSymbol],
-    query: { refetchInterval: 5_000, retry: false },
+    query: { refetchInterval: 2_000, retry: false },
   });
   const latestRoundRead = useReadContract({
     address: PREDICTION_ADDRESS,
     abi: PREDICTION_ABI,
     functionName: "latestRoundOfAsset",
     args: [assetId],
-    query: { refetchInterval: 5_000 },
+    query: { refetchInterval: 2_000 },
   });
   const balanceRead = useReadContract({
     address: NUSD_ADDRESS,
@@ -422,21 +422,21 @@ export default function PredictionPage() {
     abi: PREDICTION_ABI,
     functionName: "getRoundCore",
     args: hasRound ? [latestRoundId] : undefined,
-    query: { enabled: hasRound, refetchInterval: 5_000 },
+    query: { enabled: hasRound, refetchInterval: 2_000 },
   });
   const roundTimesRead = useReadContract({
     address: PREDICTION_ADDRESS,
     abi: PREDICTION_ABI,
     functionName: "getRoundTimes",
     args: hasRound ? [latestRoundId] : undefined,
-    query: { enabled: hasRound, refetchInterval: 5_000 },
+    query: { enabled: hasRound, refetchInterval: 2_000 },
   });
   const roundPoolsRead = useReadContract({
     address: PREDICTION_ADDRESS,
     abi: PREDICTION_ABI,
     functionName: "getRoundPools",
     args: hasRound ? [latestRoundId] : undefined,
-    query: { enabled: hasRound, refetchInterval: 5_000 },
+    query: { enabled: hasRound, refetchInterval: 2_000 },
   });
   const positionRead = useReadContract({
     address: PREDICTION_ADDRESS,
@@ -504,6 +504,8 @@ export default function PredictionPage() {
     : selectedNextEntry
       ? `Next ~ ${selectedNextEntry}`
       : "Waiting oracle";
+  const selectedPriceLabel = activeRound ? "Start price" : "Live oracle";
+  const selectedPriceTime = canBet?.[3];
   const settleCountdown = !hasRound
     ? "--"
     : isSettled
@@ -538,34 +540,59 @@ export default function PredictionPage() {
         setHistoryLoading(true);
         setHistoryError("");
 
-        const logs = await publicClient.getLogs({
-          address: PREDICTION_ADDRESS,
-          event: BET_PLACED_EVENT,
-          args: { user: userAddress },
-          fromBlock: startBlock(),
-          toBlock: "latest",
-        });
-
         const byRound = new Map<
           bigint,
           { roundId: bigint; txHash?: `0x${string}` }
         >();
 
-        for (const log of logs) {
-          const roundId = log.args.roundId;
-          if (roundId === undefined) continue;
-          byRound.set(roundId, {
-            roundId,
-            txHash: log.transactionHash,
+        try {
+          const logs = await publicClient.getLogs({
+            address: PREDICTION_ADDRESS,
+            event: BET_PLACED_EVENT,
+            args: { user: userAddress },
+            fromBlock: startBlock(),
+            toBlock: "latest",
           });
+
+          for (const log of logs) {
+            const roundId = log.args.roundId;
+            if (roundId === undefined) continue;
+            byRound.set(roundId, {
+              roundId,
+              txHash: log.transactionHash,
+            });
+          }
+        } catch {
+          // Some RPC nodes are flaky with indexed event filters. Fall back to scanning recent rounds.
         }
 
-        const recentRounds = Array.from(byRound.values())
+        let recentRounds = Array.from(byRound.values())
           .sort((a, b) => Number(b.roundId - a.roundId))
           .slice(0, 16);
 
-        const rows = await Promise.all(
-          recentRounds.map(async ({ roundId, txHash }) => {
+        if (recentRounds.length === 0) {
+          const totalRounds = (await publicClient.readContract({
+            address: PREDICTION_ADDRESS,
+            abi: PREDICTION_ABI,
+            functionName: "roundCount",
+          })) as bigint;
+
+          const minRound = totalRounds > 80n ? totalRounds - 79n : 1n;
+          const fallbackRounds: { roundId: bigint; txHash?: `0x${string}` }[] = [];
+
+          if (totalRounds > 0n) {
+            for (let roundId = totalRounds; roundId >= minRound; roundId -= 1n) {
+              fallbackRounds.push({ roundId });
+              if (roundId === minRound) break;
+            }
+          }
+
+          recentRounds = fallbackRounds;
+        }
+
+        const rows = (
+          await Promise.all(
+            recentRounds.map(async ({ roundId, txHash }) => {
             const [core, pos, due] = await Promise.all([
               publicClient.readContract({
                 address: PREDICTION_ADDRESS,
@@ -599,8 +626,9 @@ export default function PredictionPage() {
               result: historyResult(itemOutcome, pos[0], pos[1]),
               txHash,
             } satisfies HistoryItem;
-          })
-        );
+            })
+          )
+        ).filter((item) => item.upAmount > 0n || item.downAmount > 0n);
 
         if (!cancelled) setHistory(rows);
       } catch (error) {
@@ -615,7 +643,7 @@ export default function PredictionPage() {
     }
 
     void loadHistory();
-    const id = window.setInterval(loadHistory, 15_000);
+    const id = window.setInterval(loadHistory, 5_000);
     return () => {
       cancelled = true;
       window.clearInterval(id);
@@ -757,10 +785,15 @@ export default function PredictionPage() {
               </div>
               <div className="text-right">
                 <p className="text-[10px] uppercase tracking-[0.18em] text-white/55">
-                  Price
+                  {selectedPriceLabel}
                 </p>
                 <p className="mt-2 text-2xl text-[var(--pixel-yellow)]">
                   ${formatPrice(canBet?.[2], 6)}
+                </p>
+                <p className="mt-1 text-[10px] text-white/40">
+                  {selectedPriceTime
+                    ? `${activeRound ? "Round start" : "Oracle update"} ${formatClock(selectedPriceTime)}`
+                    : "--"}
                 </p>
               </div>
             </div>
@@ -1065,6 +1098,10 @@ export default function PredictionPage() {
             {!walletAddress ? (
               <div className="mt-5 border border-white/10 bg-black p-5 text-sm text-white/65">
                 Connect wallet to see wins and losses.
+              </div>
+            ) : historyLoading && history.length === 0 ? (
+              <div className="mt-5 border border-white/10 bg-black p-5 text-sm text-white/65">
+                Loading prediction history...
               </div>
             ) : historyError ? (
               <div className="mt-5 border border-[var(--pixel-red)]/40 bg-[rgba(255,52,93,0.08)] p-4 text-xs text-[var(--pixel-red)]">
