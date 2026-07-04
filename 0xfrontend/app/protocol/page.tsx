@@ -14,7 +14,7 @@ const CONTRACTS = {
 
 export const metadata: Metadata = {
   title: "Protocol — 0xNothing",
-  description: "Technical documentation for 0xPixel NFT platform and 0xDex decentralized exchange on LitVM LiteForge.",
+  description: "Technical documentation for 0xPixel, 0xDex, 0xFactory, and 0xPrediction on LitVM Testnet.",
 };
 
 function AddressRow({ label, value }: { label: string; value: string }) {
@@ -244,7 +244,9 @@ export default function DocsPage() {
             </div>
 
             <p className="text-white/60 mb-8 leading-relaxed">
-              DIA oracle prediction rounds using NUSD. Users bet UP or DOWN during the first 5 minutes after each oracle heartbeat.
+              DIA oracle prediction rounds using NUSD. The first prediction starts a round,
+              entry stays open for 10 minutes, and the result settles after a fixed 2-hour
+              round duration.
             </p>
 
             <div className="bg-white/[0.03] border border-white/[0.08] rounded-none p-6 mb-6">
@@ -252,18 +254,36 @@ export default function DocsPage() {
               <AddressRow label="Prediction" value={CONTRACTS.prediction} />
             </div>
 
+            <div className="grid gap-3 mb-8 sm:grid-cols-3">
+              {[
+                { label: "Entry", value: "10 minutes" },
+                { label: "Round", value: "2 hours" },
+                { label: "Fee", value: "0.5%" },
+              ].map((item) => (
+                <div key={item.label} className="bg-white/[0.03] border border-white/[0.08] p-4">
+                  <p className="text-white/40 text-[10px] tracking-widest uppercase mb-2">{item.label}</p>
+                  <p className="text-white text-sm">{item.value}</p>
+                </div>
+              ))}
+            </div>
+
             <div className="space-y-4">
               <h3 className="text-white/80 text-xs tracking-widest uppercase">Key Functions</h3>
 
               {[
                 {
-                  name: "placeBet",
-                  desc: "Bet NUSD on UP or DOWN for the current DIA heartbeat round. A round auto-starts from the latest oracle update.",
-                  signature: "placeBet(symbol, side, amount) -> roundId",
+                  name: "predict",
+                  desc: "Stake NUSD on UP or DOWN. If there is no active round for the pair, this starts a new round and opens the 10-minute entry window.",
+                  signature: "predict(symbol, side, amount) -> roundId",
+                },
+                {
+                  name: "canBetNow",
+                  desc: "Read whether a pair is accepting predictions, plus oracle price, entry deadline, and close time.",
+                  signature: "canBetNow(symbol) -> (canBet, oracleRoundId, price, updatedAt, betDeadline, closeTime)",
                 },
                 {
                   name: "settleLatestRound",
-                  desc: "Settle a closed round using the first DIA oracle round after close time.",
+                  desc: "Settle a closed round after the 2-hour duration using DIA latestRoundData.",
                   signature: "settleLatestRound(roundId)",
                 },
                 {
@@ -272,8 +292,13 @@ export default function DocsPage() {
                   signature: "claim(roundId) -> amount",
                 },
                 {
+                  name: "cancelStaleRound",
+                  desc: "Cancel and refund a stale round only if the oracle feed becomes unreadable after the stale window.",
+                  signature: "cancelStaleRound(roundId)",
+                },
+                {
                   name: "setAssetDefault",
-                  desc: "Owner function to add or update an oracle pair with the default 1h heartbeat and 5m bet window.",
+                  desc: "Owner function to add or update an oracle pair with the default 2-hour round duration and 10-minute entry window.",
                   signature: "setAssetDefault(symbol, feed, enabled)",
                 },
               ].map((fn) => (
