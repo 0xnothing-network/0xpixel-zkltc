@@ -57,6 +57,7 @@ type RoundPoolsTuple = readonly [bigint, bigint, bigint, bigint, bigint, bigint]
 type RoundTimesTuple = readonly [bigint, bigint, bigint, bigint];
 type PositionTuple = readonly [bigint, bigint, boolean];
 type PreviewTuple = readonly [bigint, bigint, bigint];
+type LatestPriceTuple = readonly [bigint, bigint, bigint];
 
 type HistoryItem = {
   roundId: bigint;
@@ -225,7 +226,20 @@ function PairStatusButton({
     },
   });
 
+  const latestPriceRead = useReadContract({
+    address: PREDICTION_ADDRESS,
+    abi: PREDICTION_ABI,
+    functionName: "getLatestPrice",
+    args: [symbol],
+    query: {
+      enabled: ready,
+      refetchInterval: 3_000,
+      retry: false,
+    },
+  });
+
   const canBet = canBetRead.data as CanBetTuple | undefined;
+  const latestPrice = latestPriceRead.data as LatestPriceTuple | undefined;
   const open = ready && !!canBet?.[0];
 
   const latestRoundRead = useReadContract({
@@ -293,6 +307,7 @@ function PairStatusButton({
 
   const settleReady = !!previewRead.data;
   const entryDeadline = activeRound ? roundTimes?.[1] ?? canBet?.[4] : undefined;
+  const cardLivePrice = latestPrice?.[1] ?? (!activeRound ? canBet?.[2] : undefined);
   const countdownLabel = !ready
     ? "Not ready"
     : open
@@ -332,7 +347,7 @@ function PairStatusButton({
         {countdownLabel}
       </div>
       <div className={`mt-1 text-xs ${selected ? "text-black" : open ? "text-[var(--pixel-green)]" : "text-[var(--pixel-red)]"}`}>
-        ${formatPrice(canBet?.[2], 6)}
+        Live ${formatPrice(cardLivePrice, 6)}
       </div>
     </button>
   );
@@ -389,6 +404,13 @@ export default function PredictionPage() {
     address: PREDICTION_ADDRESS,
     abi: PREDICTION_ABI,
     functionName: "canBetNow",
+    args: [selectedSymbol],
+    query: { refetchInterval: 2_000, retry: false },
+  });
+  const latestPriceRead = useReadContract({
+    address: PREDICTION_ADDRESS,
+    abi: PREDICTION_ABI,
+    functionName: "getLatestPrice",
     args: [selectedSymbol],
     query: { refetchInterval: 2_000, retry: false },
   });
@@ -462,6 +484,7 @@ export default function PredictionPage() {
 
   const asset = assetRead.data as AssetTuple | undefined;
   const canBet = canBetRead.data as CanBetTuple | undefined;
+  const latestPrice = latestPriceRead.data as LatestPriceTuple | undefined;
   const roundCore = roundCoreRead.data as RoundCoreTuple | undefined;
   const roundTimes = roundTimesRead.data as RoundTimesTuple | undefined;
   const roundPools = roundPoolsRead.data as RoundPoolsTuple | undefined;
@@ -504,8 +527,10 @@ export default function PredictionPage() {
     : selectedNextEntry
       ? `Next ~ ${selectedNextEntry}`
       : "Waiting oracle";
-  const selectedPriceLabel = activeRound ? "Start price" : "Live oracle";
-  const selectedPriceTime = canBet?.[3];
+  const entryPrice = activeRound || isSettled ? roundCore?.[5] : undefined;
+  const entryPriceTime = activeRound || isSettled ? roundTimes?.[0] : undefined;
+  const livePrice = latestPrice?.[1] ?? (!activeRound ? canBet?.[2] : undefined);
+  const livePriceTime = latestPrice?.[2] ?? (!activeRound ? canBet?.[3] : undefined);
   const settleCountdown = !hasRound
     ? "--"
     : isSettled
@@ -774,7 +799,7 @@ export default function PredictionPage() {
           </div>
 
           <div className="pixel-panel p-5 sm:p-6">
-            <div className="flex items-start justify-between gap-4">
+            <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <p className="text-[10px] uppercase tracking-[0.22em] text-white/55">
                   Selected pair
@@ -783,18 +808,29 @@ export default function PredictionPage() {
                   {selectedSymbol}
                 </h2>
               </div>
-              <div className="text-right">
-                <p className="text-[10px] uppercase tracking-[0.18em] text-white/55">
-                  {selectedPriceLabel}
-                </p>
-                <p className="mt-2 text-2xl text-[var(--pixel-yellow)]">
-                  ${formatPrice(canBet?.[2], 6)}
-                </p>
-                <p className="mt-1 text-[10px] text-white/40">
-                  {selectedPriceTime
-                    ? `${activeRound ? "Round start" : "Oracle update"} ${formatClock(selectedPriceTime)}`
-                    : "--"}
-                </p>
+              <div className="grid w-full gap-2 text-left sm:w-auto sm:min-w-[360px] sm:grid-cols-2 sm:text-right">
+                <div className="border border-white/10 bg-black px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-white/55">
+                    Entry price
+                  </p>
+                  <p className="mt-2 text-xl text-[var(--pixel-yellow)]">
+                    {entryPrice ? `$${formatPrice(entryPrice, 6)}` : "--"}
+                  </p>
+                  <p className="mt-1 text-[10px] text-white/40">
+                    {entryPriceTime ? `Round ${formatClock(entryPriceTime)}` : "Starts on first prediction"}
+                  </p>
+                </div>
+                <div className="border border-white/10 bg-black px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-white/55">
+                    Live price
+                  </p>
+                  <p className="mt-2 text-xl text-[var(--pixel-green)]">
+                    {livePrice ? `$${formatPrice(livePrice, 6)}` : "--"}
+                  </p>
+                  <p className="mt-1 text-[10px] text-white/40">
+                    {livePriceTime ? `Oracle ${formatClock(livePriceTime)}` : "--"}
+                  </p>
+                </div>
               </div>
             </div>
 
