@@ -9,6 +9,10 @@ const nextConfig: NextConfig = {
     optimizePackageImports: [
       "wagmi",
       "viem",
+      "gsap",
+      "@gsap/react",
+      "lightweight-charts",
+      "@tanstack/react-query",
     ],
   },
   webpack: (config) => {
