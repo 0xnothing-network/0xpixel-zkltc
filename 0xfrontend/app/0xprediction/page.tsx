@@ -26,6 +26,10 @@ import {
   PREDICTION_ADDRESS,
   PREDICTION_ASSETS,
 } from "@/lib/0xPredictionAbi";
+import {
+  NUSD_FAUCET_ABI,
+  NUSD_FAUCET_ADDRESS,
+} from "@/lib/0xNUSDFaucetAbi";
 import { useToast } from "@/components/Toast";
 
 type AssetTuple = readonly [
@@ -130,6 +134,17 @@ function timeLeft(timestamp?: bigint, nowMs = Date.now()) {
   if (hours > 0) {
     return `${hours}h ${String(minutes % 60).padStart(2, "0")}m`;
   }
+  return `${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
+}
+
+function durationLeft(seconds?: bigint) {
+  if (seconds === undefined) return "--";
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value <= 0) return "Ready";
+  const hours = Math.floor(value / 3600);
+  const minutes = Math.floor((value % 3600) / 60);
+  const rest = value % 60;
+  if (hours > 0) return `${hours}h ${String(minutes).padStart(2, "0")}m`;
   return `${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
 }
 
@@ -435,6 +450,38 @@ export default function PredictionPage() {
     args: walletAddress ? [walletAddress, PREDICTION_ADDRESS] : undefined,
     query: { enabled: !!walletAddress, refetchInterval: 8_000 },
   });
+  const faucetClaimAmountRead = useReadContract({
+    address: NUSD_FAUCET_ADDRESS,
+    abi: NUSD_FAUCET_ABI,
+    functionName: "claimAmount",
+    query: { refetchInterval: 30_000 },
+  });
+  const faucetBalanceRead = useReadContract({
+    address: NUSD_FAUCET_ADDRESS,
+    abi: NUSD_FAUCET_ABI,
+    functionName: "faucetBalance",
+    query: { refetchInterval: 10_000 },
+  });
+  const faucetPausedRead = useReadContract({
+    address: NUSD_FAUCET_ADDRESS,
+    abi: NUSD_FAUCET_ABI,
+    functionName: "paused",
+    query: { refetchInterval: 10_000 },
+  });
+  const faucetCanClaimRead = useReadContract({
+    address: NUSD_FAUCET_ADDRESS,
+    abi: NUSD_FAUCET_ABI,
+    functionName: "canClaim",
+    args: walletAddress ? [walletAddress] : undefined,
+    query: { enabled: !!walletAddress, refetchInterval: 5_000 },
+  });
+  const faucetWaitRead = useReadContract({
+    address: NUSD_FAUCET_ADDRESS,
+    abi: NUSD_FAUCET_ABI,
+    functionName: "timeUntilClaim",
+    args: walletAddress ? [walletAddress] : undefined,
+    query: { enabled: !!walletAddress, refetchInterval: 5_000 },
+  });
 
   const latestRoundId = (latestRoundRead.data as bigint | undefined) ?? 0n;
   const hasRound = latestRoundId > 0n;
@@ -467,13 +514,6 @@ export default function PredictionPage() {
     args: hasRound && walletAddress ? [latestRoundId, walletAddress] : undefined,
     query: { enabled: hasRound && !!walletAddress, refetchInterval: 5_000 },
   });
-  const claimableRead = useReadContract({
-    address: PREDICTION_ADDRESS,
-    abi: PREDICTION_ABI,
-    functionName: "getClaimable",
-    args: hasRound && walletAddress ? [latestRoundId, walletAddress] : undefined,
-    query: { enabled: hasRound && !!walletAddress, refetchInterval: 5_000 },
-  });
   const previewRead = useReadContract({
     address: PREDICTION_ADDRESS,
     abi: PREDICTION_ABI,
@@ -493,12 +533,24 @@ export default function PredictionPage() {
 
   const balance = (balanceRead.data as bigint | undefined) ?? 0n;
   const allowance = (allowanceRead.data as bigint | undefined) ?? 0n;
-  const claimable = (claimableRead.data as bigint | undefined) ?? 0n;
+  const faucetClaimAmount = (faucetClaimAmountRead.data as bigint | undefined) ?? 100n * 10n ** 18n;
+  const faucetBalance = (faucetBalanceRead.data as bigint | undefined) ?? 0n;
+  const faucetPaused = (faucetPausedRead.data as boolean | undefined) ?? false;
+  const faucetCanClaim = (faucetCanClaimRead.data as boolean | undefined) ?? false;
+  const faucetWait = faucetWaitRead.data as bigint | undefined;
+  const faucetEmpty = faucetBalance < faucetClaimAmount;
+  const faucetDisabled = !!busy || faucetPaused || faucetEmpty || (walletConnected && !faucetCanClaim);
+  const faucetStatus = !walletConnected
+    ? "Connect wallet"
+    : faucetPaused
+      ? "Paused"
+      : faucetEmpty
+        ? "Faucet empty"
+        : faucetCanClaim
+          ? "Ready"
+          : `Next ${durationLeft(faucetWait)}`;
   const upPool = roundPools?.[0] ?? 0n;
   const downPool = roundPools?.[1] ?? 0n;
-  const totalPool = upPool + downPool;
-  const upShare = percentOf(upPool, totalPool);
-  const downShare = percentOf(downPool, totalPool);
   const isAssetReady = !!asset?.[8] && !!asset?.[7];
   const betOpen = !!canBet?.[0] && isAssetReady;
   const needsApproval = amountWei > 0n && allowance < amountWei;
@@ -542,6 +594,18 @@ export default function PredictionPage() {
           : "Waiting oracle";
   const positionUp = position?.[0] ?? 0n;
   const positionDown = position?.[1] ?? 0n;
+  const displayUpPool = activeRound ? upPool : 0n;
+  const displayDownPool = activeRound ? downPool : 0n;
+  const displayTotalPool = displayUpPool + displayDownPool;
+  const displayUpShare = percentOf(displayUpPool, displayTotalPool);
+  const displayDownShare = percentOf(displayDownPool, displayTotalPool);
+  const displayPositionUp = activeRound ? positionUp : 0n;
+  const displayPositionDown = activeRound ? positionDown : 0n;
+  const roundPoolLabel = activeRound
+    ? `${selectedSymbol} #${latestRoundId.toString()}`
+    : hasRound && isSettled
+      ? `${selectedSymbol} next`
+      : selectedSymbol;
   const actionDisabled =
     !!busy ||
     amountInvalid ||
@@ -684,10 +748,14 @@ export default function PredictionPage() {
       roundTimesRead.refetch(),
       roundPoolsRead.refetch(),
       positionRead.refetch(),
-      claimableRead.refetch(),
       previewRead.refetch(),
       balanceRead.refetch(),
       allowanceRead.refetch(),
+      faucetClaimAmountRead.refetch(),
+      faucetBalanceRead.refetch(),
+      faucetPausedRead.refetch(),
+      faucetCanClaimRead.refetch(),
+      faucetWaitRead.refetch(),
     ]);
     setHistoryNonce((value) => value + 1);
   };
@@ -940,6 +1008,57 @@ export default function PredictionPage() {
               ))}
             </div>
 
+            <div className="mt-5 border border-white/10 bg-black p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-white/55">
+                    NUSD faucet
+                  </p>
+                  <p className="mt-1 text-lg text-white">
+                    {formatNusd(faucetClaimAmount)} NUSD / day
+                  </p>
+                </div>
+                <StatusBadge
+                  status={
+                    faucetCanClaim && walletConnected && !faucetPaused && !faucetEmpty
+                      ? "green"
+                      : faucetPaused || faucetEmpty
+                        ? "red"
+                        : "yellow"
+                  }
+                >
+                  {faucetStatus}
+                </StatusBadge>
+              </div>
+              {!walletConnected ? (
+                <button
+                  type="button"
+                  className="pixel-btn-soft pixel-btn-soft-indigo mt-3 w-full"
+                  disabled={!!busy || isConnecting}
+                  onClick={() => void ensureWallet()}
+                >
+                  Connect wallet
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="pixel-btn-soft pixel-btn-soft-emerald mt-3 w-full"
+                  disabled={faucetDisabled}
+                  onClick={() =>
+                    void runTx("Claim faucet", () =>
+                      writeContractAsync({
+                        address: NUSD_FAUCET_ADDRESS,
+                        abi: NUSD_FAUCET_ABI,
+                        functionName: "claim",
+                      })
+                    )
+                  }
+                >
+                  {busy === "Claim faucet" ? "Claiming..." : `Claim ${formatNusd(faucetClaimAmount)} NUSD`}
+                </button>
+              )}
+            </div>
+
             {!walletConnected ? (
               <button
                 type="button"
@@ -1000,33 +1119,33 @@ export default function PredictionPage() {
             <div className="flex flex-wrap items-end justify-between gap-2">
               <h2 className="text-2xl font-bold text-white">Round pool</h2>
               <p className="text-xs text-white/55">
-                {selectedSymbol} {hasRound ? `#${latestRoundId.toString()}` : ""}
+                {roundPoolLabel}
               </p>
             </div>
 
             <div className="mt-5 space-y-4">
               <div>
                 <div className="flex justify-between text-xs">
-                  <span className="text-[var(--pixel-green)]">UP · {formatNusd(upPool)} NUSD</span>
-                  <span>{upShare.toFixed(1)}%</span>
+                  <span className="text-[var(--pixel-green)]">UP · {formatNusd(displayUpPool)} NUSD</span>
+                  <span>{displayUpShare.toFixed(1)}%</span>
                 </div>
                 <div className="mt-2 h-2 border border-white/10 bg-black">
                   <div
                     className="h-full bg-[var(--pixel-green)]"
-                    style={{ width: `${Math.min(100, upShare)}%` }}
+                    style={{ width: `${Math.min(100, displayUpShare)}%` }}
                   />
                 </div>
               </div>
 
               <div>
                 <div className="flex justify-between text-xs">
-                  <span className="text-[var(--pixel-red)]">DOWN · {formatNusd(downPool)} NUSD</span>
-                  <span>{downShare.toFixed(1)}%</span>
+                  <span className="text-[var(--pixel-red)]">DOWN · {formatNusd(displayDownPool)} NUSD</span>
+                  <span>{displayDownShare.toFixed(1)}%</span>
                 </div>
                 <div className="mt-2 h-2 border border-white/10 bg-black">
                   <div
                     className="h-full bg-[var(--pixel-red)]"
-                    style={{ width: `${Math.min(100, downShare)}%` }}
+                    style={{ width: `${Math.min(100, displayDownShare)}%` }}
                   />
                 </div>
               </div>
@@ -1035,43 +1154,25 @@ export default function PredictionPage() {
             <div className="mt-5 grid gap-3 text-xs">
               <div className="flex justify-between border-b border-white/10 pb-2">
                 <span className="text-white/55">Your UP</span>
-                <span className="text-[var(--pixel-green)]">{formatNusd(positionUp)} NUSD</span>
+                <span className="text-[var(--pixel-green)]">{formatNusd(displayPositionUp)} NUSD</span>
               </div>
               <div className="flex justify-between border-b border-white/10 pb-2">
                 <span className="text-white/55">Your DOWN</span>
-                <span className="text-[var(--pixel-red)]">{formatNusd(positionDown)} NUSD</span>
-              </div>
-              <div className="flex justify-between border-b border-white/10 pb-2">
-                <span className="text-white/55">Claimable</span>
-                <span className="text-[var(--pixel-yellow)]">{formatNusd(claimable)} NUSD</span>
+                <span className="text-[var(--pixel-red)]">{formatNusd(displayPositionDown)} NUSD</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-white/55">Settle price</span>
                 <span className={settleOracleReady ? "text-white" : "text-[var(--pixel-yellow)]"}>
-                  {settleOracleReady ? `$${formatPrice(preview?.[1], 6)}` : "Waiting oracle"}
+                  {!activeRound
+                    ? "Next round"
+                    : settleOracleReady
+                      ? `$${formatPrice(preview?.[1], 6)}`
+                      : "Waiting oracle"}
                 </span>
               </div>
             </div>
 
             <div className="mt-5 grid gap-2">
-              <button
-                type="button"
-                className="pixel-btn-soft pixel-btn-soft-amber w-full"
-                disabled={!claimable || claimable <= 0n || !!busy}
-                onClick={() =>
-                  void runTx("Claim", () =>
-                    writeContractAsync({
-                      address: PREDICTION_ADDRESS,
-                      abi: PREDICTION_ABI,
-                      functionName: "claim",
-                      args: [latestRoundId],
-                    })
-                  )
-                }
-              >
-                {busy === "Claim" ? "Claiming..." : "Claim"}
-              </button>
-
               {!isSettled && roundClosed ? (
                 <button
                   type="button"
@@ -1158,6 +1259,8 @@ export default function PredictionPage() {
                         : item.result === "Pending"
                           ? "yellow"
                           : "white";
+                  const claimHistoryLabel = `Claim #${item.roundId.toString()}`;
+                  const canClaimHistory = item.claimable > 0n && !item.claimed;
 
                   return (
                     <article
@@ -1185,6 +1288,27 @@ export default function PredictionPage() {
                               : "No claim"}
                         </span>
                       </div>
+                      {canClaimHistory ? (
+                        <button
+                          type="button"
+                          className="pixel-btn-soft pixel-btn-soft-amber mt-3 w-full"
+                          disabled={!!busy}
+                          onClick={() =>
+                            void runTx(claimHistoryLabel, () =>
+                              writeContractAsync({
+                                address: PREDICTION_ADDRESS,
+                                abi: PREDICTION_ABI,
+                                functionName: "claim",
+                                args: [item.roundId],
+                              })
+                            )
+                          }
+                        >
+                          {busy === claimHistoryLabel
+                            ? "Claiming..."
+                            : `Claim ${formatNusd(item.claimable)} NUSD`}
+                        </button>
+                      ) : null}
                     </article>
                   );
                 })}

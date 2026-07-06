@@ -1,7 +1,7 @@
 import { defineChain } from "viem";
 
-const DEFAULT_LITVM_RPC = "https://liteforge.rpc.caldera.xyz/http";
-const DEFAULT_LITVM_WS = "wss://liteforge.rpc.caldera.xyz/ws";
+const DEFAULT_LITVM_RPC = "https://liteforge.rpc.caldera.xyz/infra-partner-http";
+const DEFAULT_LITVM_WS = "";
 
 export const LITVM_RPC_URL =
   process.env.NEXT_PUBLIC_LITVM_RPC_URL || DEFAULT_LITVM_RPC;
@@ -15,7 +15,7 @@ export const litvm = defineChain({
   rpcUrls: {
     default: {
       http: [LITVM_RPC_URL],
-      webSocket: [LITVM_WS_URL],
+      ...(LITVM_WS_URL ? { webSocket: [LITVM_WS_URL] } : {}),
     },
   },
   blockExplorers: {

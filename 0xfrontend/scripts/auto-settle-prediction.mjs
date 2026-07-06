@@ -12,7 +12,7 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 
 const DEFAULTS = {
-  RPC_URL: "https://liteforge.rpc.caldera.xyz/http",
+  RPC_URL: "https://liteforge.rpc.caldera.xyz/infra-partner-http",
   PREDICTION_ADDRESS: "0x4B323Ac40FBC6Fb18Cf7e42f851C553390f920AD",
   ASSETS: "BTC/USD,ETH/USD,LTC/USD,USDC/USD,XAU/USD,XAG/USD,WTI/USD,XBR/USD",
   INTERVAL_MS: "60000",
