@@ -1566,7 +1566,7 @@ export default function ZeroxSocialPage() {
     { key: "groups", label: "Groups", meta: mounted ? formatCount(groups.length) : "--", tone: "text-[var(--pixel-green)]" },
     { key: "chat", label: "Global chat", meta: mounted ? formatCount(publicMessages.length) : "--", tone: "text-white" },
     { key: "dm", label: "Encrypted DM", meta: mounted ? formatCount(inboxIds.length + sentIds.length) : "--", tone: "text-[var(--pixel-green)]" },
-    { key: "profile", label: "Profile", meta: isVerified ? "OK" : "ID", tone: isVerified ? "text-[var(--pixel-green)]" : "text-white/60" },
+    { key: "profile", label: "Profile", meta: isVerified ? "VERIFIED" : "ID", tone: isVerified ? "text-[var(--pixel-green)]" : "text-white/60" },
   ];
 
   return (
