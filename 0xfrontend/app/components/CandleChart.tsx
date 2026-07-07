@@ -625,6 +625,7 @@ export default function CandleChart({
     initialTf,
   );
   const rafRef = useRef<number | null>(null);
+  const resizeFrameRef = useRef<number | null>(null);
   const pendingRef = useRef<PendingChartData | null>(null);
   const switchTimerRef = useRef<number | null>(null);
   const internalTimeframeChangeRef = useRef(false);
@@ -668,7 +669,7 @@ export default function CandleChart({
     };
 
     updateLiveBucket();
-    const id = window.setInterval(updateLiveBucket, 1000);
+    const id = window.setInterval(updateLiveBucket, timeframe <= 1 ? 1000 : 5000);
     return () => window.clearInterval(id);
   }, [enableRealtime, timeframe]);
 
@@ -943,9 +944,13 @@ export default function CandleChart({
       const entry = entries[0];
       if (!entry) return;
       const { width, height: observedHeight } = entry.contentRect;
-      chart.applyOptions({
-        width: Math.max(1, Math.floor(width)),
-        height: Math.max(100, Math.floor(observedHeight || container.clientHeight || 388)),
+      if (resizeFrameRef.current !== null) cancelAnimationFrame(resizeFrameRef.current);
+      resizeFrameRef.current = requestAnimationFrame(() => {
+        resizeFrameRef.current = null;
+        chart.applyOptions({
+          width: Math.max(1, Math.floor(width)),
+          height: Math.max(100, Math.floor(observedHeight || container.clientHeight || 388)),
+        });
       });
     });
     ro.observe(container);
@@ -958,6 +963,10 @@ export default function CandleChart({
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
+      }
+      if (resizeFrameRef.current !== null) {
+        cancelAnimationFrame(resizeFrameRef.current);
+        resizeFrameRef.current = null;
       }
       chart.remove();
       chartRef.current = null;
@@ -1101,7 +1110,6 @@ export default function CandleChart({
     invertPrice,
     hasData,
     isLoading,
-    loadingSeriesKey,
     clearChartForSeries,
     prepareChartForSeries,
     queuePendingFlush,

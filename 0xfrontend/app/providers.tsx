@@ -16,7 +16,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
             gcTime: 10 * 60 * 1000,
             retry: 2,
             retryDelay: (attemptIndex) => Math.min(500 * 2 ** attemptIndex, 3000),
-            refetchOnWindowFocus: true,
+            refetchOnWindowFocus: false,
             refetchOnReconnect: true,
           },
           mutations: {

@@ -817,6 +817,8 @@ export default function DexAllInOne() {
   const routePairAppliedRef = useRef(false);
   const chartPreloadSeqRef = useRef(0);
   const chartWarmCacheRef = useRef(new Set<string>());
+  const dexBlockRefetchAtRef = useRef(0);
+  const dexBlockRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1463,13 +1465,14 @@ export default function DexAllInOne() {
               18,
               target.chartToken1Decimals,
             ),
-            queryFn: () => fetchCandlesRequest({
+            queryFn: ({ signal }: { signal?: AbortSignal }) => fetchCandlesRequest({
               token0: target.chartToken0,
               token1: target.chartToken1,
               intervalMinutes: tf,
               subgraphUrl: "/api/candles",
               token0Decimals: 18,
               token1Decimals: target.chartToken1Decimals,
+              requestSignal: signal,
             }),
             staleTime: tf <= 1 ? 2_500 : tf <= 15 ? 10_000 : tf <= 60 ? 20_000 : 45_000,
           };
@@ -1721,28 +1724,24 @@ export default function DexAllInOne() {
     return () => window.clearInterval(intervalId);
   }, [pairId, refetchPool, swapAmountIn]);
 
-  // Auto-refetch when new block arrives
-  useEffect(() => {
-    if (blockNumber) {
-      refetchAllowanceIn?.();
-      refetchAllowancePool?.();
-      refetchPool?.();
-      refetchPool0?.();
-      refetchPool1?.();
-      refetchPool2?.();
-      refetchPool3?.();
-      refetchPool4?.();
-      refetchPool5?.();
-      refetchPool6?.();
-      refetchPool7?.();
-      refetchAllPools?.();
-      refetchFarmLP?.();
-      refetchPendingReward?.();
-      refetchFarmAllowance?.();
-      refetchAllowance?.();
-    }
+  const refetchDexLiveReads = useCallback(() => {
+    refetchAllowanceIn?.();
+    refetchAllowancePool?.();
+    refetchPool?.();
+    refetchPool0?.();
+    refetchPool1?.();
+    refetchPool2?.();
+    refetchPool3?.();
+    refetchPool4?.();
+    refetchPool5?.();
+    refetchPool6?.();
+    refetchPool7?.();
+    refetchAllPools?.();
+    refetchFarmLP?.();
+    refetchPendingReward?.();
+    refetchFarmAllowance?.();
+    refetchAllowance?.();
   }, [
-    blockNumber,
     refetchAllowanceIn,
     refetchAllowancePool,
     refetchPool,
@@ -1760,6 +1759,35 @@ export default function DexAllInOne() {
     refetchFarmAllowance,
     refetchAllowance,
   ]);
+
+  const scheduleDexLiveReads = useCallback(() => {
+    const now = Date.now();
+    const elapsed = now - dexBlockRefetchAtRef.current;
+    if (elapsed >= 4_000) {
+      dexBlockRefetchAtRef.current = now;
+      refetchDexLiveReads();
+      return;
+    }
+
+    if (dexBlockRefetchTimerRef.current) return;
+    dexBlockRefetchTimerRef.current = setTimeout(() => {
+      dexBlockRefetchTimerRef.current = null;
+      dexBlockRefetchAtRef.current = Date.now();
+      refetchDexLiveReads();
+    }, 4_000 - elapsed);
+  }, [refetchDexLiveReads]);
+
+  // Auto-refetch on new blocks, throttled to avoid RPC/UI bursts.
+  useEffect(() => {
+    if (blockNumber) scheduleDexLiveReads();
+  }, [blockNumber, scheduleDexLiveReads]);
+
+  useEffect(() => () => {
+    if (dexBlockRefetchTimerRef.current) {
+      clearTimeout(dexBlockRefetchTimerRef.current);
+      dexBlockRefetchTimerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => { setMounted(true); }, []);
 

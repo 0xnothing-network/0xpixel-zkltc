@@ -1,4 +1,4 @@
-import { createPublicClient, http, fallback } from "viem";
+import { createPublicClient, http } from "viem";
 import { PixelNFTABI } from "./abi";
 import { pixelDataToSVG } from "./gridParser";
 import { litvm, LITVM_RPC_URL } from "@/config/wagmi";
@@ -31,10 +31,10 @@ export function shortenAddress(addr: string, head = 6, tail = 4): string {
 
 export const publicClient = createPublicClient({
   chain: litvm,
-  transport: fallback([http(LITVM_RPC_URL), http(LITVM_RPC_URL)], {
-    rank: false,
-    retryCount: 3,
-    retryDelay: 250,
+  transport: http(LITVM_RPC_URL, {
+    retryCount: 2,
+    retryDelay: 300,
+    timeout: 15_000,
   }),
   batch: { multicall: { batchSize: 64 } },
 });

@@ -10521,3 +10521,105 @@ body::after {
     transition: none !important;
   }
 }
+
+/* Deep smoothness pass: safer scroll/render hints across all apps. */
+html,
+body {
+  background: #000 !important;
+  overflow-x: hidden;
+}
+
+body {
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: none;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a,
+button,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+img,
+canvas,
+svg {
+  max-width: 100%;
+}
+
+img[src^="data:image/svg+xml"],
+.pixel-art,
+.zeroxn-nft-attachment img,
+.zeroxn-profile-badge img,
+.marketplace-card img {
+  image-rendering: pixelated;
+}
+
+.pixel-shell,
+.pixel-app-shell {
+  background-color: #000 !important;
+  overflow-x: clip;
+}
+
+.pixel-btn-soft,
+.pixel-button,
+.pixel-tab,
+.titlebar-btn {
+  touch-action: manipulation;
+  transform: translateZ(0);
+}
+
+.pixel-btn-soft:disabled,
+.pixel-button:disabled {
+  cursor: not-allowed;
+}
+
+.pixel-panel,
+.pixel-card,
+.pixel-stat-card,
+.zeroxn-panel,
+.zeroxn-post-card,
+.zeroxn-empty,
+.zeroxn-group-room-card,
+.zeroxn-group-message,
+.zeroxn-nft-attachment {
+  contain: layout paint;
+}
+
+@supports (content-visibility: auto) {
+  .zeroxn-post-card,
+  .zeroxn-group-message,
+  .zeroxn-channel-card,
+  .zeroxn-group-room-card {
+    content-visibility: auto;
+    contain-intrinsic-size: 280px;
+  }
+}
+
+@media (max-width: 768px) {
+  input,
+  select,
+  textarea {
+    font-size: max(16px, 0.9rem) !important;
+  }
+
+  .pixel-btn-soft,
+  .pixel-button {
+    min-height: 2.55rem;
+  }
+
+  .pixel-shell,
+  .pixel-app-shell {
+    min-height: 100dvh;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   useAccount,
   useConnect,
@@ -13,7 +13,7 @@ import {
   useWatchContractEvent,
   useWriteContract,
 } from "wagmi";
-import { hexToString, isAddress, stringToHex } from "viem";
+import { hexToString, isAddress, keccak256, stringToHex } from "viem";
 import { litvm } from "@/config/wagmi";
 import { useToast } from "@/components/Toast";
 import {
@@ -26,7 +26,6 @@ import {
   type ZeroxNProfile,
 } from "@/lib/0xNAbi";
 import {
-  displayName,
   formatCount,
   formatDate,
   GroupRoleBadge,
@@ -55,6 +54,7 @@ const DM_ENVELOPE_KIND = "0xN_DM_ECDH_P256_AESGCM";
 const GROUP_LEGACY_ENVELOPE_KIND = "0xN_GROUP_LOCAL_AESGCM_V1";
 const GROUP_MESSAGE_ENVELOPE_KIND = "0xN_GROUP_AESGCM_V1";
 const GROUP_KEY_ENVELOPE_KIND = "0xN_GROUP_KEY_ECDH_P256_AESGCM_V1";
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 type Tab = "feed" | "channels" | "groups" | "chat" | "dm" | "profile";
 type DmBox = "inbox" | "sent";
@@ -165,15 +165,6 @@ function decodeMaybeTextPayload(payload?: `0x${string}`) {
   } catch {
     return "";
   }
-}
-
-function encodeLegacyGroupPayload(text: string) {
-  const envelope: LocalGroupEnvelope = {
-    v: 1,
-    kind: GROUP_LEGACY_ENVELOPE_KIND,
-    text,
-  };
-  return stringToHex(JSON.stringify(envelope));
 }
 
 function decodeLegacyGroupPayload(payload?: `0x${string}`) {
@@ -462,6 +453,8 @@ export default function ZeroxSocialPage() {
   const [ownedPixels, setOwnedPixels] = useState<OwnedPixelOption[]>([]);
   const [ownedPixelsLoading, setOwnedPixelsLoading] = useState(false);
   const [ownedPixelsError, setOwnedPixelsError] = useState("");
+  const liveRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastLiveRefetchAtRef = useRef(0);
 
   const { address, isConnected, chainId } = useAccount();
   const { connect, connectors, isPending: isConnecting } = useConnect();
@@ -605,7 +598,7 @@ export default function ZeroxSocialPage() {
       ids.push(BigInt(id));
     }
     return ids;
-  }, [postCount, refreshKey]);
+  }, [postCount]);
 
   const feedContracts = useMemo(
     () =>
@@ -672,7 +665,7 @@ export default function ZeroxSocialPage() {
       ids.push(BigInt(id));
     }
     return ids;
-  }, [messageCount, refreshKey]);
+  }, [messageCount]);
 
   const { data: messageData, refetch: refetchMessages } = useReadContracts({
     contracts: recentMessageIds.map((messageId) => ({
@@ -720,7 +713,7 @@ export default function ZeroxSocialPage() {
       ids.push(BigInt(id));
     }
     return ids;
-  }, [channelCount, refreshKey]);
+  }, [channelCount]);
 
   const { data: channelData, refetch: refetchChannels } = useReadContracts({
     contracts: recentChannelIds.map((channelId) => ({
@@ -802,7 +795,7 @@ export default function ZeroxSocialPage() {
       ids.push(BigInt(id));
     }
     return ids;
-  }, [groupCount, refreshKey]);
+  }, [groupCount]);
 
   const { data: groupData, refetch: refetchGroups } = useReadContracts({
     contracts: recentGroupIds.map((groupId) => ({
@@ -1068,10 +1061,33 @@ export default function ZeroxSocialPage() {
       .filter((item): item is { messageId: bigint; message: ZeroxNMessage } => Boolean(item));
   }, [activeDmIds, dmData]);
 
+  const dmReceiverInput = dmForm.to.trim();
+  const dmReceiverUsername = useMemo(() => {
+    if (!dmReceiverInput || isAddress(dmReceiverInput)) return "";
+    return normalizeUsername(dmReceiverInput.startsWith("@") ? dmReceiverInput.slice(1) : dmReceiverInput);
+  }, [dmReceiverInput]);
+  const dmReceiverUsernameHash = useMemo(
+    () => (dmReceiverUsername ? keccak256(stringToHex(dmReceiverUsername)) : undefined),
+    [dmReceiverUsername],
+  );
+  const { data: dmReceiverOwnerData } = useReadContract({
+    address: ZEROXN_ADDRESS,
+    abi: ZEROXN_ABI,
+    functionName: "usernameOwner",
+    args: dmReceiverUsernameHash ? [dmReceiverUsernameHash] : undefined,
+    query: { enabled: Boolean(dmReceiverUsernameHash), staleTime: LIVE_FAST_MS },
+  });
+  const dmResolvedTo = useMemo(() => {
+    if (isAddress(dmReceiverInput)) return dmReceiverInput as `0x${string}`;
+    const owner = dmReceiverOwnerData as `0x${string}` | undefined;
+    if (owner && owner !== ZERO_ADDRESS) return owner;
+    return "";
+  }, [dmReceiverInput, dmReceiverOwnerData]);
+
   const receiverDmPublicKey = useMemo(() => {
-    if (!isAddress(dmForm.to)) return "";
-    return dmPublicKeys.get(dmForm.to.toLowerCase()) ?? "";
-  }, [dmForm.to, dmPublicKeys]);
+    if (!dmResolvedTo) return "";
+    return dmPublicKeys.get(dmResolvedTo.toLowerCase()) ?? "";
+  }, [dmPublicKeys, dmResolvedTo]);
 
   const groupMemberDmPublicKey = useMemo(() => {
     if (!isAddress(groupManage.member)) return "";
@@ -1162,10 +1178,35 @@ export default function ZeroxSocialPage() {
     refetchSent,
   ]);
 
+  const scheduleLiveSocialRefetch = useCallback(() => {
+    const now = Date.now();
+    const elapsed = now - lastLiveRefetchAtRef.current;
+
+    if (elapsed >= 1_500) {
+      lastLiveRefetchAtRef.current = now;
+      refetchLiveSocial();
+      return;
+    }
+
+    if (liveRefetchTimerRef.current) return;
+    liveRefetchTimerRef.current = setTimeout(() => {
+      liveRefetchTimerRef.current = null;
+      lastLiveRefetchAtRef.current = Date.now();
+      refetchLiveSocial();
+    }, 1_500 - elapsed);
+  }, [refetchLiveSocial]);
+
+  useEffect(() => () => {
+    if (liveRefetchTimerRef.current) {
+      clearTimeout(liveRefetchTimerRef.current);
+      liveRefetchTimerRef.current = null;
+    }
+  }, []);
+
   useWatchContractEvent({
     address: ZEROXN_ADDRESS,
     abi: ZEROXN_ABI,
-    onLogs: refetchLiveSocial,
+    onLogs: scheduleLiveSocialRefetch,
   });
 
   async function runTx(label: string, request: SocialTxRequest) {
@@ -1480,8 +1521,8 @@ export default function ZeroxSocialPage() {
   };
 
   const submitEncryptedMessage = async () => {
-    if (!isAddress(dmForm.to)) {
-      toast.warning("Bad receiver", "Use a valid receiver wallet address.");
+    if (!dmResolvedTo) {
+      toast.warning("Bad receiver", "Use a valid username or wallet address.");
       return;
     }
 
@@ -1503,7 +1544,7 @@ export default function ZeroxSocialPage() {
       encodedPayload = await encryptDmText({
         text: payload,
         from: address,
-        to: dmForm.to,
+        to: dmResolvedTo,
         localKey: stored,
         receiverPublicKey: receiverDmPublicKey,
       });
@@ -1514,7 +1555,7 @@ export default function ZeroxSocialPage() {
 
     await runTx("Encrypted DM", {
       functionName: "sendEncryptedMessage",
-      args: [dmForm.to, encodedPayload],
+      args: [dmResolvedTo, encodedPayload],
     });
     setDmForm((value) => ({ ...value, payload: "" }));
   };
@@ -2559,12 +2600,12 @@ export default function ZeroxSocialPage() {
               </PixelPanel>
 
               <PixelPanel>
-                <PanelTitle title="Send encrypted DM" right={<span className="text-[10px] text-white/45">Wallet to wallet</span>} />
+                <PanelTitle title="Send encrypted DM" right={<span className="text-[10px] text-white/45">@username or wallet</span>} />
                 <div className="grid gap-3 p-4">
                   <input
                     value={dmForm.to}
                     onChange={(event) => setDmForm((value) => ({ ...value, to: event.target.value }))}
-                    placeholder="Receiver wallet address"
+                    placeholder="@username or receiver wallet"
                     className={inputClass()}
                   />
                   <textarea
@@ -2576,17 +2617,23 @@ export default function ZeroxSocialPage() {
                   />
                   <p className={`border p-3 text-[11px] leading-relaxed ${
                     receiverDmPublicKey
-                      ? "border-[var(--pixel-green)]/35 bg-[rgba(0,255,138,0.06)] text-white/62"
+                      ? "border-[var(--pixel-green)]/35 bg-[rgba(0,255,138,0.06)] text-white/70"
+                      : dmReceiverUsername && !dmResolvedTo
+                      ? "border-[var(--pixel-red)]/45 bg-[rgba(255,83,112,0.08)] text-white/66"
                       : "border-[var(--pixel-amber)]/35 bg-[rgba(255,226,92,0.06)] text-white/60"
                   }`}>
                     {receiverDmPublicKey
-                      ? "Receiver key found. This message will be encrypted in the browser before sending."
-                      : "Receiver key not found. Ask the receiver to click Setup encrypted DM first."}
+                      ? `Receiver key found${dmReceiverUsername ? ` for @${dmReceiverUsername}` : ""}. Sending to ${shortAddress(dmResolvedTo)}.`
+                      : dmReceiverUsername && !dmResolvedTo
+                      ? `@${dmReceiverUsername} not found.`
+                      : dmResolvedTo
+                      ? `Receiver resolved to ${shortAddress(dmResolvedTo)}, but no DM key found. Ask them to click Setup encrypted DM first.`
+                      : "Enter a username or wallet. The receiver must setup encrypted DM first."}
                   </p>
                   <button
                     type="button"
                     className="pixel-btn-soft pixel-btn-soft-emerald"
-                    disabled={!hasProfile || !dmForm.to || !dmForm.payload || !localDmPublicKey || !receiverDmPublicKey}
+                    disabled={!hasProfile || !dmResolvedTo || !dmForm.payload || !localDmPublicKey || !receiverDmPublicKey}
                     onClick={submitEncryptedMessage}
                   >
                     Send encrypted DM

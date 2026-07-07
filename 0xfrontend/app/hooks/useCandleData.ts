@@ -71,6 +71,7 @@ interface FetchCandlesParams {
   subgraphUrl?: string;
   token0Decimals?: number;
   token1Decimals?: number;
+  requestSignal?: AbortSignal;
 }
 
 type PoolTuple = readonly [
@@ -222,6 +223,25 @@ function candleRefetchInterval(intervalMinutes: number) {
   return 60_000;
 }
 
+function createTimeoutSignal(parent: AbortSignal | undefined, timeoutMs: number) {
+  const controller = new AbortController();
+  const timeoutId = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+
+  const abortFromParent = () => controller.abort(parent?.reason);
+  if (parent) {
+    if (parent.aborted) abortFromParent();
+    else parent.addEventListener('abort', abortFromParent, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      globalThis.clearTimeout(timeoutId);
+      parent?.removeEventListener('abort', abortFromParent);
+    },
+  };
+}
+
 function readCachedCandles(cacheKey: string): CandleData[] | null {
   if (typeof window === 'undefined') return null;
 
@@ -328,6 +348,7 @@ export async function fetchCandlesRequest({
   subgraphUrl = '/api/candles',
   token0Decimals = 18,
   token1Decimals = 18,
+  requestSignal,
 }: FetchCandlesParams): Promise<CandlesResponse> {
   const t0 = token0.toLowerCase();
   const t1 = token1.toLowerCase();
@@ -344,9 +365,17 @@ export async function fetchCandlesRequest({
   });
 
   const separator = subgraphUrl.includes('?') ? '&' : '?';
-  const res = await fetch(`${subgraphUrl}${separator}${params}`, {
-    signal: AbortSignal.timeout(15_000),
-  });
+  const timeout = createTimeoutSignal(requestSignal, 15_000);
+  let res: Response;
+  try {
+    res = await fetch(`${subgraphUrl}${separator}${params}`, {
+      cache: 'default',
+      headers: { Accept: 'application/json' },
+      signal: timeout.signal,
+    });
+  } finally {
+    timeout.cleanup();
+  }
 
   if (!res.ok) {
     if (res.status >= 500) throw new Error('server_error');
@@ -463,7 +492,7 @@ export function useCandleData({
     refetch,
   } = useQuery<CandlesResponse>({
     queryKey: getCandlesQueryKey(pairId, t0, t1, intervalMinutes, token0Decimals, token1Decimals),
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       fetchCandlesRequest({
         token0: t0,
         token1: t1,
@@ -471,6 +500,7 @@ export function useCandleData({
         subgraphUrl,
         token0Decimals,
         token1Decimals,
+        requestSignal: signal,
       }),
     enabled: !!enabled && !!t0 && !!t1,
     staleTime: queryStaleTime,

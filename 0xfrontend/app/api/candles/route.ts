@@ -870,6 +870,17 @@ export async function GET(request: NextRequest) {
     );
   } catch (err) {
     responseInFlight.delete(responseKey);
+    if (cached) {
+      const body = await refreshCachedLatestPrice(cached.body, t0, t1, token0Decimals, token1Decimals);
+      return NextResponse.json(body, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'public, max-age=0, s-maxage=5, stale-while-revalidate=60',
+          'X-Candles-Cache': 'STALE-ERROR',
+        },
+      });
+    }
+
     const message = err instanceof Error ? err.message : 'Server error';
     return NextResponse.json(
       { candles: [], count: 0, interval, timestampGte: 0, upstreamError: message },
