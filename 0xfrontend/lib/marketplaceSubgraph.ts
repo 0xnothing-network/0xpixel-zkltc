@@ -272,8 +272,63 @@ const MINTED_EVENTS_QUERY = `
   }
 `;
 
+const TOKEN_METADATA_BY_IDS_QUERY = `
+  query GetPixelTokensByIds(
+    $collection: Bytes!
+    $tokenIds: [BigInt!]!
+    $limit: Int!
+  ) {
+    tokens(
+      first: $limit
+      orderBy: tokenId
+      orderDirection: asc
+      where: {
+        collection: $collection
+        tokenId_in: $tokenIds
+      }
+    ) {
+      id
+      tokenId
+      name
+      gridSize
+      pixelData
+      creator
+      mintedAt
+    }
+  }
+`;
+
 export function hasMarketplaceSubgraph(): boolean {
   return MARKETPLACE_SUBGRAPH_URL.length > 0;
+}
+
+export async function fetchTokenMetadataFromSubgraph(
+  tokenIds: string[]
+): Promise<Record<string, SubgraphTokenMetadata | null>> {
+  const unique = Array.from(
+    new Set(
+      tokenIds
+        .map((id) => id.trim())
+        .filter((id) => /^\d+$/.test(id))
+    )
+  );
+  if (unique.length === 0) return {};
+
+  const data = await graphFetch<{ tokens: TokenNode[] }>(
+    TOKEN_METADATA_BY_IDS_QUERY,
+    {
+      collection: PIXEL_COLLECTION,
+      tokenIds: unique,
+      limit: unique.length,
+    }
+  );
+
+  const tokens: Record<string, SubgraphTokenMetadata | null> = {};
+  for (const id of unique) tokens[id] = null;
+  for (const token of data.tokens ?? []) {
+    tokens[token.tokenId] = tokenMetadataFromNode(token, token.tokenId);
+  }
+  return tokens;
 }
 
 export async function fetchUserNftsFromSubgraph(

@@ -8932,3 +8932,1592 @@ body::after {
     animation: none !important;
   }
 }
+
+/* 0xN social interface polish. Kept at the end so it wins older global overrides. */
+.zeroxn-social {
+  background:
+    radial-gradient(circle at 18% 0%, rgba(255, 226, 92, 0.065), transparent 22rem),
+    radial-gradient(circle at 86% 10%, rgba(0, 255, 138, 0.052), transparent 24rem),
+    linear-gradient(180deg, #000 0%, #030303 42%, #000 100%) !important;
+  color: #f7f4e9 !important;
+}
+
+.zeroxn-social::before {
+  opacity: 0.18 !important;
+  mix-blend-mode: screen;
+}
+
+.zeroxn-topbar {
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.94), rgba(5, 5, 5, 0.9)) !important;
+  backdrop-filter: blur(10px);
+}
+
+.zeroxn-hero-card,
+.zeroxn-panel,
+.zeroxn-stat-card,
+.zeroxn-post-card,
+.zeroxn-feed-head,
+.zeroxn-empty {
+  background:
+    linear-gradient(180deg, rgba(12, 12, 12, 0.98), rgba(3, 3, 3, 0.98)) !important;
+  border-color: rgba(247, 244, 233, 0.16) !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.035),
+    6px 6px 0 #000,
+    0 18px 60px rgba(0, 0, 0, 0.34) !important;
+}
+
+.zeroxn-panel,
+.zeroxn-post-card,
+.zeroxn-stat-card,
+.zeroxn-feed-head,
+.zeroxn-empty,
+.zeroxn-channel-card,
+.zeroxn-nft-picker,
+.zeroxn-nft-attachment {
+  transition:
+    border-color 160ms ease,
+    transform 160ms ease,
+    filter 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.zeroxn-post-card:hover,
+.zeroxn-stat-card:hover,
+.zeroxn-channel-card:hover,
+.zeroxn-nft-attachment:hover {
+  border-color: rgba(247, 244, 233, 0.32) !important;
+  transform: translate(-1px, -1px);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    7px 7px 0 #000,
+    0 0 0 1px rgba(255, 226, 92, 0.10),
+    0 20px 70px rgba(0, 0, 0, 0.42) !important;
+}
+
+.zeroxn-panel-title {
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.045), transparent 70%) !important;
+}
+
+.zeroxn-stat-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.zeroxn-stat-card::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 3px;
+  background: rgba(247, 244, 233, 0.62);
+}
+
+.zeroxn-accent-green::after {
+  background: var(--pixel-green);
+}
+
+.zeroxn-accent-amber::after {
+  background: var(--pixel-amber);
+}
+
+.zeroxn-composer textarea,
+.zeroxn-social input,
+.zeroxn-social textarea {
+  background: #020202 !important;
+  border-color: rgba(247, 244, 233, 0.16) !important;
+  color: #fffdf3 !important;
+}
+
+.zeroxn-social input:focus,
+.zeroxn-social textarea:focus {
+  border-color: rgba(255, 226, 92, 0.65) !important;
+  box-shadow:
+    4px 4px 0 #000,
+    0 0 0 2px rgba(255, 226, 92, 0.18) !important;
+}
+
+.zeroxn-tabs .pixel-btn-soft {
+  min-height: 46px;
+}
+
+.zeroxn-tabs .pixel-btn-soft.pixel-btn-soft-indigo {
+  background:
+    linear-gradient(180deg, rgba(0, 255, 138, 0.16), rgba(0, 0, 0, 0.96)) !important;
+  border-color: var(--pixel-green) !important;
+  color: #fffdf3 !important;
+  text-shadow: 2px 2px 0 #000 !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    4px 4px 0 #02170f,
+    0 0 0 1px rgba(0, 255, 138, 0.18) !important;
+}
+
+.zeroxn-tabs .pixel-btn-soft.pixel-btn-soft-indigo span:first-child {
+  color: #fffdf3 !important;
+}
+
+.zeroxn-tabs .pixel-btn-soft.pixel-btn-soft-secondary {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(0, 0, 0, 0.96)) !important;
+  border-color: rgba(247, 244, 233, 0.18) !important;
+  color: rgba(255, 253, 243, 0.86) !important;
+}
+
+.zeroxn-feed-post {
+  position: relative;
+  isolation: isolate;
+}
+
+.zeroxn-feed-post::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(0, 255, 138, 0.055), transparent 35%),
+    radial-gradient(circle at 92% 12%, rgba(255, 226, 92, 0.08), transparent 16rem);
+  opacity: 0.68;
+}
+
+.zeroxn-feed-post > * {
+  position: relative;
+  z-index: 1;
+}
+
+.zeroxn-feed-post-head {
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.012) 45%, transparent);
+}
+
+.zeroxn-feed-post .zeroxn-post-copy {
+  color: #fffdf3 !important;
+  text-shadow: 2px 2px 0 #000;
+}
+
+.zeroxn-post-actions {
+  border-top: 1px solid rgba(247, 244, 233, 0.12);
+}
+
+.zeroxn-post-actions .pixel-btn-soft {
+  min-height: 30px;
+  padding: 0.36rem 0.58rem !important;
+  font-size: 0.66rem !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.42rem;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.052), rgba(0, 0, 0, 0.96)) !important;
+  border-color: rgba(247, 244, 233, 0.22) !important;
+  color: #fffdf3 !important;
+  text-shadow: 2px 2px 0 #000 !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.045),
+    3px 3px 0 #000 !important;
+}
+
+.zeroxn-post-actions .pixel-btn-soft .zeroxn-action-icon {
+  color: #fffdf3;
+  font-size: 0.9rem;
+  line-height: 1;
+  opacity: 0.96;
+}
+
+.zeroxn-post-actions .pixel-btn-soft:disabled {
+  opacity: 0.88 !important;
+  filter: none !important;
+}
+
+.zeroxn-post-actions .pixel-btn-soft-emerald,
+.zeroxn-post-actions .pixel-btn-soft-emerald:disabled {
+  background:
+    linear-gradient(180deg, rgba(0, 255, 138, 0.16), rgba(0, 0, 0, 0.98)) !important;
+  border-color: rgba(0, 255, 138, 0.56) !important;
+  color: var(--pixel-green) !important;
+}
+
+.zeroxn-post-actions .pixel-btn-soft-emerald .zeroxn-action-icon {
+  color: var(--pixel-green);
+}
+
+.zeroxn-post-actions .pixel-btn-soft-indigo {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(0, 0, 0, 0.98)) !important;
+  border-color: rgba(247, 244, 233, 0.24) !important;
+  color: rgba(255, 253, 243, 0.88) !important;
+  text-shadow: 2px 2px 0 #000 !important;
+}
+
+.zeroxn-post-actions .pixel-btn-soft-amber {
+  background:
+    linear-gradient(180deg, rgba(255, 226, 92, 0.18), rgba(0, 0, 0, 0.98)) !important;
+  border-color: rgba(255, 226, 92, 0.68) !important;
+  color: var(--pixel-amber) !important;
+  text-shadow: 2px 2px 0 #000 !important;
+}
+
+.zeroxn-post-actions .pixel-btn-soft-amber .zeroxn-action-icon {
+  color: var(--pixel-amber);
+  font-size: 1rem;
+}
+
+.zeroxn-follow-btn.pixel-btn-soft {
+  min-height: 24px;
+  align-self: flex-start;
+  margin-top: 0.1rem;
+  padding: 0.28rem 0.48rem !important;
+  font-size: 0.56rem !important;
+  line-height: 1;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.055),
+    2px 2px 0 #000 !important;
+}
+
+.zeroxn-verified-badge {
+  position: relative;
+  display: inline-grid;
+  width: 0.82rem;
+  height: 0.82rem;
+  flex: 0 0 auto;
+  margin-left: 0 !important;
+  vertical-align: middle;
+  place-items: center;
+  border: 1px solid rgba(0, 255, 138, 0.82);
+  background:
+    linear-gradient(180deg, rgba(0, 255, 138, 0.92), rgba(0, 142, 86, 0.92));
+  box-shadow:
+    1px 1px 0 #000,
+    0 0 0 1px rgba(0, 255, 138, 0.18);
+}
+
+.zeroxn-verified-badge::before {
+  content: "";
+  width: 0.44rem;
+  height: 0.26rem;
+  border-left: 2px solid #00170d;
+  border-bottom: 2px solid #00170d;
+  transform: translateY(-0.04rem) rotate(-45deg);
+  image-rendering: pixelated;
+}
+
+.zeroxn-composer-collapsed {
+  width: max-content;
+  justify-self: end;
+  margin-left: auto;
+  overflow: visible;
+  border-color: rgba(0, 255, 138, 0.34) !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.035),
+    3px 3px 0 #000 !important;
+}
+
+.zeroxn-compose-toggle {
+  display: flex;
+  width: auto;
+  align-items: center;
+  justify-content: center;
+  padding: 0.34rem;
+  text-align: left;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(0, 0, 0, 0.96)) !important;
+  border: 1px solid rgba(0, 255, 138, 0.24);
+  color: #fffdf3;
+  cursor: pointer;
+  margin-left: auto;
+}
+
+.zeroxn-compose-toggle:hover {
+  background:
+    linear-gradient(180deg, rgba(0, 255, 138, 0.10), rgba(0, 0, 0, 0.98)) !important;
+}
+
+.zeroxn-compose-plus {
+  display: grid;
+  width: 1.95rem;
+  height: 1.95rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(0, 255, 138, 0.72);
+  background:
+    linear-gradient(180deg, rgba(0, 255, 138, 0.24), rgba(0, 0, 0, 0.96));
+  color: var(--pixel-green);
+  font-size: 1.65rem;
+  line-height: 1;
+  text-shadow: 2px 2px 0 #000;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    3px 3px 0 #000;
+}
+
+.zeroxn-comment-preview {
+  border-top: 1px solid rgba(247, 244, 233, 0.08);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.018), rgba(0, 0, 0, 0.24));
+}
+
+.zeroxn-comment-preview-row:last-child {
+  padding-bottom: 0;
+}
+
+.zeroxn-feed-filter .pixel-btn-soft {
+  min-height: 28px;
+  padding: 0.34rem 0.62rem !important;
+  font-size: 0.58rem !important;
+  box-shadow: none !important;
+}
+
+.zeroxn-feed-layout {
+  align-items: start !important;
+}
+
+.zeroxn-feed-column {
+  align-self: start !important;
+  min-height: 0 !important;
+}
+
+.zeroxn-feed-filter {
+  align-self: flex-start !important;
+  justify-self: start !important;
+  width: max-content !important;
+  min-height: 0 !important;
+  height: auto !important;
+}
+
+.zeroxn-feed-empty {
+  min-height: 180px;
+  align-self: start !important;
+}
+
+.zeroxn-post-metrics span {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018)) !important;
+}
+
+.zeroxn-nft-picker {
+  background: rgba(255, 255, 255, 0.025) !important;
+}
+
+.zeroxn-nft-attachment {
+  background:
+    linear-gradient(135deg, rgba(255, 226, 92, 0.10), rgba(0, 255, 138, 0.045) 45%, rgba(0, 0, 0, 0.64)) !important;
+  min-height: 0;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    3px 3px 0 #000 !important;
+}
+
+.zeroxn-nft-attachment:hover {
+  background:
+    linear-gradient(135deg, rgba(255, 226, 92, 0.14), rgba(0, 255, 138, 0.07) 45%, rgba(0, 0, 0, 0.7)) !important;
+}
+
+.zeroxn-nft-attachment img {
+  image-rendering: pixelated;
+}
+
+.zeroxn-channel-card {
+  background:
+    linear-gradient(180deg, rgba(10, 10, 10, 0.98), rgba(2, 2, 2, 0.98)) !important;
+}
+
+.zeroxn-group-room-card {
+  position: relative;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(12, 12, 12, 0.98), rgba(0, 0, 0, 0.98)) !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03),
+    3px 3px 0 #000;
+}
+
+.zeroxn-group-room-card::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.zeroxn-group-room-card.is-active::after {
+  background: var(--pixel-green);
+}
+
+.zeroxn-group-room-card:hover {
+  transform: translate(-1px, -1px);
+  border-color: rgba(0, 255, 138, 0.45) !important;
+}
+
+.zeroxn-room-state {
+  border: 1px solid currentColor;
+  padding: 0.18rem 0.38rem;
+  font-size: 0.55rem;
+  line-height: 1;
+  background: rgba(0, 0, 0, 0.58);
+}
+
+.zeroxn-group-stream {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.012), rgba(0, 0, 0, 0.34));
+}
+
+.zeroxn-group-message {
+  position: relative;
+  background:
+    linear-gradient(90deg, rgba(0, 255, 138, 0.035), rgba(0, 0, 0, 0.98) 42%) !important;
+  box-shadow:
+    inset 2px 0 0 rgba(0, 255, 138, 0.45),
+    2px 2px 0 #000;
+}
+
+.zeroxn-group-message:hover {
+  border-color: rgba(247, 244, 233, 0.24) !important;
+}
+
+@media (max-width: 640px) {
+  .zeroxn-hero-card {
+    padding: 1rem !important;
+  }
+
+  .zeroxn-post-card,
+  .zeroxn-panel,
+  .zeroxn-feed-head {
+    box-shadow: 4px 4px 0 #000 !important;
+  }
+
+  .zeroxn-composer-collapsed {
+    transform: scale(0.92);
+    transform-origin: top right;
+  }
+}
+
+/* 0xN full layout pass: deep black pixel UI, sharper text, cleaner mobile flow. */
+.zeroxn-social {
+  --zeroxn-paper: #fffaf0;
+  --zeroxn-muted: rgba(255, 250, 240, 0.68);
+  --zeroxn-dim: rgba(255, 250, 240, 0.45);
+  --zeroxn-line: rgba(255, 250, 240, 0.16);
+  --zeroxn-card: #070707;
+  --zeroxn-card-2: #0d0d0b;
+  background:
+    linear-gradient(180deg, #000 0%, #050505 48%, #000 100%) !important;
+  color: var(--zeroxn-paper) !important;
+  text-rendering: geometricPrecision;
+}
+
+.zeroxn-social * {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 250, 240, 0.28) #050505;
+}
+
+.zeroxn-social *::selection {
+  background: var(--pixel-green);
+  color: #00150c;
+}
+
+.zeroxn-social::before {
+  opacity: 0.1 !important;
+}
+
+.zeroxn-main {
+  width: min(100%, 92rem);
+  gap: 1.25rem !important;
+}
+
+.zeroxn-app-header {
+  border-color: rgba(255, 250, 240, 0.14) !important;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.98), rgba(4, 4, 4, 0.94)) !important;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+}
+
+.zeroxn-app-brand {
+  color: var(--zeroxn-paper) !important;
+  text-shadow: 2px 2px 0 #000;
+}
+
+.zeroxn-app-brand span:first-child {
+  border-color: rgba(255, 250, 240, 0.24) !important;
+  background: #020202 !important;
+  box-shadow: 3px 3px 0 #000;
+}
+
+.zeroxn-app-actions {
+  justify-content: flex-end;
+}
+
+.zeroxn-social .pixel-btn-soft {
+  min-height: 2.25rem;
+  border-color: rgba(255, 250, 240, 0.22) !important;
+  background:
+    linear-gradient(180deg, rgba(255, 250, 240, 0.055), rgba(5, 5, 5, 0.98)) !important;
+  color: var(--zeroxn-paper) !important;
+  text-shadow: 2px 2px 0 #000 !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.035),
+    3px 3px 0 #000 !important;
+}
+
+.zeroxn-social .pixel-btn-soft:hover:not(:disabled) {
+  border-color: rgba(255, 250, 240, 0.42) !important;
+  filter: brightness(1.08);
+  transform: translate(-1px, -1px);
+}
+
+.zeroxn-social .pixel-btn-soft:disabled {
+  color: rgba(255, 250, 240, 0.42) !important;
+  opacity: 0.74 !important;
+}
+
+.zeroxn-social .pixel-btn-soft.pixel-btn-soft-indigo {
+  border-color: rgba(0, 255, 138, 0.64) !important;
+  background:
+    linear-gradient(180deg, rgba(0, 255, 138, 0.18), rgba(0, 20, 11, 0.96)) !important;
+  color: #effff6 !important;
+}
+
+.zeroxn-social .pixel-btn-soft.pixel-btn-soft-emerald {
+  border-color: rgba(0, 255, 138, 0.72) !important;
+  background:
+    linear-gradient(180deg, rgba(0, 255, 138, 0.26), rgba(0, 35, 20, 0.98)) !important;
+  color: #dffff0 !important;
+}
+
+.zeroxn-social .pixel-btn-soft.pixel-btn-soft-amber {
+  border-color: rgba(255, 226, 92, 0.78) !important;
+  background:
+    linear-gradient(180deg, rgba(255, 226, 92, 0.28), rgba(43, 32, 0, 0.98)) !important;
+  color: #fff3a8 !important;
+}
+
+.zeroxn-tabs {
+  display: flex !important;
+  overflow-x: auto !important;
+  overflow-y: hidden;
+  gap: 0.5rem !important;
+  padding: 0.15rem 0 0.45rem;
+  scroll-snap-type: x proximity;
+}
+
+.zeroxn-tabs > button {
+  flex: 0 0 min(14.5rem, 74vw);
+  min-height: 3rem !important;
+  justify-content: space-between !important;
+  scroll-snap-align: start;
+}
+
+.zeroxn-tabs > button span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zeroxn-panel,
+.zeroxn-post-card,
+.zeroxn-empty,
+.zeroxn-group-room-card,
+.zeroxn-nft-picker,
+.zeroxn-nft-attachment {
+  border-color: var(--zeroxn-line) !important;
+  background:
+    linear-gradient(180deg, var(--zeroxn-card-2), #030303) !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03),
+    5px 5px 0 #000,
+    0 16px 45px rgba(0, 0, 0, 0.36) !important;
+}
+
+.zeroxn-panel-title {
+  min-height: 3.05rem;
+  border-color: rgba(255, 250, 240, 0.12) !important;
+  background:
+    linear-gradient(90deg, rgba(255, 250, 240, 0.055), rgba(255, 250, 240, 0.012) 52%, transparent) !important;
+}
+
+.zeroxn-panel-title h2 {
+  color: var(--zeroxn-paper) !important;
+  line-height: 1.08;
+  text-shadow: 2px 2px 0 #000;
+}
+
+.zeroxn-social p,
+.zeroxn-social label,
+.zeroxn-social span,
+.zeroxn-social div {
+  text-shadow-color: #000;
+}
+
+.zeroxn-social input,
+.zeroxn-social textarea,
+.zeroxn-social select {
+  min-height: 2.7rem;
+  border-color: rgba(255, 250, 240, 0.18) !important;
+  background: #020202 !important;
+  color: #fffaf0 !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.025);
+}
+
+.zeroxn-social textarea {
+  line-height: 1.7;
+}
+
+.zeroxn-social input::placeholder,
+.zeroxn-social textarea::placeholder {
+  color: rgba(255, 250, 240, 0.38) !important;
+}
+
+.zeroxn-social input:focus,
+.zeroxn-social textarea:focus,
+.zeroxn-social select:focus {
+  border-color: rgba(0, 255, 138, 0.72) !important;
+  box-shadow:
+    3px 3px 0 #000,
+    0 0 0 2px rgba(0, 255, 138, 0.16) !important;
+}
+
+.zeroxn-feed-layout {
+  width: 100%;
+}
+
+.zeroxn-feed-layout > aside.absolute {
+  right: max(0.25rem, calc((100% - 58rem) / 2));
+  top: 0.15rem;
+}
+
+.zeroxn-feed-column {
+  width: 100%;
+}
+
+.zeroxn-feed-layout {
+  justify-items: center;
+}
+
+.zeroxn-feed-column {
+  width: min(100%, 58rem) !important;
+}
+
+.zeroxn-feed-filter {
+  position: relative;
+  z-index: 4;
+  border-color: rgba(255, 250, 240, 0.14) !important;
+  background: #050505 !important;
+}
+
+.zeroxn-feed-filter .pixel-btn-soft {
+  min-width: 5.1rem;
+  min-height: 1.85rem !important;
+  padding-inline: 0.56rem !important;
+}
+
+.zeroxn-composer {
+  max-width: 100%;
+}
+
+.zeroxn-composer-collapsed {
+  background: transparent !important;
+  border-color: rgba(0, 255, 138, 0.38) !important;
+  box-shadow: 3px 3px 0 #000 !important;
+}
+
+.zeroxn-compose-toggle {
+  padding: 0.18rem !important;
+  border-color: rgba(0, 255, 138, 0.58) !important;
+  background: #040404 !important;
+}
+
+.zeroxn-compose-plus {
+  width: 2rem;
+  height: 2rem;
+  color: #eafff4 !important;
+  font-size: 1.55rem;
+  background:
+    linear-gradient(180deg, rgba(0, 255, 138, 0.36), rgba(0, 48, 29, 0.98)) !important;
+  border-color: rgba(0, 255, 138, 0.86) !important;
+}
+
+.zeroxn-feed-post {
+  background:
+    linear-gradient(180deg, #0b0b09, #030303 82%) !important;
+}
+
+.zeroxn-feed-post::before {
+  opacity: 0.44;
+  background:
+    linear-gradient(90deg, rgba(0, 255, 138, 0.045), transparent 38%),
+    radial-gradient(circle at 94% 6%, rgba(255, 226, 92, 0.07), transparent 12rem);
+}
+
+.zeroxn-feed-post-head {
+  align-items: center !important;
+  background:
+    linear-gradient(90deg, rgba(0, 255, 138, 0.045), rgba(255, 250, 240, 0.018), transparent) !important;
+}
+
+.zeroxn-profile-badge,
+.zeroxn-feed-post-head .flex.min-w-0 {
+  min-width: 0;
+}
+
+.zeroxn-feed-post .zeroxn-post-copy {
+  color: #fffaf0 !important;
+  font-size: clamp(0.92rem, 0.82rem + 0.24vw, 1.04rem) !important;
+  line-height: 1.75 !important;
+}
+
+.zeroxn-post-actions {
+  display: flex !important;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 0.45rem !important;
+  border-top-color: rgba(255, 250, 240, 0.11) !important;
+  padding-top: 0.65rem !important;
+}
+
+.zeroxn-post-actions .pixel-btn-soft {
+  flex: 0 0 auto;
+  width: auto !important;
+  min-width: 5.4rem;
+  min-height: 2.05rem !important;
+  padding: 0.42rem 0.72rem !important;
+  font-size: 0.66rem !important;
+}
+
+.zeroxn-post-actions .pixel-btn-soft-indigo {
+  border-color: rgba(255, 250, 240, 0.24) !important;
+  background:
+    linear-gradient(180deg, rgba(255, 250, 240, 0.07), rgba(5, 5, 5, 0.98)) !important;
+  color: var(--zeroxn-paper) !important;
+}
+
+.zeroxn-post-actions .pixel-btn-soft-amber {
+  color: #fff4aa !important;
+  background:
+    linear-gradient(180deg, rgba(255, 226, 92, 0.22), rgba(41, 31, 0, 0.98)) !important;
+}
+
+.zeroxn-action-icon {
+  min-width: 1rem;
+  font-family: Arial, Helvetica, sans-serif !important;
+  font-weight: 900;
+  text-shadow: none !important;
+}
+
+.zeroxn-comment-preview {
+  border-color: rgba(255, 250, 240, 0.1) !important;
+  background: rgba(0, 0, 0, 0.35) !important;
+}
+
+.zeroxn-comment-preview-row {
+  min-height: 2.85rem;
+}
+
+.zeroxn-follow-btn.pixel-btn-soft {
+  min-width: 4.6rem;
+  white-space: nowrap;
+}
+
+.zeroxn-verified-badge {
+  transform: translateY(1px);
+}
+
+.zeroxn-nft-picker {
+  overflow: hidden;
+}
+
+.zeroxn-nft-picker button,
+.zeroxn-nft-attachment {
+  image-rendering: pixelated;
+}
+
+.zeroxn-pixel-fallback {
+  background:
+    linear-gradient(90deg, rgba(255, 250, 240, 0.06) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(255, 250, 240, 0.06) 1px, transparent 1px),
+    radial-gradient(circle at 30% 22%, rgba(0, 255, 138, 0.18), transparent 2.6rem),
+    #050505;
+  background-size: 10px 10px, 10px 10px, auto, auto;
+  text-shadow: 2px 2px 0 #000;
+}
+
+.zeroxn-nft-attachment {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.85rem;
+  max-width: 36rem;
+  background:
+    linear-gradient(135deg, rgba(255, 226, 92, 0.105), rgba(0, 255, 138, 0.055) 42%, rgba(0, 0, 0, 0.76)) !important;
+}
+
+.zeroxn-group-room-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)) !important;
+}
+
+.zeroxn-group-room-card {
+  min-height: 7.1rem;
+  padding: 1rem !important;
+}
+
+.zeroxn-group-room-card.is-active {
+  border-color: rgba(0, 255, 138, 0.88) !important;
+  background:
+    linear-gradient(180deg, rgba(0, 255, 138, 0.12), rgba(0, 0, 0, 0.98)) !important;
+}
+
+.zeroxn-room-state {
+  color: var(--zeroxn-paper);
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.zeroxn-group-stream {
+  border-color: rgba(255, 250, 240, 0.12) !important;
+}
+
+.zeroxn-group-message-list {
+  max-height: 34rem;
+  overflow: auto;
+  padding-right: 0.25rem;
+}
+
+.zeroxn-group-message {
+  border-color: rgba(255, 250, 240, 0.12) !important;
+}
+
+.zeroxn-empty {
+  color: var(--zeroxn-muted) !important;
+}
+
+@media (min-width: 1024px) {
+  .zeroxn-tabs > button {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 1023px) {
+  .zeroxn-main {
+    max-width: 48rem !important;
+  }
+
+  .zeroxn-feed-layout > aside.absolute {
+    position: static !important;
+    order: 0;
+    justify-self: end;
+    margin-bottom: -0.25rem;
+  }
+
+  .zeroxn-feed-column {
+    order: 1;
+  }
+
+  .zeroxn-composer:not(.zeroxn-composer-collapsed) {
+    width: min(100%, 30rem);
+  }
+}
+
+@media (max-width: 700px) {
+  .zeroxn-app-header {
+    padding: 0.8rem 0.75rem !important;
+  }
+
+  .zeroxn-app-header-inner {
+    align-items: flex-start !important;
+    gap: 0.75rem !important;
+  }
+
+  .zeroxn-app-brand span:last-child {
+    font-size: 1rem !important;
+  }
+
+  .zeroxn-app-actions {
+    width: 100%;
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.45rem !important;
+  }
+
+  .zeroxn-app-actions .pixel-btn-soft {
+    min-width: 0;
+    padding-inline: 0.35rem !important;
+    font-size: 0.58rem !important;
+  }
+
+  .zeroxn-main {
+    padding: 1rem 0.75rem 2.5rem !important;
+    gap: 1rem !important;
+  }
+
+  .zeroxn-tabs {
+    margin-inline: -0.75rem;
+    padding-inline: 0.75rem;
+  }
+
+  .zeroxn-tabs > button {
+    flex-basis: min(12.75rem, 72vw);
+    min-height: 2.75rem !important;
+  }
+
+  .zeroxn-panel-title {
+    padding: 0.85rem 0.9rem !important;
+  }
+
+  .zeroxn-panel-title h2 {
+    font-size: 1rem !important;
+  }
+
+  .zeroxn-panel > .grid,
+  .zeroxn-panel > div.grid {
+    padding: 0.85rem !important;
+  }
+
+  .zeroxn-post-card,
+  .zeroxn-panel,
+  .zeroxn-empty,
+  .zeroxn-group-room-card {
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.03),
+      3px 3px 0 #000 !important;
+  }
+
+  .zeroxn-feed-post-head {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 0.75rem !important;
+  }
+
+  .zeroxn-feed-post-head .flex.min-w-0 {
+    flex-wrap: nowrap !important;
+    gap: 0.55rem !important;
+  }
+
+  .zeroxn-follow-btn.pixel-btn-soft {
+    min-width: 3.9rem;
+    padding-inline: 0.36rem !important;
+    font-size: 0.5rem !important;
+  }
+
+  .zeroxn-post-actions {
+    gap: 0.35rem !important;
+  }
+
+  .zeroxn-post-actions .pixel-btn-soft {
+    min-height: 2rem !important;
+    padding-inline: 0.25rem !important;
+  }
+
+  .zeroxn-nft-attachment {
+    grid-template-columns: 5rem minmax(0, 1fr);
+    gap: 0.65rem;
+  }
+
+  .zeroxn-group-message-list {
+    max-height: 24rem;
+  }
+}
+
+@media (max-width: 420px) {
+  .zeroxn-app-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .zeroxn-tabs > button {
+    flex-basis: 10.9rem;
+  }
+
+  .zeroxn-feed-filter .pixel-btn-soft {
+    min-width: 4.3rem;
+  }
+
+  .zeroxn-nft-attachment {
+    grid-template-columns: 4.5rem minmax(0, 1fr);
+  }
+}
+
+/* 0xN feed correction: less empty frame, stronger tab state, cleaner post cards. */
+.zeroxn-social .zeroxn-tabs {
+  max-width: 100%;
+  border-bottom: 1px solid rgba(255, 250, 240, 0.08);
+  padding-bottom: 0.7rem;
+}
+
+.zeroxn-social .zeroxn-tabs > .pixel-btn-soft {
+  min-height: 2.8rem !important;
+  border-color: rgba(255, 250, 240, 0.18) !important;
+  background:
+    linear-gradient(180deg, rgba(255, 250, 240, 0.035), rgba(0, 0, 0, 0.98)) !important;
+  color: rgba(255, 250, 240, 0.82) !important;
+}
+
+.zeroxn-social .zeroxn-tabs > .pixel-btn-soft.pixel-btn-soft-indigo {
+  border-color: rgba(0, 255, 138, 0.78) !important;
+  background:
+    linear-gradient(180deg, rgba(0, 255, 138, 0.18), rgba(0, 18, 11, 0.98)) !important;
+  color: #f8fff8 !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 255, 138, 0.2),
+    4px 4px 0 #000 !important;
+}
+
+.zeroxn-social .zeroxn-tabs > .pixel-btn-soft.pixel-btn-soft-indigo span:last-child {
+  color: var(--pixel-green) !important;
+}
+
+.zeroxn-feed-layout {
+  width: min(100%, 72rem) !important;
+  margin-inline: auto !important;
+  justify-items: center !important;
+  gap: 1rem !important;
+  background: transparent !important;
+}
+
+.zeroxn-feed-column {
+  width: min(100%, 56rem) !important;
+  gap: 1rem !important;
+}
+
+.zeroxn-feed-toolbar {
+  position: sticky;
+  top: 5.25rem;
+  z-index: 8;
+  width: 100%;
+  padding: 0.35rem 0;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.86), rgba(0, 0, 0, 0.48));
+  backdrop-filter: blur(8px);
+}
+
+.zeroxn-feed-filter {
+  width: auto !important;
+  box-shadow: 3px 3px 0 #000 !important;
+}
+
+.zeroxn-feed-compose-button {
+  margin-left: 0 !important;
+}
+
+.zeroxn-feed-compose-button .zeroxn-compose-plus {
+  width: 2.1rem;
+  height: 2.1rem;
+}
+
+.zeroxn-feed-post {
+  width: 100%;
+  border-color: rgba(255, 250, 240, 0.2) !important;
+  background:
+    linear-gradient(180deg, #0a0a08 0%, #050505 100%) !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.035),
+    4px 4px 0 #000,
+    0 18px 52px rgba(0, 0, 0, 0.38) !important;
+}
+
+.zeroxn-feed-post::before {
+  opacity: 0.28 !important;
+  background:
+    linear-gradient(90deg, rgba(0, 255, 138, 0.055), transparent 34%),
+    radial-gradient(circle at 82% 4%, rgba(255, 226, 92, 0.055), transparent 11rem) !important;
+}
+
+.zeroxn-feed-post-head {
+  padding: 0.9rem 1rem !important;
+  border-color: rgba(255, 250, 240, 0.12) !important;
+}
+
+.zeroxn-feed-post .zeroxn-post-copy {
+  max-width: 44rem;
+  padding-top: 0.15rem;
+  font-size: 1rem !important;
+}
+
+.zeroxn-nft-attachment {
+  max-width: 34rem !important;
+  border-color: rgba(255, 226, 92, 0.36) !important;
+}
+
+.zeroxn-post-actions {
+  width: fit-content;
+  max-width: 100%;
+  border-top: 0 !important;
+  padding-top: 0.25rem !important;
+}
+
+.zeroxn-post-actions .pixel-btn-soft {
+  min-width: 5rem;
+  min-height: 1.9rem !important;
+  border-color: rgba(255, 250, 240, 0.18) !important;
+  background:
+    linear-gradient(180deg, rgba(255, 250, 240, 0.045), rgba(0, 0, 0, 0.98)) !important;
+}
+
+.zeroxn-post-actions .pixel-btn-soft-emerald,
+.zeroxn-post-actions .pixel-btn-soft-emerald:disabled {
+  border-color: rgba(0, 255, 138, 0.68) !important;
+  background:
+    linear-gradient(180deg, rgba(0, 255, 138, 0.18), rgba(0, 27, 16, 0.98)) !important;
+}
+
+.zeroxn-post-actions .pixel-btn-soft-amber {
+  min-width: 4.35rem;
+  border-color: rgba(255, 226, 92, 0.62) !important;
+  background:
+    linear-gradient(180deg, rgba(255, 226, 92, 0.2), rgba(34, 25, 0, 0.98)) !important;
+}
+
+.zeroxn-action-icon {
+  color: currentColor !important;
+}
+
+.zeroxn-group-role-badge {
+  display: inline-grid;
+  min-height: 1.15rem;
+  place-items: center;
+  border: 1px solid rgba(255, 250, 240, 0.24);
+  background: #050505;
+  padding: 0.12rem 0.36rem;
+  color: rgba(255, 250, 240, 0.82);
+  font-size: 0.52rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  text-transform: uppercase;
+  text-shadow: 1px 1px 0 #000;
+  box-shadow: 2px 2px 0 #000;
+}
+
+.zeroxn-group-role-badge.is-owner {
+  border-color: rgba(255, 226, 92, 0.78);
+  background:
+    linear-gradient(180deg, rgba(255, 226, 92, 0.24), rgba(33, 25, 0, 0.98));
+  color: #fff2a6;
+}
+
+.zeroxn-group-role-badge.is-admin {
+  border-color: rgba(0, 255, 138, 0.74);
+  background:
+    linear-gradient(180deg, rgba(0, 255, 138, 0.22), rgba(0, 30, 17, 0.98));
+  color: #dffff0;
+}
+
+.zeroxn-group-role-badge.is-role {
+  border-color: rgba(255, 250, 240, 0.42);
+  background:
+    linear-gradient(180deg, rgba(255, 250, 240, 0.09), rgba(0, 0, 0, 0.98));
+  color: #fffaf0;
+}
+
+@media (min-width: 1280px) {
+  .zeroxn-main {
+    width: min(100%, 78rem) !important;
+  }
+}
+
+@media (max-width: 700px) {
+  .zeroxn-feed-toolbar {
+    top: 6.8rem;
+  }
+
+  .zeroxn-feed-column,
+  .zeroxn-feed-layout {
+    width: 100% !important;
+  }
+
+  .zeroxn-post-actions {
+    width: 100%;
+  }
+
+  .zeroxn-post-actions .pixel-btn-soft {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+}
+
+/* 0x final responsive polish: product-app rhythm, pixel shell, mobile first touch targets. */
+.zeroxn-social {
+  --zeroxn-shell-max: 76rem;
+  --zeroxn-feed-max: 52rem;
+  --zeroxn-sidebar: 25rem;
+  --zeroxn-touch: 2.75rem;
+  background: #000 !important;
+  min-height: 100dvh;
+}
+
+.zeroxn-social::before {
+  opacity: 0.055 !important;
+}
+
+.zeroxn-social * {
+  min-width: 0;
+}
+
+.zeroxn-app-header {
+  min-height: 4rem;
+  padding-block: 0.8rem !important;
+}
+
+.zeroxn-app-header-inner {
+  width: min(100%, var(--zeroxn-shell-max));
+  flex-wrap: nowrap !important;
+}
+
+.zeroxn-app-brand {
+  min-width: max-content;
+}
+
+.zeroxn-app-brand span:first-child {
+  width: 2rem !important;
+  height: 2rem !important;
+  font-size: 0.68rem !important;
+}
+
+.zeroxn-app-actions {
+  width: auto !important;
+  display: flex !important;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.zeroxn-main {
+  width: min(100%, var(--zeroxn-shell-max)) !important;
+  padding-inline: clamp(0.9rem, 2.2vw, 1.5rem) !important;
+  padding-block: clamp(1rem, 2.8vw, 2rem) !important;
+}
+
+.zeroxn-main > section {
+  width: 100%;
+}
+
+.zeroxn-social .zeroxn-tabs {
+  position: sticky;
+  top: 4rem;
+  z-index: 22;
+  margin-inline: calc(clamp(0.9rem, 2.2vw, 1.5rem) * -1);
+  padding: 0.65rem clamp(0.9rem, 2.2vw, 1.5rem);
+  border: 0 !important;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.98), rgba(0, 0, 0, 0.84));
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  scrollbar-width: none;
+}
+
+.zeroxn-social .zeroxn-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.zeroxn-social .zeroxn-tabs > .pixel-btn-soft {
+  min-height: var(--zeroxn-touch) !important;
+  padding-inline: 0.78rem !important;
+  font-size: 0.66rem !important;
+}
+
+.zeroxn-social .pixel-btn-soft,
+.zeroxn-social input,
+.zeroxn-social select,
+.zeroxn-social textarea {
+  border-radius: 0 !important;
+}
+
+.zeroxn-social .pixel-btn-soft {
+  transition:
+    transform 120ms ease,
+    border-color 120ms ease,
+    filter 120ms ease;
+}
+
+.zeroxn-social .pixel-btn-soft:active:not(:disabled),
+.zeroxn-compose-toggle:active {
+  transform: translate(1px, 1px) !important;
+}
+
+.zeroxn-panel,
+.zeroxn-post-card,
+.zeroxn-empty,
+.zeroxn-group-room-card {
+  overflow: hidden;
+}
+
+.zeroxn-panel-title {
+  padding: 0.9rem 1rem !important;
+}
+
+.zeroxn-panel-title h2 {
+  font-size: clamp(1.05rem, 0.95rem + 0.42vw, 1.35rem) !important;
+  letter-spacing: 0.01em;
+}
+
+.zeroxn-social input,
+.zeroxn-social select {
+  min-height: var(--zeroxn-touch) !important;
+}
+
+.zeroxn-social textarea {
+  min-height: 7.25rem;
+}
+
+.zeroxn-feed-layout {
+  width: min(100%, calc(var(--zeroxn-feed-max) + var(--zeroxn-sidebar) + 1.5rem)) !important;
+  align-items: start;
+}
+
+.zeroxn-feed-column {
+  width: min(100%, var(--zeroxn-feed-max)) !important;
+}
+
+.zeroxn-feed-toolbar {
+  top: 8.15rem !important;
+  margin-bottom: 0.1rem;
+  padding-block: 0.45rem !important;
+}
+
+.zeroxn-feed-filter {
+  max-width: calc(100% - 3.2rem);
+}
+
+.zeroxn-feed-filter .pixel-btn-soft {
+  min-width: 5.25rem !important;
+}
+
+.zeroxn-compose-toggle {
+  display: inline-grid !important;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  box-shadow: 3px 3px 0 #000 !important;
+}
+
+.zeroxn-compose-plus {
+  display: grid;
+  place-items: center;
+}
+
+.zeroxn-composer:not(.zeroxn-composer-collapsed) {
+  width: min(100%, var(--zeroxn-sidebar));
+}
+
+.zeroxn-feed-post {
+  contain: content;
+}
+
+.zeroxn-feed-post-head {
+  gap: 0.9rem !important;
+}
+
+.zeroxn-feed-post-head > .text-right {
+  min-width: 6.8rem;
+}
+
+.zeroxn-profile-badge {
+  max-width: 100%;
+}
+
+.zeroxn-feed-post .zeroxn-post-copy {
+  overflow-wrap: anywhere;
+}
+
+.zeroxn-post-actions {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 6.5rem));
+  width: min(100%, 21rem) !important;
+  gap: 0.45rem !important;
+}
+
+.zeroxn-post-actions .pixel-btn-soft {
+  width: 100% !important;
+  justify-content: center !important;
+}
+
+.zeroxn-comment-preview {
+  max-width: 40rem;
+}
+
+.zeroxn-nft-picker {
+  padding: 0.72rem !important;
+}
+
+.zeroxn-nft-picker > button {
+  min-height: 3.55rem;
+}
+
+.zeroxn-nft-attachment {
+  width: min(100%, 34rem);
+}
+
+.zeroxn-group-room-grid {
+  gap: 0.75rem !important;
+}
+
+.zeroxn-group-room-card {
+  min-height: 6.25rem !important;
+}
+
+.zeroxn-group-message-list,
+.zeroxn-social [class*="message-list"] {
+  overscroll-behavior: contain;
+}
+
+.zeroxn-group-message {
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 900px) {
+  .zeroxn-social .zeroxn-tabs {
+    display: grid !important;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 0.55rem !important;
+    overflow: visible !important;
+  }
+
+  .zeroxn-social .zeroxn-tabs > .pixel-btn-soft {
+    flex: initial !important;
+    width: 100%;
+  }
+
+  .zeroxn-feed-layout:has(> aside) {
+    justify-items: stretch !important;
+  }
+}
+
+@media (max-width: 899px) {
+  .zeroxn-app-header {
+    position: sticky;
+    top: 0;
+  }
+
+  .zeroxn-app-header-inner {
+    gap: 0.7rem !important;
+  }
+
+  .zeroxn-app-actions .pixel-btn-soft {
+    min-height: 2.15rem !important;
+    max-width: 11rem;
+  }
+
+  .zeroxn-social .zeroxn-tabs {
+    top: 3.95rem;
+    overflow-x: auto !important;
+    scroll-snap-type: x proximity;
+  }
+
+  .zeroxn-social .zeroxn-tabs > .pixel-btn-soft {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 9.2rem !important;
+    scroll-snap-align: start;
+  }
+
+  .zeroxn-feed-layout {
+    display: flex !important;
+    flex-direction: column;
+  }
+
+  .zeroxn-feed-layout > aside {
+    width: 100%;
+    position: static !important;
+  }
+
+  .zeroxn-composer:not(.zeroxn-composer-collapsed) {
+    width: 100%;
+  }
+
+  .zeroxn-feed-toolbar {
+    top: 7.2rem !important;
+  }
+
+  .zeroxn-main section[class*="xl:grid-cols"],
+  .zeroxn-main section[class*="lg:grid-cols"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  .zeroxn-main aside {
+    position: static !important;
+  }
+}
+
+@media (max-width: 560px) {
+  .zeroxn-social {
+    --zeroxn-touch: 2.65rem;
+  }
+
+  .zeroxn-app-header {
+    padding: 0.65rem 0.75rem !important;
+  }
+
+  .zeroxn-app-brand span:last-child {
+    font-size: 0.92rem !important;
+  }
+
+  .zeroxn-app-actions {
+    justify-content: flex-end !important;
+  }
+
+  .zeroxn-app-actions .pixel-btn-soft {
+    max-width: 9.5rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .zeroxn-main {
+    padding-inline: 0.72rem !important;
+    padding-bottom: 3rem !important;
+  }
+
+  .zeroxn-social .zeroxn-tabs {
+    margin-inline: -0.72rem;
+    padding-inline: 0.72rem;
+  }
+
+  .zeroxn-social .zeroxn-tabs > .pixel-btn-soft {
+    min-width: 8.35rem !important;
+    font-size: 0.58rem !important;
+  }
+
+  .zeroxn-feed-toolbar {
+    top: 6.75rem !important;
+  }
+
+  .zeroxn-feed-filter .pixel-btn-soft {
+    min-width: 4.65rem !important;
+  }
+
+  .zeroxn-feed-post-head {
+    grid-template-columns: 1fr !important;
+  }
+
+  .zeroxn-feed-post-head > .text-right {
+    min-width: 0;
+    text-align: left !important;
+  }
+
+  .zeroxn-post-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100% !important;
+  }
+
+  .zeroxn-post-actions .pixel-btn-soft {
+    min-width: 0 !important;
+    font-size: 0.58rem !important;
+  }
+
+  .zeroxn-nft-attachment {
+    grid-template-columns: 4.75rem minmax(0, 1fr) !important;
+  }
+
+  .zeroxn-group-message {
+    padding: 0.85rem !important;
+  }
+
+  .zeroxn-panel-title {
+    align-items: flex-start !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zeroxn-social .pixel-btn-soft,
+  .zeroxn-compose-toggle {
+    transition: none !important;
+  }
+}

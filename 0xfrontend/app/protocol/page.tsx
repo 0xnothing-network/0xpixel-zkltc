@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { PREDICTION_ADDRESS } from "@/lib/0xPredictionAbi";
+import { ZEROXN_ADDRESS } from "@/lib/0xNAbi";
 
 const CONTRACTS = {
   pixel: process.env.NEXT_PUBLIC_PIXEL_NFT_ADDRESS || "0x33A32b9b2BEe864f9e42BFa39cA7BDC72f655988",
@@ -10,11 +11,12 @@ const CONTRACTS = {
   nusd: process.env.NEXT_PUBLIC_NUSD_ADDRESS || "0xF2d0fd65d9f62D57255AF6350f807E6c11A4CFdb",
   factory: process.env.NEXT_PUBLIC_FACTORY_ADDRESS || "0x93F9d4cF10cB785B47BFaD64ecccEA4D66C73508",
   prediction: PREDICTION_ADDRESS,
+  zeroxn: ZEROXN_ADDRESS,
 };
 
 export const metadata: Metadata = {
   title: "Protocol — 0xNothing",
-  description: "Technical documentation for 0xPixel, 0xDex, 0xFactory, and 0xPrediction on LitVM Testnet.",
+  description: "Technical documentation for 0xPixel, 0xDex, 0xFactory, 0xPrediction, and 0x on LitVM Testnet.",
 };
 
 function AddressRow({ label, value }: { label: string; value: string }) {
@@ -300,6 +302,102 @@ export default function DocsPage() {
                   name: "setAssetDefault",
                   desc: "Owner function to add or update an oracle pair with the default 2-hour round duration and 10-minute entry window.",
                   signature: "setAssetDefault(symbol, feed, enabled)",
+                },
+              ].map((fn) => (
+                <div key={fn.name} className="bg-white/[0.03] border border-white/[0.08] p-5">
+                  <div className="flex items-start gap-4">
+                    <span className="text-indigo-400 text-xs font-mono mt-0.5 shrink-0">{fn.name}</span>
+                    <div>
+                      <p className="text-white/60 text-sm mb-2">{fn.desc}</p>
+                      <code className="text-white/40 text-xs font-mono block">{fn.signature}</code>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* 0x Section */}
+          <section className="mb-16">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-10 h-10 bg-white text-black flex items-center justify-center text-xs" style={{ fontFamily: "var(--font-departure), monospace" }}>
+                0x
+              </div>
+              <h2
+                className="text-white"
+                style={{
+                  fontFamily: "var(--font-departure), monospace",
+                  fontSize: "1.5rem",
+                  fontWeight: 700,
+                }}
+              >
+                0x
+              </h2>
+            </div>
+
+            <p className="text-white/60 mb-8 leading-relaxed">
+              Fully onchain social layer for 0xNothing. 0x contains profiles, global posts, joined public channels,
+              private member rooms, encrypted message payloads, 0xPixel NFT identity, likes, comments,
+              follows, and verification.
+            </p>
+
+            <div className="mb-6">
+              <Link
+                href="/0x"
+                className="inline-flex border border-white/[0.12] bg-white text-black px-4 py-3 text-[10px] uppercase tracking-[0.18em] hover:bg-[#00ff8a] transition-colors"
+              >
+                Open 0x
+              </Link>
+            </div>
+
+            <div className="bg-white/[0.03] border border-white/[0.08] rounded-none p-6 mb-6">
+              <h3 className="text-white/80 text-xs tracking-widest uppercase mb-4">Contract Address</h3>
+              <AddressRow label="0x" value={CONTRACTS.zeroxn} />
+            </div>
+
+            <div className="space-y-4">
+              <h3 className="text-white/80 text-xs tracking-widest uppercase">Key Functions</h3>
+
+              {[
+                {
+                  name: "registerProfile",
+                  desc: "Create one onchain social profile per wallet. Usernames are unique and lowercase.",
+                  signature: "registerProfile(username, displayName, bio, avatarEnabled, avatarTokenId)",
+                },
+                {
+                  name: "createPost",
+                  desc: "Publish a global post. Optional 0xPixel token attachment must be owned by the author.",
+                  signature: "createPost(content, hasPixel, pixelTokenId) -> postId",
+                },
+                {
+                  name: "commentOnPost",
+                  desc: "Add an onchain comment to a post. Optional 0xPixel token attachment is supported.",
+                  signature: "commentOnPost(postId, content, hasPixel, pixelTokenId) -> commentId",
+                },
+                {
+                  name: "likePost / follow",
+                  desc: "Social actions stored fully onchain and emitted as indexable events.",
+                  signature: "likePost(postId), follow(target)",
+                },
+                {
+                  name: "createChannel / joinChannel / postToChannel",
+                  desc: "Create public topic feeds. Wallets must join before posting or interacting inside a channel.",
+                  signature: "createChannel(slug, name, description), joinChannel(channelId), postToChannel(channelId, content, hasPixel, pixelTokenId)",
+                },
+                {
+                  name: "createGroup / addGroupMember / setGroupOfficer",
+                  desc: "Create private member rooms. Admins can add members; creators can assign a lower named rank.",
+                  signature: "createGroup(name, description, creatorKeyEnvelope), addGroupMember(groupId, member, keyEnvelope), setGroupOfficer(groupId, officer, enabled, rankName)",
+                },
+                {
+                  name: "sendEncryptedMessage",
+                  desc: "Store ciphertext between two wallets. Encryption/decryption happens in the frontend or wallet tooling.",
+                  signature: "sendEncryptedMessage(to, encryptedPayload)",
+                },
+                {
+                  name: "isVerified",
+                  desc: "Read verification status from admin override or automatic requirements: likes, followers, and NUSD balance.",
+                  signature: "isVerified(user) -> bool",
                 },
               ].map((fn) => (
                 <div key={fn.name} className="bg-white/[0.03] border border-white/[0.08] p-5">

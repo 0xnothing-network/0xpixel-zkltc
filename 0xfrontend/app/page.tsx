@@ -21,6 +21,7 @@ export const metadata: Metadata = {
 const links = [
   { href: "/0xpixel", label: "0xPixel", tone: "light" },
   { href: "/0xdex", label: "0xDex", tone: "dark" },
+  { href: "/0x", label: "0x", tone: "light" },
   { href: "/0xprediction", label: "0xPrediction", tone: "violet" },
   { href: "/0xfactory", label: "0xFactory", tone: "light" },
   { href: "/protocol", label: "Protocol", tone: "dark" },

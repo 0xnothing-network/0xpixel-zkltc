@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { publicClient, PIXEL_NFT_CONTRACT_ADDRESS } from "@/lib/contract";
 import { PixelNFTABI } from "@/lib/abi";
 import { pixelDataToSVG } from "@/lib/gridParser";
+import {
+  fetchTokenMetadataFromSubgraph,
+  hasMarketplaceSubgraph,
+} from "@/lib/marketplaceSubgraph";
 
 export const runtime = "nodejs";
 export const revalidate = 30;
@@ -85,11 +89,41 @@ async function fetchMetadataBatch(
 
   if (missing.length === 0) return out;
 
+  let rpcMissing = missing;
+  if (hasMarketplaceSubgraph()) {
+    try {
+      const subgraphTokens = await fetchTokenMetadataFromSubgraph(missing);
+      rpcMissing = [];
+
+      for (const id of missing) {
+        const meta = subgraphTokens[id] ?? null;
+        if (meta?.imageUrl) {
+          const next: TokenMetadata = {
+            tokenId: meta.tokenId,
+            name: meta.name || `Token #${id}`,
+            imageUrl: meta.imageUrl,
+            creator: meta.creator,
+            mintedAt: meta.mintedAt,
+          };
+          CACHE.set(id, { value: next, ts: Date.now() });
+          out[id] = next;
+        } else {
+          rpcMissing.push(id);
+        }
+      }
+    } catch (err) {
+      console.warn("[token-metadata] subgraph fallback to RPC:", err);
+      rpcMissing = missing;
+    }
+  }
+
+  if (rpcMissing.length === 0) return out;
+
   // Multicall tokenData for the rest. allowFailure so one missing token
   // doesn't poison the whole batch.
   const results = await publicClient.multicall({
     allowFailure: true,
-    contracts: missing.map((id) => ({
+    contracts: rpcMissing.map((id) => ({
       address: PIXEL_NFT_CONTRACT_ADDRESS,
       abi: PixelNFTABI,
       functionName: "tokenData" as const,
@@ -97,8 +131,8 @@ async function fetchMetadataBatch(
     })),
   });
 
-  for (let i = 0; i < missing.length; i++) {
-    const id = missing[i];
+  for (let i = 0; i < rpcMissing.length; i++) {
+    const id = rpcMissing[i];
     const r = results[i];
     if (!r || r.status !== "success") {
       // Cache the miss briefly so we don't hammer a bad token id.
