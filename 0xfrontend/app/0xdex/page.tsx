@@ -117,7 +117,7 @@ const BPS_DENOM = 10000n; // matches `swapFee / 10000` in 0xDex.sol
 type ChartTf = 1 | 15 | 60 | 240 | 1440;
 const DEFAULT_CHART_TF: ChartTf = 1;
 const CHART_PRELOAD_TIMEFRAMES = [1, 15, 60, 240, 1440] as const satisfies readonly ChartTf[];
-const CHART_WARM_POOL_LIMIT = 6;
+const CHART_WARM_POOL_LIMIT = 4;
 const CHART_TIMEFRAMES = new Set<number>([1, 15, 60, 240, 1440]);
 const SWAP_SLIPPAGE_BPS = 300n;
 const SWAP_PRICE_REFRESH_MS = 2_000;
@@ -503,6 +503,7 @@ function PoolCard({
   chartHref,
   onSelect,
   onViewChart,
+  onWarmChart,
   tokenSymbol,
   tokenDecimals = 18,
 }: {
@@ -512,6 +513,7 @@ function PoolCard({
   chartHref: string;
   onSelect?: (data: { token: `0x${string}`, nusd: `0x${string}`, reserve0: bigint, reserve1: bigint }) => void;
   onViewChart?: (data: { price: number | null; tokenDecimals: number }) => void;
+  onWarmChart?: (data: { price: number | null; tokenDecimals: number }) => void;
   tokenSymbol?: string;
   tokenDecimals?: number;
 }) {
@@ -537,6 +539,9 @@ function PoolCard({
   const handleClick = () => {
     if (!nusdAddr) return;
     onSelect?.({ token: otherToken, nusd: nusdAddr, reserve0: reserveOther, reserve1: reserveNUSD });
+  };
+  const handleWarmChart = () => {
+    onWarmChart?.({ price: pricePerToken > 0 ? pricePerToken : null, tokenDecimals });
   };
 
   // TVL = reserveToken (in USD) + reserveNUSD = 2 * reserveNUSD (since they're equal value)
@@ -575,6 +580,9 @@ function PoolCard({
           {onViewChart && (
             <Link
               href={chartHref}
+              onFocus={handleWarmChart}
+              onMouseEnter={handleWarmChart}
+              onTouchStart={handleWarmChart}
               onClick={(e) => {
                 e.stopPropagation();
                 onViewChart({ price: pricePerToken > 0 ? pricePerToken : null, tokenDecimals });
@@ -814,6 +822,7 @@ export default function DexAllInOne() {
   const [showChart, setShowChart] = useState(false);
   const [chartPreloadLabel, setChartPreloadLabel] = useState<string | null>(null);
   const [chartPreloadProgress, setChartPreloadProgress] = useState(0);
+  const [chartPreloadTotal, setChartPreloadTotal] = useState<number>(CHART_PRELOAD_TIMEFRAMES.length);
   const routePairAppliedRef = useRef(false);
   const chartPreloadSeqRef = useRef(0);
   const chartWarmCacheRef = useRef(new Set<string>());
@@ -1451,10 +1460,11 @@ export default function DexAllInOne() {
 
   const preloadChartCandles = useCallback(async (
     target: ChartPreloadTarget,
-    options: { force?: boolean; onTimeframeDone?: () => void } = {},
+    options: { force?: boolean; onTimeframeDone?: () => void; timeframes?: readonly ChartTf[] } = {},
   ) => {
+    const timeframes = options.timeframes?.length ? options.timeframes : CHART_PRELOAD_TIMEFRAMES;
     await Promise.allSettled(
-      CHART_PRELOAD_TIMEFRAMES.map(async (tf) => {
+      timeframes.map(async (tf) => {
         try {
           const queryOptions = {
             queryKey: getCandlesQueryKey(
@@ -1489,6 +1499,22 @@ export default function DexAllInOne() {
     );
   }, [queryClient]);
 
+  const warmChartForPool = useCallback((
+    poolIndex: number,
+    anchor?: { price: number | null; tokenDecimals: number },
+    timeframes: readonly ChartTf[] = CHART_PRELOAD_TIMEFRAMES,
+  ) => {
+    const target = getChartPreloadTarget(poolIndex, anchor);
+    if (!target) return;
+
+    const warmKey = `${target.pairId}:${target.chartToken0}:${target.chartToken1}:${target.chartToken1Decimals}:${timeframes.join(",")}`;
+    if (chartWarmCacheRef.current.has(warmKey)) return;
+    chartWarmCacheRef.current.add(warmKey);
+
+    void loadChartWindow();
+    void preloadChartCandles(target, { timeframes });
+  }, [getChartPreloadTarget, preloadChartCandles]);
+
   const openChartForPool = useCallback(async (
     poolIndex: number,
     anchor?: { price: number | null; tokenDecimals: number },
@@ -1506,6 +1532,7 @@ export default function DexAllInOne() {
     setShowChart(false);
     setChartPreloadLabel(target.chartLabel);
     setChartPreloadProgress(0);
+    setChartPreloadTotal(1);
 
     let completed = 0;
     const markDone = () => {
@@ -1517,7 +1544,7 @@ export default function DexAllInOne() {
 
     await Promise.allSettled([
       loadChartWindow(),
-      preloadChartCandles(target, { force: true, onTimeframeDone: markDone }),
+      preloadChartCandles(target, { force: true, onTimeframeDone: markDone, timeframes: [timeframe] }),
     ]);
 
     if (chartPreloadSeqRef.current !== preloadSeq) return;
@@ -1528,6 +1555,9 @@ export default function DexAllInOne() {
     setShowChart(true);
     setChartPreloadLabel(null);
     if (updateUrl) clearDexPairUrl();
+
+    const backgroundTimeframes = CHART_PRELOAD_TIMEFRAMES.filter((tf) => tf !== timeframe);
+    void preloadChartCandles(target, { timeframes: backgroundTimeframes });
   }, [
     clearDexPairUrl,
     getChartPreloadTarget,
@@ -1592,13 +1622,9 @@ export default function DexAllInOne() {
         .map((poolIndex) => ({ poolIndex, target: getChartPreloadTarget(poolIndex) }))
         .filter((item): item is { poolIndex: number; target: ChartPreloadTarget } => !!item.target);
 
-      for (const { target } of targets) {
+      for (const { poolIndex, target } of targets) {
         if (cancelled) return;
-        const warmKey = `${target.pairId}:${target.chartToken0}:${target.chartToken1}:${target.chartToken1Decimals}`;
-        if (chartWarmCacheRef.current.has(warmKey)) continue;
-
-        chartWarmCacheRef.current.add(warmKey);
-        await preloadChartCandles(target);
+        warmChartForPool(poolIndex, target.chartAnchor);
       }
     };
 
@@ -1628,8 +1654,8 @@ export default function DexAllInOne() {
     allPoolData,
     getChartPreloadTarget,
     poolOptions.length,
-    preloadChartCandles,
     sortedPoolIndices,
+    warmChartForPool,
   ]);
 
   // Check if selected pool is Base Pool (contains NUSD) - only Base Pools can farm
@@ -2607,6 +2633,9 @@ export default function DexAllInOne() {
                       onViewChart={(chartAnchor) => {
                         openChartForPool(poolIndex, chartAnchor);
                       }}
+                      onWarmChart={(chartAnchor) => {
+                        warmChartForPool(poolIndex, chartAnchor);
+                      }}
                     />
                   );
                 })
@@ -2821,15 +2850,15 @@ export default function DexAllInOne() {
             <div className="mb-3 text-sm text-white">LOADING CHART</div>
             <div className="mb-4 text-[10px] text-white/65">{chartPreloadLabel}</div>
             <div className="mx-auto mb-3 flex w-52 gap-1">
-              {CHART_PRELOAD_TIMEFRAMES.map((tf, index) => (
+              {Array.from({ length: chartPreloadTotal }, (_, index) => (
                 <div
-                  key={tf}
+                  key={index}
                   className={`h-3 flex-1 border border-white/20 ${index < chartPreloadProgress ? "bg-white" : "bg-white/10"}`}
                 />
               ))}
             </div>
             <div className="text-[9px] text-white/55">
-              {chartPreloadProgress}/{CHART_PRELOAD_TIMEFRAMES.length} TIMEFRAMES
+              {chartPreloadProgress}/{chartPreloadTotal} READY
             </div>
           </div>
         </div>

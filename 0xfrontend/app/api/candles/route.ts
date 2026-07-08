@@ -266,17 +266,17 @@ function getLookbackSeconds(intervalMinutes: number): number {
 }
 
 function responseCacheTtlMs(intervalMinutes: number): number {
-  if (intervalMinutes <= 1) return 2_500;
-  if (intervalMinutes <= 15) return 10_000;
-  if (intervalMinutes <= 60) return 20_000;
-  return 45_000;
+  if (intervalMinutes <= 1) return 6_000;
+  if (intervalMinutes <= 15) return 30_000;
+  if (intervalMinutes <= 60) return 60_000;
+  return 120_000;
 }
 
 function responseCacheControl(intervalMinutes: number): string {
-  if (intervalMinutes <= 1) return 'public, max-age=0, s-maxage=2, stale-while-revalidate=15';
-  if (intervalMinutes <= 15) return 'public, max-age=0, s-maxage=10, stale-while-revalidate=60';
-  if (intervalMinutes <= 60) return 'public, max-age=0, s-maxage=20, stale-while-revalidate=120';
-  return 'public, max-age=0, s-maxage=45, stale-while-revalidate=300';
+  if (intervalMinutes <= 1) return 'public, max-age=0, s-maxage=6, stale-while-revalidate=30';
+  if (intervalMinutes <= 15) return 'public, max-age=0, s-maxage=30, stale-while-revalidate=180';
+  if (intervalMinutes <= 60) return 'public, max-age=0, s-maxage=60, stale-while-revalidate=300';
+  return 'public, max-age=0, s-maxage=120, stale-while-revalidate=600';
 }
 
 function shouldLoadFullHistory(intervalMinutes: number): boolean {
@@ -715,20 +715,6 @@ function appendLatestSwapIfMissing(swaps: SwapEvent[], latestSwap: SwapEvent | n
   });
 }
 
-async function refreshCachedLatestPrice(
-  body: CandlesResponseBody,
-  t0: string,
-  t1: string,
-  token0Decimals: number,
-  token1Decimals: number,
-): Promise<CandlesResponseBody> {
-  const latestSwap = await fetchLatestSwap(t0, t1);
-  const latestPrice = latestPriceFromSwap(latestSwap, { t0, t1, token0Decimals, token1Decimals })
-    ?? body.latestPrice
-    ?? latestPriceFromCandles(body.candles);
-  return latestPrice === body.latestPrice ? body : { ...body, latestPrice };
-}
-
 function prependGenesisCandle(candles: CandleData[], genesis: CandleData | null): CandleData[] {
   if (!genesis) return candles;
   if (candles.length === 0) return [genesis];
@@ -840,8 +826,7 @@ export async function GET(request: NextRequest) {
   const cacheControl = responseCacheControl(interval);
   const cached = responseCache.get(responseKey);
   if (cached && cached.expires > Date.now()) {
-    const body = await refreshCachedLatestPrice(cached.body, t0, t1, token0Decimals, token1Decimals);
-    return NextResponse.json(body, {
+    return NextResponse.json(cached.body, {
       headers: {
         'Content-Type': 'application/json',
         'Cache-Control': cacheControl,
@@ -871,8 +856,7 @@ export async function GET(request: NextRequest) {
   } catch (err) {
     responseInFlight.delete(responseKey);
     if (cached) {
-      const body = await refreshCachedLatestPrice(cached.body, t0, t1, token0Decimals, token1Decimals);
-      return NextResponse.json(body, {
+      return NextResponse.json(cached.body, {
         headers: {
           'Content-Type': 'application/json',
           'Cache-Control': 'public, max-age=0, s-maxage=5, stale-while-revalidate=60',
