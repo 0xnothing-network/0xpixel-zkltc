@@ -502,7 +502,7 @@ function latestClusterStartIndex(data: CandlestickData<Time>[], timeframe: TfVal
   if (data.length <= 1) return 0;
 
   const intervalSeconds = timeframe * 60;
-  const maxGapSeconds = Math.max(intervalSeconds * 8, 60 * 60);
+  const maxGapSeconds = Math.max(intervalSeconds * 2.5, 60 * 60);
 
   for (let i = data.length - 1; i > 0; i--) {
     const current = normalizeTime(data[i].time);
@@ -525,10 +525,27 @@ function applyComfortableVisibleRange(chart: IChartApi, data: CandlestickData<Ti
     return;
   }
 
-  const from = Math.max(clusterStart, dataLength - visibleBars);
+  if (clusterStart > 0) {
+    const fromIndex = Math.max(clusterStart, dataLength - visibleBars);
+    const fromTime = normalizeTime(data[fromIndex]?.time);
+    const toTime = normalizeTime(data[dataLength - 1]?.time);
+    if (fromTime !== null && toTime !== null && toTime > fromTime) {
+      chart.timeScale().setVisibleRange({
+        from: fromTime as Time,
+        to: toTime as Time,
+      });
+      return;
+    }
+
+    chart.timeScale().setVisibleLogicalRange({
+      from: Math.max(0, clusterStart - 2),
+      to: dataLength + 8,
+    });
+    return;
+  }
 
   chart.timeScale().setVisibleLogicalRange({
-    from,
+    from: Math.max(0, dataLength - visibleBars),
     to: dataLength + 8,
   });
 }
