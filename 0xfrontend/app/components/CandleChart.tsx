@@ -6,6 +6,7 @@ import {
   createChart,
   ColorType,
   CrosshairMode,
+  PriceScaleMode,
   IChartApi,
   ISeriesApi,
   CandlestickData,
@@ -29,6 +30,7 @@ const TF = [
 
 export type TfValue = typeof TF[number]['value'];
 const PRICE_SCALE_MAX_RATIO = 100;
+const LOG_SCALE_MIN_RATIO = 25;
 const MAX_LOCAL_LIVE_GAP_BARS = 20;
 const MAX_LIVE_CANDLE_RATIO = 1.9;
 
@@ -99,6 +101,35 @@ function isPriceScaleMismatch(left: number | null | undefined, right: number | n
   if (!isValidNumber(left) || !isValidNumber(right) || left <= 0 || right <= 0) return false;
   const ratio = left / right;
   return ratio > PRICE_SCALE_MAX_RATIO || ratio < 1 / PRICE_SCALE_MAX_RATIO;
+}
+
+function priceRangeOfChartData(data: CandlestickData<Time>[]) {
+  let min = Number.POSITIVE_INFINITY;
+  let max = 0;
+
+  for (const item of data) {
+    const values = [item.open, item.high, item.low, item.close];
+    for (const value of values) {
+      if (!isValidNumber(value) || value <= 0) continue;
+      min = Math.min(min, value);
+      max = Math.max(max, value);
+    }
+  }
+
+  if (!Number.isFinite(min) || min <= 0 || max <= 0) {
+    return { min: 0, max: 0, ratio: 1 };
+  }
+
+  return { min, max, ratio: max / min };
+}
+
+function applySmartPriceScale(chart: IChartApi, data: CandlestickData<Time>[]) {
+  const range = priceRangeOfChartData(data);
+  chart.priceScale('right').applyOptions({
+    autoScale: true,
+    mode: range.ratio >= LOG_SCALE_MIN_RATIO ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal,
+    scaleMargins: { top: 0.05, bottom: 0.08 },
+  });
 }
 
 function isLivePriceCompatible(reference: number | null | undefined, livePrice: number | null | undefined) {
@@ -815,10 +846,7 @@ export default function CandleChart({
       chartLastTimeRef.current = pending.fallbackRawLastTime;
       const hasFallbackData = pending.fallbackData.length > 0;
       if (hasFallbackData) dataInitializedRef.current = true;
-      chartRef.current.priceScale('right').applyOptions({
-        autoScale: true,
-        scaleMargins: { top: 0.02, bottom: 0.02 },
-      });
+      applySmartPriceScale(chartRef.current, pending.fallbackData);
       setHasData(hasFallbackData);
       return;
     }
@@ -827,10 +855,7 @@ export default function CandleChart({
     chartSeriesKeyRef.current = pending.seriesKey;
     chartFirstTimeRef.current = pending.rawFirstTime;
     chartLastTimeRef.current = pending.rawLastTime;
-    chartRef.current.priceScale('right').applyOptions({
-      autoScale: true,
-      scaleMargins: { top: 0.02, bottom: 0.02 },
-    });
+    applySmartPriceScale(chartRef.current, pending.data);
 
     const nextHasData = pending.data.length > 0;
     setHasData(nextHasData);
