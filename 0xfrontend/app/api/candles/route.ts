@@ -11,6 +11,7 @@ const SUBGRAPH_URL = SUBGRAPH_URL_RAW === 'disabled' ? '' : SUBGRAPH_URL_RAW;
 const SWAP_PAGE_SIZE = 1000;
 const RECENT_SWAPS_PER_DIRECTION = 30_000;
 const FULL_HISTORY_SWAPS_PER_DIRECTION = 30_000;
+const HISTORY_HEAD_SWAPS_PER_DIRECTION = 2_000;
 const GENESIS_CACHE_TTL_MS = 5 * 60_000;
 const SWAP_CACHE_TTL_MS = 10_000;
 const LATEST_SWAP_CACHE_TTL_MS = 2_500;
@@ -120,6 +121,34 @@ const PAIR_QUERY_RECENT = `
   }
 `;
 
+const PAIR_QUERY_ASC = `
+  query GetCandleSwapsAsc(
+    $timestampGte: BigInt!
+    $tokenIn: Bytes!
+    $tokenOut: Bytes!
+    $limit: Int!
+  ) {
+    swaps(
+      first: $limit
+      orderBy: timestamp
+      orderDirection: asc
+      where: {
+        timestamp_gte: $timestampGte
+        tokenIn: $tokenIn
+        tokenOut: $tokenOut
+      }
+    ) {
+      id
+      timestamp
+      amountIn
+      amountOut
+      fee
+      tokenIn
+      tokenOut
+    }
+  }
+`;
+
 const PAIR_QUERY_GOLDSKY_RAW_RECENT = `
   query GetRecentCandleSwappeds(
     $timestampGte: BigInt!
@@ -135,6 +164,34 @@ const PAIR_QUERY_GOLDSKY_RAW_RECENT = `
       where: {
         timestamp__gte: $timestampGte
         timestamp__lte: $timestampLte
+        tokenIn: $tokenIn
+        tokenOut: $tokenOut
+      }
+    ) {
+      id
+      timestamp: timestamp_
+      amountIn
+      amountOut
+      fee
+      tokenIn
+      tokenOut
+    }
+  }
+`;
+
+const PAIR_QUERY_GOLDSKY_RAW_ASC = `
+  query GetCandleSwappedsAsc(
+    $timestampGte: BigInt!
+    $tokenIn: String!
+    $tokenOut: String!
+    $limit: Int!
+  ) {
+    swaps: swappeds(
+      first: $limit
+      orderBy: timestamp_
+      orderDirection: asc
+      where: {
+        timestamp__gte: $timestampGte
         tokenIn: $tokenIn
         tokenOut: $tokenOut
       }
@@ -502,6 +559,78 @@ async function fetchSwapDirection(
   return out;
 }
 
+async function fetchSwapDirectionAsc(
+  timestampGte: number,
+  tokenIn: string,
+  tokenOut: string,
+  maxSwaps: number,
+): Promise<SwapEvent[]> {
+  const out: SwapEvent[] = [];
+  let cursor = Math.max(0, Math.floor(timestampGte));
+
+  while (out.length < maxSwaps) {
+    const limit = Math.min(SWAP_PAGE_SIZE, maxSwaps - out.length);
+    const res = await fetch(SUBGRAPH_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: useGoldskyRawSwapSchema ? PAIR_QUERY_GOLDSKY_RAW_ASC : PAIR_QUERY_ASC,
+        variables: {
+          timestampGte: String(cursor),
+          tokenIn,
+          tokenOut,
+          limit,
+        },
+      }),
+      signal: AbortSignal.timeout(8_000),
+    });
+
+    if (!res.ok) {
+      throw new Error(`Subgraph request failed: ${res.status}`);
+    }
+
+    const json = await res.json();
+    if (json.errors?.length) {
+      if (!useGoldskyRawSwapSchema) {
+        useGoldskyRawSwapSchema = true;
+        continue;
+      }
+      throw new Error(json.errors[0]?.message ?? 'Subgraph query error');
+    }
+
+    const page: SwapEvent[] = json.data?.swaps ?? [];
+    if (page.length === 0) break;
+
+    out.push(...page);
+
+    const newestTs = timestampOf(page[page.length - 1]);
+    if (!isFinite(newestTs) || newestTs <= cursor || page.length < limit) break;
+    cursor = newestTs + 1;
+  }
+
+  return out;
+}
+
+function mergeSwaps(...groups: SwapEvent[][]): SwapEvent[] {
+  const seen = new Set<string>();
+  const merged: SwapEvent[] = [];
+
+  for (const group of groups) {
+    for (const swap of group) {
+      if (seen.has(swap.id)) continue;
+      seen.add(swap.id);
+      merged.push(swap);
+    }
+  }
+
+  merged.sort((a, b) => {
+    const tsDiff = timestampOf(a) - timestampOf(b);
+    return tsDiff || a.id.localeCompare(b.id);
+  });
+
+  return merged;
+}
+
 async function fetchSwaps(
   timestampGte: number,
   t0: string,
@@ -542,21 +671,24 @@ async function fetchSwapsUncached(
     result.status === 'fulfilled' ? result.value : []
   ));
 
-  const seen = new Set<string>();
-  const merged: SwapEvent[] = [];
+  return mergeSwaps(forward, reverse).slice(0, maxSwapsPerDirection * 2);
+}
 
-  for (const swap of [...forward, ...reverse]) {
-    if (seen.has(swap.id)) continue;
-    seen.add(swap.id);
-    merged.push(swap);
-  }
+async function fetchBookendSwaps(
+  timestampGte: number,
+  t0: string,
+  t1: string,
+  maxRecentSwapsPerDirection: number,
+  maxHeadSwapsPerDirection = HISTORY_HEAD_SWAPS_PER_DIRECTION,
+): Promise<SwapEvent[]> {
+  const [headForward, headReverse, recentForward, recentReverse] = await Promise.all([
+    fetchSwapDirectionAsc(timestampGte, t0, t1, maxHeadSwapsPerDirection).catch(() => []),
+    fetchSwapDirectionAsc(timestampGte, t1, t0, maxHeadSwapsPerDirection).catch(() => []),
+    fetchSwapDirection(timestampGte, t0, t1, maxRecentSwapsPerDirection).catch(() => []),
+    fetchSwapDirection(timestampGte, t1, t0, maxRecentSwapsPerDirection).catch(() => []),
+  ]);
 
-  merged.sort((a, b) => {
-    const tsDiff = timestampOf(a) - timestampOf(b);
-    return tsDiff || a.id.localeCompare(b.id);
-  });
-
-  return merged.slice(0, maxSwapsPerDirection * 2);
+  return mergeSwaps(headForward, headReverse, recentForward, recentReverse);
 }
 
 async function fetchLatestSwapDirection(tokenIn: string, tokenOut: string): Promise<SwapEvent | null> {
@@ -826,8 +958,11 @@ async function buildCandlesResponse(
   const maxSwapsPerDirection = shouldLoadFullHistory(interval)
     ? FULL_HISTORY_SWAPS_PER_DIRECTION
     : RECENT_SWAPS_PER_DIRECTION;
+  const rawSwaps = shouldLoadFullHistory(interval)
+    ? await fetchBookendSwaps(rawHistoryStart, t0, t1, maxSwapsPerDirection)
+    : await fetchSwaps(rawHistoryStart, t0, t1, maxSwapsPerDirection);
   const swaps = appendLatestSwapIfMissing(
-    await fetchSwaps(rawHistoryStart, t0, t1, maxSwapsPerDirection),
+    rawSwaps,
     latestSwap,
   );
   const rawCandles = buildCandlesFromSwaps(swaps, interval, ctx);
