@@ -90,9 +90,10 @@ let indexedSchemaUnavailableUntil = 0;
 let useGoldskyRawSwapSchema = false;
 let useGoldskyRawLiquiditySchema = false;
 
-const PAIR_QUERY = `
-  query GetCandleSwaps(
+const PAIR_QUERY_RECENT = `
+  query GetRecentCandleSwaps(
     $timestampGte: BigInt!
+    $timestampLte: BigInt!
     $tokenIn: Bytes!
     $tokenOut: Bytes!
     $limit: Int!
@@ -100,9 +101,10 @@ const PAIR_QUERY = `
     swaps(
       first: $limit
       orderBy: timestamp
-      orderDirection: asc
+      orderDirection: desc
       where: {
         timestamp_gte: $timestampGte
+        timestamp_lte: $timestampLte
         tokenIn: $tokenIn
         tokenOut: $tokenOut
       }
@@ -118,9 +120,10 @@ const PAIR_QUERY = `
   }
 `;
 
-const PAIR_QUERY_GOLDSKY_RAW = `
-  query GetCandleSwappeds(
+const PAIR_QUERY_GOLDSKY_RAW_RECENT = `
+  query GetRecentCandleSwappeds(
     $timestampGte: BigInt!
+    $timestampLte: BigInt!
     $tokenIn: String!
     $tokenOut: String!
     $limit: Int!
@@ -128,9 +131,10 @@ const PAIR_QUERY_GOLDSKY_RAW = `
     swaps: swappeds(
       first: $limit
       orderBy: timestamp_
-      orderDirection: asc
+      orderDirection: desc
       where: {
         timestamp__gte: $timestampGte
+        timestamp__lte: $timestampLte
         tokenIn: $tokenIn
         tokenOut: $tokenOut
       }
@@ -451,7 +455,8 @@ async function fetchSwapDirection(
   maxSwaps: number,
 ): Promise<SwapEvent[]> {
   const out: SwapEvent[] = [];
-  let cursor = timestampGte;
+  const floor = Math.max(0, Math.floor(timestampGte));
+  let cursor = Math.floor(Date.now() / 1000) + 60;
 
   while (out.length < maxSwaps) {
     const limit = Math.min(SWAP_PAGE_SIZE, maxSwaps - out.length);
@@ -459,9 +464,10 @@ async function fetchSwapDirection(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        query: useGoldskyRawSwapSchema ? PAIR_QUERY_GOLDSKY_RAW : PAIR_QUERY,
+        query: useGoldskyRawSwapSchema ? PAIR_QUERY_GOLDSKY_RAW_RECENT : PAIR_QUERY_RECENT,
         variables: {
-          timestampGte: String(cursor),
+          timestampGte: String(floor),
+          timestampLte: String(cursor),
           tokenIn,
           tokenOut,
           limit,
@@ -488,9 +494,9 @@ async function fetchSwapDirection(
 
     out.push(...page);
 
-    const lastTs = timestampOf(page[page.length - 1]);
-    if (!isFinite(lastTs) || lastTs <= cursor || page.length < limit) break;
-    cursor = lastTs + 1;
+    const oldestTs = timestampOf(page[page.length - 1]);
+    if (!isFinite(oldestTs) || oldestTs <= floor || page.length < limit) break;
+    cursor = oldestTs - 1;
   }
 
   return out;

@@ -30,6 +30,7 @@ const TF = [
 export type TfValue = typeof TF[number]['value'];
 const PRICE_SCALE_MAX_RATIO = 100;
 const MAX_LOCAL_LIVE_GAP_BARS = 20;
+const MAX_LIVE_CANDLE_RATIO = 1.9;
 
 const COLORS = {
   bg: '#000000',
@@ -98,6 +99,12 @@ function isPriceScaleMismatch(left: number | null | undefined, right: number | n
   if (!isValidNumber(left) || !isValidNumber(right) || left <= 0 || right <= 0) return false;
   const ratio = left / right;
   return ratio > PRICE_SCALE_MAX_RATIO || ratio < 1 / PRICE_SCALE_MAX_RATIO;
+}
+
+function isLivePriceCompatible(reference: number | null | undefined, livePrice: number | null | undefined) {
+  if (!isValidNumber(reference) || !isValidNumber(livePrice) || reference <= 0 || livePrice <= 0) return true;
+  const ratio = livePrice / reference;
+  return ratio <= MAX_LIVE_CANDLE_RATIO && ratio >= 1 / MAX_LIVE_CANDLE_RATIO;
 }
 
 function normalizeTime(value: unknown): number | null {
@@ -688,7 +695,14 @@ export default function CandleChart({
     token0Decimals,
     token1Decimals,
   });
-  const livePrice = latestPrice?.price ?? (isValidNumber(initialPrice) && initialPrice > 0 ? initialPrice : null);
+  const rawLivePrice = latestPrice?.price ?? (isValidNumber(initialPrice) && initialPrice > 0 ? initialPrice : null);
+  const livePrice = useMemo(() => {
+    if (!isValidNumber(rawLivePrice) || rawLivePrice <= 0) return null;
+    const confirmedCandles = normalizeCandleBuckets(candles, timeframe);
+    const lastConfirmed = confirmedCandles[confirmedCandles.length - 1];
+    if (!lastConfirmed) return rawLivePrice;
+    return isLivePriceCompatible(lastConfirmed.close, rawLivePrice) ? rawLivePrice : null;
+  }, [candles, rawLivePrice, timeframe]);
 
   useEffect(() => {
     if (!normalizedToken0 || !normalizedToken1) return;
