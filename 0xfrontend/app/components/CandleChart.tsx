@@ -498,17 +498,37 @@ function defaultVisibleBars(timeframe: TfValue) {
   return 120;
 }
 
-function applyComfortableVisibleRange(chart: IChartApi, dataLength: number, timeframe: TfValue) {
+function latestClusterStartIndex(data: CandlestickData<Time>[], timeframe: TfValue) {
+  if (data.length <= 1) return 0;
+
+  const intervalSeconds = timeframe * 60;
+  const maxGapSeconds = Math.max(intervalSeconds * 8, 60 * 60);
+
+  for (let i = data.length - 1; i > 0; i--) {
+    const current = normalizeTime(data[i].time);
+    const previous = normalizeTime(data[i - 1].time);
+    if (current === null || previous === null) continue;
+    if (current - previous > maxGapSeconds) return i;
+  }
+
+  return 0;
+}
+
+function applyComfortableVisibleRange(chart: IChartApi, data: CandlestickData<Time>[], timeframe: TfValue) {
+  const dataLength = data.length;
   if (dataLength <= 0) return;
 
   const visibleBars = defaultVisibleBars(timeframe);
-  if (dataLength <= visibleBars + 8) {
+  const clusterStart = latestClusterStartIndex(data, timeframe);
+  if (clusterStart === 0 && dataLength <= visibleBars + 8) {
     chart.timeScale().fitContent();
     return;
   }
 
+  const from = Math.max(clusterStart, dataLength - visibleBars);
+
   chart.timeScale().setVisibleLogicalRange({
-    from: Math.max(0, dataLength - visibleBars),
+    from,
     to: dataLength + 8,
   });
 }
@@ -860,7 +880,7 @@ export default function CandleChart({
     const nextHasData = pending.data.length > 0;
     setHasData(nextHasData);
     if (nextHasData && pending.fit) {
-      applyComfortableVisibleRange(chartRef.current, pending.data.length, timeframeRef.current);
+      applyComfortableVisibleRange(chartRef.current, pending.data, timeframeRef.current);
       dataInitializedRef.current = true;
     } else if (!nextHasData) {
       dataInitializedRef.current = false;
@@ -1065,7 +1085,6 @@ export default function CandleChart({
     }
 
     const previousChartCandles = lastRawCandlesRef.current;
-    const previousFirstTime = firstValidTime(previousChartCandles);
     const confirmedCandles = normalizeCandleBuckets(candles, timeframe);
 
     if (isNewSeries && isLoading && confirmedCandles.length === 0 && hasData) {
@@ -1119,11 +1138,7 @@ export default function CandleChart({
     const chartData = toChartData(chartCandles, invertPrice);
     const rawFirstTime = firstValidTime(chartCandles);
     const rawLastTime = lastValidTime(chartCandles);
-    const historyExpandedLeft =
-      confirmedCandles.length > 0 &&
-      rawFirstTime !== null &&
-      (previousFirstTime === null || rawFirstTime < previousFirstTime);
-    const shouldFitContent = isNewSeries || !dataInitializedRef.current || historyExpandedLeft;
+    const shouldFitContent = isNewSeries || !dataInitializedRef.current;
 
     pendingRef.current = lastDatum
       ? {

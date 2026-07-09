@@ -52,9 +52,9 @@ export interface CandlesResponse {
   latestPrice?: { price: number; timestamp: number; source?: string } | null;
 }
 
-export const CANDLE_QUERY_KEY = 'candles-edge-v20';
+export const CANDLE_QUERY_KEY = 'candles-edge-v21';
 const SUPPORTED_INTERVALS = new Set([1, 15, 60, 240, 1440]);
-const CANDLE_SESSION_CACHE_PREFIX = 'candles:v20';
+const CANDLE_SESSION_CACHE_PREFIX = 'candles:v21';
 const SWAP_REFETCH_THROTTLE_MS = 2_500;
 const PRICE_SCALE_MAX_RATIO = 100;
 const BYTES32_RE = /^0x[a-fA-F0-9]{64}$/;
