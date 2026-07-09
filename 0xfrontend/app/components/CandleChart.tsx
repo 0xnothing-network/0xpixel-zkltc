@@ -281,7 +281,9 @@ function withLivePrice(
 
   if (lastTime > liveTime) return candles;
 
-  const open = last.close > 0 && !isPriceScaleMismatch(last.close, price)
+  const gapBars = Math.floor((liveTime - lastTime) / intervalSeconds);
+  const shouldBridgeFromLastClose = gapBars <= MAX_LOCAL_LIVE_GAP_BARS;
+  const open = shouldBridgeFromLastClose && last.close > 0 && !isPriceScaleMismatch(last.close, price)
     ? last.close
     : price;
   return [
@@ -341,7 +343,12 @@ function mergeLocalLiveCandles(
   }
 
   if (!lastSynthetic) {
-    const open = lastConfirmed?.close && lastConfirmed.close > 0 && !isPriceScaleMismatch(lastConfirmed.close, price)
+    const lastConfirmedTime = lastConfirmed ? normalizeTime(lastConfirmed.time) : null;
+    const gapBars = lastConfirmedTime !== null
+      ? Math.floor((liveTime - lastConfirmedTime) / intervalSeconds)
+      : 0;
+    const shouldBridgeFromConfirmed = gapBars <= MAX_LOCAL_LIVE_GAP_BARS;
+    const open = shouldBridgeFromConfirmed && lastConfirmed?.close && lastConfirmed.close > 0 && !isPriceScaleMismatch(lastConfirmed.close, price)
       ? lastConfirmed.close
       : price;
     syntheticCandles = [{

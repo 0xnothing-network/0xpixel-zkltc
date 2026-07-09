@@ -664,7 +664,24 @@ function buildCandlesFromSwaps(
 ): CandleData[] {
   const interval = intervalMinutes * 60;
   const candles: CandleData[] = [];
-  let current: CandleData | null = null;
+  let current: { time: number; open: number; close: number; prices: number[] } | null = null;
+
+  const finalizeBucket = () => {
+    if (!current) return;
+    const sortedPrices = [...current.prices].sort((a, b) => a - b);
+    const useTrimmedRange = sortedPrices.length >= 12;
+    const lowIndex = useTrimmedRange ? Math.floor((sortedPrices.length - 1) * 0.02) : 0;
+    const highIndex = useTrimmedRange ? Math.ceil((sortedPrices.length - 1) * 0.98) : sortedPrices.length - 1;
+    const rangeLow = sortedPrices[lowIndex] ?? current.close;
+    const rangeHigh = sortedPrices[highIndex] ?? current.close;
+    candles.push({
+      time: current.time,
+      open: current.open,
+      high: Math.max(current.open, current.close, rangeHigh),
+      low: Math.min(current.open, current.close, rangeLow),
+      close: current.close,
+    });
+  };
 
   for (const swap of swaps) {
     const ts = timestampOf(swap);
@@ -673,16 +690,15 @@ function buildCandlesFromSwaps(
 
     const candleTime = Math.floor(ts / interval) * interval;
     if (!current || current.time !== candleTime) {
-      if (current) candles.push(current);
-      current = { time: candleTime, open: price, high: price, low: price, close: price };
+      finalizeBucket();
+      current = { time: candleTime, open: price, close: price, prices: [price] };
     } else {
-      current.high = Math.max(current.high, price);
-      current.low = Math.min(current.low, price);
       current.close = price;
+      current.prices.push(price);
     }
   }
 
-  if (current) candles.push(current);
+  finalizeBucket();
   return candles;
 }
 
@@ -741,6 +757,26 @@ function prependGenesisCandle(candles: CandleData[], genesis: CandleData | null)
   ];
 }
 
+function prependGenesisCandleWhenContiguous(
+  candles: CandleData[],
+  genesis: CandleData | null,
+  intervalMinutes: number,
+): CandleData[] {
+  if (!genesis) return candles;
+  if (candles.length === 0) return [genesis];
+
+  const first = candles[0];
+  const intervalSeconds = intervalMinutes * 60;
+  const gap = first.time - genesis.time;
+  if (!Number.isFinite(gap) || gap < 0) return candles;
+
+  // Raw swap fallback can be truncated under very high volume. In that case,
+  // adding genesis creates a fake candle bridge across hours/days. Keep genesis
+  // only when it is adjacent to the first raw candle.
+  if (gap > intervalSeconds * 2) return candles;
+  return prependGenesisCandle(candles, genesis);
+}
+
 function fullHistoryStart(genesis: LiquidityAddedEvent | null): number {
   if (!genesis) return 0;
   const genesisTs = timestampOfLiquidity(genesis);
@@ -794,7 +830,8 @@ async function buildCandlesResponse(
     await fetchSwaps(rawHistoryStart, t0, t1, maxSwapsPerDirection),
     latestSwap,
   );
-  const candles = prependGenesisCandle(buildCandlesFromSwaps(swaps, interval, ctx), genesisCandle);
+  const rawCandles = buildCandlesFromSwaps(swaps, interval, ctx);
+  const candles = prependGenesisCandleWhenContiguous(rawCandles, genesisCandle, interval);
   const latestPrice = latestPriceFromSwap(swaps[swaps.length - 1] ?? null, ctx)
     ?? latestPriceFromCandles(candles);
 

@@ -52,9 +52,9 @@ export interface CandlesResponse {
   latestPrice?: { price: number; timestamp: number; source?: string } | null;
 }
 
-export const CANDLE_QUERY_KEY = 'candles-edge-v16';
+export const CANDLE_QUERY_KEY = 'candles-edge-v18';
 const SUPPORTED_INTERVALS = new Set([1, 15, 60, 240, 1440]);
-const CANDLE_SESSION_CACHE_PREFIX = 'candles:v16';
+const CANDLE_SESSION_CACHE_PREFIX = 'candles:v18';
 const SWAP_REFETCH_THROTTLE_MS = 2_500;
 const PRICE_SCALE_MAX_RATIO = 100;
 const BYTES32_RE = /^0x[a-fA-F0-9]{64}$/;
@@ -260,7 +260,7 @@ function readCachedLatestPrice(priceKey: string): { price: number; timestamp: nu
   if (typeof window === 'undefined') return null;
 
   try {
-    const raw = sessionStorage.getItem(`latestPrice:v6:${priceKey}`);
+    const raw = sessionStorage.getItem(`latestPrice:v7:${priceKey}`);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<{ price: number; timestamp: number }>;
     if (!isFiniteNumber(parsed.price) || parsed.price <= 0) return null;
@@ -283,7 +283,7 @@ function writeCachedLatestPrice(priceKey: string, latestPrice: { price: number; 
   if (typeof window === 'undefined') return;
 
   try {
-    sessionStorage.setItem(`latestPrice:v6:${priceKey}`, JSON.stringify(latestPrice));
+    sessionStorage.setItem(`latestPrice:v7:${priceKey}`, JSON.stringify(latestPrice));
   } catch {}
 }
 
