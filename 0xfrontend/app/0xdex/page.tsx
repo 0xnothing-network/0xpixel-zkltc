@@ -22,6 +22,11 @@ import { PageLoader } from "@/components/PageLoader";
 import { useGSAP } from "@gsap/react";
 import { gsapPixelStagger } from "@/lib/gsap-animations";
 import { fetchCandlesRequest, getCandlesQueryKey } from "@/app/hooks/useCandleData";
+import {
+  getAddressExplorerUrl,
+  getTokenExplorerUrl,
+  getTransactionExplorerUrl,
+} from "@/lib/explorer";
 
 // ============================================================
 // Pixel Skeleton Component - Dark theme shimmer loader
@@ -508,10 +513,9 @@ function PoolCard({
   const NATIVE = NATIVE_ADDRESS;
   const isToken0NUSD = token0.toLowerCase() === NUSD_ADDRESS_LOCAL.toLowerCase();
   const isToken1NUSD = token1.toLowerCase() === NUSD_ADDRESS_LOCAL.toLowerCase();
-  const isToken0Native = token0.toLowerCase() === NATIVE.toLowerCase();
   const otherToken = isToken0NUSD ? token1 : (isToken1NUSD ? token0 : token0);
   const nusdAddr = isToken0NUSD ? token0 : (isToken1NUSD ? token1 : null);
-  const isOtherNative = isToken0NUSD ? isToken1NUSD : isToken0Native;
+  const isOtherNative = otherToken.toLowerCase() === NATIVE.toLowerCase();
   const reserveOther = isToken0NUSD ? reserve1 : (isToken1NUSD ? reserve0 : reserve1);
   const reserveNUSD = isToken0NUSD ? reserve0 : (isToken1NUSD ? reserve1 : reserve0);
   const displaySymbol = tokenSymbol || (isOtherNative ? "zkLTC" : otherToken.slice(0, 8) + "...");
@@ -533,6 +537,12 @@ function PoolCard({
 
   // TVL = reserveToken (in USD) + reserveNUSD = 2 * reserveNUSD (since they're equal value)
   const tvlUSD = reserveNUSD > 0n ? Number(formatUnits(reserveNUSD, 18)) * 2 : 0;
+  const explorerUrl = isOtherNative
+    ? getAddressExplorerUrl(DEX_ADDRESS)
+    : getTokenExplorerUrl(otherToken);
+  const explorerLabel = isOtherNative
+    ? `${displaySymbol}/NUSD pool contract`
+    : `${displaySymbol} token`;
 
   return (
     <div
@@ -541,8 +551,8 @@ function PoolCard({
       onClick={handleClick}
     >
       {/* Top Row: Rank, Symbol, Price */}
-        <div className="flex justify-between items-center mb-3">
-        <div className="flex items-center gap-2">
+      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="text-xs text-[#64748B] bg-[#2D2D44] px-2 py-0.5 rounded">#{rank}</span>
           <div className="w-7 h-7 rounded-full bg-[#8888ff]/20 border border-[#8888ff]/40 flex items-center justify-center text-[#8888ff] text-xs font-bold">L$</div>
           <span className="font-bold text-white text-sm" style={{ fontFamily: "var(--font-departure)" }}>
@@ -552,7 +562,18 @@ function PoolCard({
             ${pricePerToken > 0 ? pricePerToken.toFixed(6) : "0"}
           </span>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1 self-end sm:self-auto">
+          <a
+            href={explorerUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(event) => event.stopPropagation()}
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-[#2D2D44] bg-[#1A1A2E] text-[#94A3B8] transition-colors hover:border-[#8888ff]/50 hover:text-white"
+            title={`View ${explorerLabel} on explorer`}
+            aria-label={`View ${explorerLabel} on explorer`}
+          >
+            <ExternalLinkIcon />
+          </a>
           <Link
             href={swapHref}
             onClick={(e) => {
@@ -686,10 +707,29 @@ function SwapHistoryPanel({
                   <span>{formatTokenAmount(item.amountOut, tokenOutMeta.decimals)} {tokenOutMeta.symbol}</span>
                 </div>
                 <div className="dex-history-wallet">
-                  <span>{shortAddress(item.user)}</span>
-                  <span className="dex-history-block">
-                    {item.txHash ? shortAddress(item.txHash) : `#${item.blockNumber.toString()}`}
-                  </span>
+                  <a
+                    href={getAddressExplorerUrl(item.user)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={`View wallet ${item.user} on explorer`}
+                    aria-label={`View wallet ${item.user} on explorer`}
+                  >
+                    {shortAddress(item.user)}
+                  </a>
+                  {item.txHash ? (
+                    <a
+                      href={getTransactionExplorerUrl(item.txHash)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="dex-history-block"
+                      title={`View transaction ${item.txHash} on explorer`}
+                      aria-label={`View transaction ${item.txHash} on explorer`}
+                    >
+                      {shortAddress(item.txHash)}
+                    </a>
+                  ) : (
+                    <span className="dex-history-block">#{item.blockNumber.toString()}</span>
+                  )}
                 </div>
                 <div className="dex-history-time">{formatSwapTime(item.timestamp)}</div>
               </div>
@@ -698,6 +738,26 @@ function SwapHistoryPanel({
         )}
       </div>
     </section>
+  );
+}
+
+function ExternalLinkIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M15 3h6v6" />
+      <path d="M10 14 21 3" />
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+    </svg>
   );
 }
 
@@ -2467,20 +2527,20 @@ export default function DexAllInOne() {
             </div>
             <div className="space-y-3" ref={poolListRef}>
               {poolOptions.length > 0 ? (
-                sortedPoolIndices.slice(0, 8).map((poolIndex) => {
+                sortedPoolIndices.map((poolIndex, rankIndex) => {
                   const pool = poolOptions[poolIndex];
                   const pData = allPoolData[poolIndex];
                   const token0 = pData?.[0] as `0x${string}` | undefined;
                   const token1 = pData?.[1] as `0x${string}` | undefined;
 
                   if (!pData) return (
-                    <PoolCardSkeleton key={poolIndex} />
+                    <PoolCardSkeleton key={pool.pairId} />
                   );
 
                   return (
                     <PoolCard
-                      key={poolIndex}
-                      rank={sortedPoolIndices.indexOf(poolIndex) + 1}
+                      key={pool.pairId}
+                      rank={rankIndex + 1}
                       token0={token0 || pool.token}
                       token1={token1 || pool.nusd}
                       reserve0={(pData[2] as bigint) || 0n}

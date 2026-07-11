@@ -2,6 +2,17 @@ import { createPublicClient, http } from "viem";
 import { PixelNFTABI } from "./abi";
 import { pixelDataToSVG } from "./gridParser";
 import { litvm, LITVM_RPC_URL } from "@/config/wagmi";
+import {
+  getTokenExplorerUrl,
+  getTransactionExplorerUrl,
+} from "./explorer";
+
+export {
+  LITVM_EXPLORER_URL,
+  getAddressExplorerUrl,
+  getTokenExplorerUrl,
+  getTransactionExplorerUrl,
+} from "./explorer";
 
 export const PIXEL_NFT_CONTRACT_ADDRESS: `0x${string}` =
   (process.env.NEXT_PUBLIC_PIXEL_NFT_ADDRESS as `0x${string}`) ||
@@ -11,16 +22,12 @@ export const PIXEL_MARKETPLACE_ADDRESS: `0x${string}` =
   (process.env.NEXT_PUBLIC_PIXEL_MARKETPLACE_ADDRESS as `0x${string}`) ||
   "0x13337cadA78d53C90E3c0EcE44C17c467C1a86F4";
 
-export const LITVM_EXPLORER_URL = "https://liteforge.explorer.caldera.xyz";
-
 export function getExplorerUrl(tokenId?: bigint | number | string): string {
-  const base = `${LITVM_EXPLORER_URL}/token/${PIXEL_NFT_CONTRACT_ADDRESS}`;
-  if (tokenId === undefined || tokenId === null) return base;
-  return `${base}?id=${tokenId.toString()}`;
+  return getTokenExplorerUrl(PIXEL_NFT_CONTRACT_ADDRESS, tokenId);
 }
 
 export function getMarketplaceTxUrl(txHash: string): string {
-  return `${LITVM_EXPLORER_URL}/tx/${txHash}`;
+  return getTransactionExplorerUrl(txHash);
 }
 
 export function shortenAddress(addr: string, head = 6, tail = 4): string {

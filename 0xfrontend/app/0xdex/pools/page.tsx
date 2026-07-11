@@ -2,14 +2,19 @@
 
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
-import { useAccount, usePublicClient, useReadContract, useSwitchChain } from "wagmi";
-import { useDexWrite, NATIVE_TOKEN, Token, useTokenBalance, useDexRead, useAllPools } from "@/lib/use0xDex";
-import { DEX_ADDRESS, NATIVE_ADDRESS } from "@/lib/0xDexAbi";
+import { useAccount, usePublicClient, useReadContract, useReadContracts, useSwitchChain } from "wagmi";
+import { useDexWrite, NATIVE_TOKEN, Token, useTokenBalance, useAllPools } from "@/lib/use0xDex";
+import { DEX_ABI, DEX_ADDRESS, NATIVE_ADDRESS } from "@/lib/0xDexAbi";
 import { NUSD_ADDRESS } from "@/lib/NUSDContract";
 import { erc20Abi, formatUnits, parseUnits } from "viem";
 import { useToast } from "@/components/Toast";
 import { useChainId } from "wagmi";
 import { LITVM_CHAIN_ID } from "@/lib/chainSwitch";
+import {
+  getAddressExplorerUrl,
+  getTokenExplorerUrl,
+  getTransactionExplorerUrl,
+} from "@/lib/explorer";
 
 const DEX_NAV = [
   { href: "/0xdex", label: "Dashboard", icon: "◈" },
@@ -44,6 +49,78 @@ function safeParseAmount(value: string, decimals: number) {
   }
 }
 
+const LP_SHARE_BPS = 10_000n;
+
+function getLpRisk(
+  walletLP: bigint | undefined,
+  totalLP: bigint,
+  isConnected: boolean,
+  isLoading = false,
+) {
+  if (!isConnected) {
+    return {
+      label: "N/A",
+      share: "Connect wallet",
+      className: "border-[#2D2D44] bg-[#2D2D44]/30 text-[#64748B]",
+    };
+  }
+  if (walletLP === undefined) {
+    return {
+      label: isLoading ? "..." : "N/A",
+      share: isLoading ? "Loading" : "Unavailable",
+      className: "border-[#2D2D44] bg-[#2D2D44]/30 text-[#64748B]",
+    };
+  }
+  if (totalLP === 0n) {
+    return {
+      label: "NO LP",
+      share: "No liquidity",
+      className: "border-[#2D2D44] bg-[#2D2D44]/30 text-[#64748B]",
+    };
+  }
+  if (walletLP === 0n) {
+    return {
+      label: "NO LP",
+      share: "0% share",
+      className: "border-[#2D2D44] bg-[#2D2D44]/30 text-[#64748B]",
+    };
+  }
+
+  const shareBps = walletLP >= totalLP
+    ? LP_SHARE_BPS
+    : (walletLP * LP_SHARE_BPS) / totalLP;
+  const share = shareBps === 0n
+    ? "<0.01% share"
+    : `${shareBps / 100n}.${(shareBps % 100n).toString().padStart(2, "0")}% share`;
+
+  if (shareBps === LP_SHARE_BPS) {
+    return {
+      label: "SAFE",
+      share,
+      className: "border-emerald-400/30 bg-emerald-400/10 text-emerald-400",
+    };
+  }
+  if (shareBps >= 9_000n) {
+    return {
+      label: "LOW",
+      share,
+      className: "border-[#8888ff]/30 bg-[#8888ff]/10 text-[#8888ff]",
+    };
+  }
+  if (shareBps >= 5_000n) {
+    return {
+      label: "MEDIUM",
+      share,
+      className: "border-amber-400/30 bg-amber-400/10 text-amber-400",
+    };
+  }
+  return {
+    label: "HIGH",
+    share,
+    className: "border-rose-400/30 bg-rose-400/10 text-rose-400",
+  };
+}
+
 export default function PoolsPage() {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
@@ -59,8 +136,6 @@ export default function PoolsPage() {
   
   // Add liquidity state
   const [selectedPoolIndex, setSelectedPoolIndex] = useState<number>(0);
-  const [tokenA, setTokenA] = useState<Token | null>(null);
-  const [tokenB, setTokenB] = useState<Token | null>(null);
   const [amountA, setAmountA] = useState("");
   const [amountB, setAmountB] = useState("");
   
@@ -69,78 +144,182 @@ export default function PoolsPage() {
   const [lpAmount, setLpAmount] = useState("");
   
   // Get all pools
-  const { data: allPools } = useAllPools();
-  
-  // Get NUSD address
-  const { data: nusdAddress } = useDexRead<`0x${string}`>("NUSD");
-  
-  // Build pool options from allPools
+  const { data: allPools, refetch: refetchAllPools } = useAllPools();
+
+  const metadataTokenAddresses = useMemo(() => {
+    const seen = new Set<string>();
+    const addresses: `0x${string}`[] = [];
+    allPools?.forEach((pool) => {
+      [pool.token0, pool.token1].forEach((tokenAddress) => {
+        const key = tokenAddress.toLowerCase();
+        const isKnown = KNOWN_TOKENS.some(
+          (token) => token.address.toLowerCase() === key,
+        );
+        if (key === NATIVE_ADDRESS.toLowerCase() || isKnown || seen.has(key)) return;
+        seen.add(key);
+        addresses.push(tokenAddress);
+      });
+    });
+    return addresses;
+  }, [allPools]);
+  const tokenMetadataContracts = useMemo(
+    () => metadataTokenAddresses.flatMap((tokenAddress) => [
+      {
+        address: tokenAddress,
+        abi: erc20Abi,
+        functionName: "symbol" as const,
+      },
+      {
+        address: tokenAddress,
+        abi: erc20Abi,
+        functionName: "decimals" as const,
+      },
+      {
+        address: tokenAddress,
+        abi: erc20Abi,
+        functionName: "name" as const,
+      },
+    ]),
+    [metadataTokenAddresses],
+  );
+  const {
+    data: tokenMetadataResults,
+    isPending: isTokenMetadataPending,
+  } = useReadContracts({
+    contracts: tokenMetadataContracts,
+    allowFailure: true,
+    query: { enabled: tokenMetadataContracts.length > 0 },
+  });
+  const tokenMetadataByAddress = useMemo(() => {
+    const metadata = new Map<string, { token: Token; decimalsResolved: boolean }>();
+    metadataTokenAddresses.forEach((tokenAddress, index) => {
+      const resultOffset = index * 3;
+      const symbolResult = tokenMetadataResults?.[resultOffset];
+      const decimalsResult = tokenMetadataResults?.[resultOffset + 1];
+      const nameResult = tokenMetadataResults?.[resultOffset + 2];
+      const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
+      const symbol = symbolResult?.status === "success" && typeof symbolResult.result === "string"
+        ? symbolResult.result
+        : shortAddress;
+      const decimals = decimalsResult?.status === "success" && typeof decimalsResult.result === "number"
+        ? decimalsResult.result
+        : 18;
+      const name = nameResult?.status === "success" && typeof nameResult.result === "string"
+        ? nameResult.result
+        : symbol;
+      metadata.set(tokenAddress.toLowerCase(), {
+        token: {
+          address: tokenAddress,
+          symbol,
+          decimals,
+          name,
+        },
+        decimalsResolved: decimalsResult?.status === "success"
+          && typeof decimalsResult.result === "number",
+      });
+    });
+    return metadata;
+  }, [metadataTokenAddresses, tokenMetadataResults]);
+
+  // Build every pool from the shared pool and metadata batches.
   const poolOptions = useMemo(() => {
-    if (!allPools || !nusdAddress) return [];
-    return allPools.map(({ pairId, token0, token1 }) => {
-      const displayToken = token0.toLowerCase() === nusdAddress.toLowerCase() ? token1 : token0;
-      const knownToken = KNOWN_TOKENS.find(
-        (token) => token.address.toLowerCase() === displayToken.toLowerCase(),
+    if (!allPools) return [];
+    const resolveToken = (tokenAddress: `0x${string}`) => {
+      const known = KNOWN_TOKENS.find(
+        (token) => token.address.toLowerCase() === tokenAddress.toLowerCase(),
       );
-      const displaySymbol = knownToken?.symbol ?? `${displayToken.slice(0, 6)}...${displayToken.slice(-4)}`;
-      const label = `${displaySymbol} / NUSD`;
+      if (known) return { token: known, decimalsResolved: true };
+      return tokenMetadataByAddress.get(tokenAddress.toLowerCase()) ?? {
+        token: {
+          address: tokenAddress,
+          symbol: `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`,
+          decimals: 18,
+          name: "Token",
+        },
+        decimalsResolved: false,
+      };
+    };
+    return allPools.map(({ pairId, token0, token1, poolData }) => {
+      const token0Result = resolveToken(token0);
+      const token1Result = resolveToken(token1);
+      const token0Metadata = token0Result.token;
+      const token1Metadata = token1Result.token;
+      const displayTokenMetadata = token0.toLowerCase() === NUSD_ADDRESS.toLowerCase()
+        ? token1Metadata
+        : token0Metadata;
       return {
         token0,
         token1,
-        displayToken,
+        token0Metadata,
+        token1Metadata,
+        displayTokenMetadata,
         pairId,
-        label,
+        poolData,
+        metadataReady: token0Result.decimalsResolved && token1Result.decimalsResolved,
+        label: `${token0Metadata.symbol} / ${token1Metadata.symbol}`,
       };
     });
-  }, [allPools, nusdAddress]);
+  }, [allPools, tokenMetadataByAddress]);
+  const rankedPools = useMemo(
+    () => [...poolOptions].sort((poolA, poolB) => {
+      if (poolA.poolData[5] !== poolB.poolData[5]) {
+        return poolA.poolData[5] > poolB.poolData[5] ? -1 : 1;
+      }
+      if (poolA.poolData[6] !== poolB.poolData[6]) {
+        return poolA.poolData[6] > poolB.poolData[6] ? -1 : 1;
+      }
+      return poolA.pairId.localeCompare(poolB.pairId);
+    }),
+    [poolOptions],
+  );
+
+  const userLpContracts = useMemo(
+    () => address
+      ? (allPools ?? []).map((pool) => ({
+          address: DEX_ADDRESS,
+          abi: DEX_ABI,
+          functionName: "userLP" as const,
+          args: [pool.pairId, address] as const,
+        }))
+      : [],
+    [address, allPools],
+  );
+  const {
+    data: userLpResults,
+    isPending: isUserLpPending,
+    refetch: refetchUserLp,
+  } = useReadContracts({
+    contracts: userLpContracts,
+    allowFailure: true,
+    query: { enabled: userLpContracts.length > 0 },
+  });
+  const userLpByPairId = useMemo(() => {
+    const balances = new Map<string, bigint>();
+    allPools?.forEach((pool, index) => {
+      const result = userLpResults?.[index];
+      if (result?.status === "success") {
+        balances.set(pool.pairId.toLowerCase(), result.result as bigint);
+      }
+    });
+    return balances;
+  }, [allPools, userLpResults]);
+
   const selectedPool = poolOptions[selectedPoolIndex];
-  const customTokenAddress = selectedPool
-    ? [selectedPool.token0, selectedPool.token1].find((address) =>
-        !KNOWN_TOKENS.some((token) => token.address.toLowerCase() === address.toLowerCase()),
-      )
-    : undefined;
-  const { data: customTokenSymbol } = useReadContract({
-    address: customTokenAddress,
-    abi: erc20Abi,
-    functionName: "symbol",
-    query: { enabled: !!customTokenAddress },
-  });
-  const { data: customTokenDecimals } = useReadContract({
-    address: customTokenAddress,
-    abi: erc20Abi,
-    functionName: "decimals",
-    query: { enabled: !!customTokenAddress },
-  });
-  const { data: customTokenName } = useReadContract({
-    address: customTokenAddress,
-    abi: erc20Abi,
-    functionName: "name",
-    query: { enabled: !!customTokenAddress },
-  });
+  const tokenA = selectedPool?.token0Metadata ?? null;
+  const tokenB = selectedPool?.token1Metadata ?? null;
   
-  // Get pool info for selected pool
-  const { data: pairId } = useDexRead<`0x${string}`>(
-    "getPairId",
-    tokenA && tokenB ? [tokenA.address, tokenB.address] : undefined,
-    !!tokenA && !!tokenB
-  );
   const removePairId = poolOptions[selectedRemovePool]?.pairId;
-  
-  const { data: poolExists } = useDexRead<boolean>(
-    "poolExists",
-    pairId ? [pairId] : undefined,
-    !!pairId
+  const userLP = removePairId
+    ? userLpByPairId.get(removePairId.toLowerCase())
+    : undefined;
+  const poolData = selectedPool?.poolData;
+  const removePool = poolOptions[selectedRemovePool];
+  const removeLpRisk = getLpRisk(
+    userLP,
+    removePool?.poolData[4] ?? 0n,
+    isConnected,
+    isUserLpPending,
   );
-  
-  // Get user LP balance for selected pool
-  const { data: userLP } = useDexRead<bigint>(
-    "userLP",
-    removePairId && address ? [removePairId, address] : undefined,
-    !!removePairId && !!address
-  );
-  
-  // Get pool reserves
-  const { data: poolData } = useDexRead<readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint]>("pools", pairId ? [pairId] : undefined, !!pairId);
   
   // Balances
   const { data: balanceA } = useTokenBalance(address, tokenA);
@@ -217,28 +396,6 @@ export default function PoolsPage() {
   }, []);
 
   useEffect(() => {
-    const pool = poolOptions[selectedPoolIndex];
-    if (!pool) return;
-    const resolveToken = (tokenAddress: `0x${string}`): Token | null => {
-      const known = KNOWN_TOKENS.find(
-        (token) => token.address.toLowerCase() === tokenAddress.toLowerCase(),
-      );
-      if (known) return known;
-      if (!customTokenAddress || tokenAddress.toLowerCase() !== customTokenAddress.toLowerCase()) return null;
-      return {
-        address: tokenAddress,
-        symbol: (customTokenSymbol as string | undefined) || "TOKEN",
-        decimals: Number(customTokenDecimals ?? 18),
-        name: (customTokenName as string | undefined) || "Token",
-      };
-    };
-    const nextTokenA = resolveToken(pool.token0);
-    const nextTokenB = resolveToken(pool.token1);
-    setTokenA((current) => current?.address === nextTokenA?.address ? current : nextTokenA);
-    setTokenB((current) => current?.address === nextTokenB?.address ? current : nextTokenB);
-  }, [customTokenAddress, customTokenDecimals, customTokenName, customTokenSymbol, poolOptions, selectedPoolIndex]);
-  
-  useEffect(() => {
     if (mounted && isConnected && chainId !== LITVM_CHAIN_ID) {
       toast.warning("Wrong network", "Please switch to LitVM LiteForge");
     }
@@ -265,7 +422,13 @@ export default function PoolsPage() {
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
       if (receipt.status !== "success") throw new Error("Approval transaction reverted");
       await Promise.allSettled([refetchAllowanceA(), refetchAllowanceB()]);
-      toast.success("Approved", `${approvalToken.symbol} is ready`);
+      toast.show({
+        title: "Approved",
+        description: `${approvalToken.symbol} is ready`,
+        kind: "success",
+        href: getTransactionExplorerUrl(hash),
+        hrefLabel: "View on Explorer",
+      });
     } catch (error) {
       toast.handleError(error, "Approval failed");
     } finally {
@@ -274,6 +437,10 @@ export default function PoolsPage() {
   };
   
   const handleAddLiquidity = async () => {
+    if (!selectedPool?.metadataReady) {
+      toast.error("Token data unavailable", "Wait for token decimals before adding liquidity");
+      return;
+    }
     if (!tokenA || !tokenB || !amountAParsed || !amountBParsed || !publicClient || busy) {
       toast.error("Invalid input", "Please select tokens and enter amounts");
       return;
@@ -291,7 +458,13 @@ export default function PoolsPage() {
       toast.info("Adding liquidity", "Please confirm the transaction...");
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
       if (receipt.status !== "success") throw new Error("Add liquidity transaction reverted");
-      toast.success("Liquidity added");
+      await Promise.allSettled([refetchAllPools(), refetchUserLp()]);
+      toast.show({
+        title: "Liquidity added",
+        kind: "success",
+        href: getTransactionExplorerUrl(hash),
+        hrefLabel: "View on Explorer",
+      });
     } catch (err) {
       toast.handleError(err, "Could not add liquidity");
     } finally {
@@ -316,7 +489,13 @@ export default function PoolsPage() {
       toast.info("Removing liquidity", "Please confirm the transaction...");
       const receipt = await publicClient.waitForTransactionReceipt({ hash });
       if (receipt.status !== "success") throw new Error("Remove liquidity transaction reverted");
-      toast.success("Liquidity removed");
+      await Promise.allSettled([refetchAllPools(), refetchUserLp()]);
+      toast.show({
+        title: "Liquidity removed",
+        kind: "success",
+        href: getTransactionExplorerUrl(hash),
+        hrefLabel: "View on Explorer",
+      });
     } catch (error) {
       toast.handleError(error, "Could not remove liquidity");
     } finally {
@@ -324,7 +503,7 @@ export default function PoolsPage() {
     }
   };
   
-  const isValidAdd = Boolean(tokenA && tokenB && amountAParsed && amountBParsed && poolExists !== false && hasAllowance && !busy);
+  const isValidAdd = Boolean(selectedPool?.metadataReady && tokenA && tokenB && amountAParsed && amountBParsed && hasAllowance && !busy);
 
   return (
     <div className="min-h-screen bg-[#0F0F23]">
@@ -389,8 +568,19 @@ export default function PoolsPage() {
               Top Pairs by Volume
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {poolOptions.slice(0, 6).map((pool, i) => (
-                <PoolTopCard key={i} index={i} token0={pool.token0} token1={pool.token1} />
+              {rankedPools.map((pool, i) => (
+                <PoolTopCard
+                  key={pool.pairId}
+                  index={i}
+                  token0Symbol={pool.token0Metadata.symbol}
+                  token1Symbol={pool.token1Metadata.symbol}
+                  displayTokenAddress={pool.displayTokenMetadata.address}
+                  displayTokenSymbol={pool.displayTokenMetadata.symbol}
+                  poolData={pool.poolData}
+                  userLP={userLpByPairId.get(pool.pairId.toLowerCase())}
+                  isConnected={isConnected}
+                  isUserLpLoading={isUserLpPending}
+                />
               ))}
             </div>
           </div>
@@ -435,17 +625,7 @@ export default function PoolsPage() {
                 </label>
                 <select
                   value={selectedPoolIndex}
-                  onChange={(e) => {
-                    const idx = parseInt(e.target.value);
-                    setSelectedPoolIndex(idx);
-                    const pool = poolOptions[idx];
-                    if (pool) {
-                      setTokenA(pool.token0.toLowerCase() === NATIVE_ADDRESS.toLowerCase()
-                        ? NATIVE_TOKEN 
-                        : KNOWN_TOKENS.find(t => t.address.toLowerCase() === pool.token0.toLowerCase()) || null);
-                      setTokenB(KNOWN_TOKENS.find(t => t.address.toLowerCase() === pool.token1.toLowerCase()) || null);
-                    }
-                  }}
+                  onChange={(e) => setSelectedPoolIndex(parseInt(e.target.value))}
                   className="w-full bg-[#13131F] p-4 rounded-lg text-white border border-[#2D2D44] outline-none focus:border-indigo-500"
                 >
                   {poolOptions.length > 0 ? (
@@ -572,8 +752,10 @@ export default function PoolsPage() {
               >
                 {!mounted || !isConnected
                   ? "CONNECT WALLET"
-                  : poolExists === false
+                  : !selectedPool
                     ? "Pool Not Available"
+                    : !selectedPool.metadataReady
+                      ? isTokenMetadataPending ? "Loading Token Data" : "Token Data Unavailable"
                     : needsApproval && !hasAllowance
                       ? "Approve First"
                       : !amountA || !amountB 
@@ -610,6 +792,17 @@ export default function PoolsPage() {
                     <option value="">No pools</option>
                   )}
                 </select>
+                {removePool && (
+                  <div className="mt-2 flex items-center justify-between gap-3 border-t border-[#2D2D44] pt-2 text-xs">
+                    <div>
+                      <div className="text-[#64748B]">LP Risk</div>
+                      <div className="text-[10px] text-[#64748B]">{removeLpRisk.share}</div>
+                    </div>
+                    <span className={`border px-2 py-1 text-[10px] font-bold ${removeLpRisk.className}`}>
+                      {removeLpRisk.label}
+                    </span>
+                  </div>
+                )}
               </div>
               
               {/* LP Amount */}
@@ -681,26 +874,36 @@ export default function PoolsPage() {
   );
 }
 
-function PoolTopCard({ index, token0, token1 }: { index: number; token0: `0x${string}`; token1: `0x${string}` }) {
-  const { data: pairId } = useDexRead<`0x${string}`>(
-    "getPairId",
-    token0 && token1 ? [token0, token1] : undefined,
-    !!token0 && !!token1
-  );
-  
-  const { data: poolData } = useDexRead<readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint]>("pools", pairId ? [pairId] : undefined, !!pairId);
-  
-  const token0Symbol = token0.toLowerCase() === NATIVE_ADDRESS.toLowerCase()
-    ? "zkLTC"
-    : token0.toLowerCase() === NUSD_ADDRESS.toLowerCase()
-      ? "NUSD"
-      : "TKN";
-  const token1Symbol = token1.toLowerCase() === NATIVE_ADDRESS.toLowerCase()
-    ? "zkLTC"
-    : token1.toLowerCase() === NUSD_ADDRESS.toLowerCase()
-      ? "NUSD"
-      : "TKN";
-  
+function PoolTopCard({
+  index,
+  token0Symbol,
+  token1Symbol,
+  displayTokenAddress,
+  displayTokenSymbol,
+  poolData,
+  userLP,
+  isConnected,
+  isUserLpLoading,
+}: {
+  index: number;
+  token0Symbol: string;
+  token1Symbol: string;
+  displayTokenAddress: `0x${string}`;
+  displayTokenSymbol: string;
+  poolData: readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint, bigint];
+  userLP: bigint | undefined;
+  isConnected: boolean;
+  isUserLpLoading: boolean;
+}) {
+  const lpRisk = getLpRisk(userLP, poolData[4], isConnected, isUserLpLoading);
+  const isDisplayTokenNative = displayTokenAddress.toLowerCase() === NATIVE_ADDRESS.toLowerCase();
+  const explorerUrl = isDisplayTokenNative
+    ? getAddressExplorerUrl(DEX_ADDRESS)
+    : getTokenExplorerUrl(displayTokenAddress);
+  const explorerLabel = isDisplayTokenNative
+    ? `${token0Symbol}/${token1Symbol} pool contract`
+    : `${displayTokenSymbol} token`;
+
   return (
     <div className="p-4 rounded-xl bg-[#13131F] border border-[#2D2D44]">
       <div className="flex items-center gap-2 mb-3">
@@ -711,9 +914,18 @@ function PoolTopCard({ index, token0, token1 }: { index: number; token0: `0x${st
         <span className="font-medium text-white text-sm" style={{ fontFamily: "var(--font-departure)" }}>
           {token0Symbol}/{token1Symbol}
         </span>
+        <a
+          href={explorerUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ml-auto inline-flex h-7 w-7 shrink-0 items-center justify-center rounded border border-[#2D2D44] bg-[#1A1A2E] text-[#94A3B8] transition-colors hover:border-[#8888ff]/50 hover:text-white"
+          title={`View ${explorerLabel} on explorer`}
+          aria-label={`View ${explorerLabel} on explorer`}
+        >
+          <ExternalLinkIcon />
+        </a>
       </div>
-      {poolData ? (
-        <div className="grid grid-cols-2 gap-2 text-xs">
+      <div className="grid grid-cols-2 gap-2 text-xs">
           <div>
             <div className="text-[#64748B]">Vol 24h</div>
             <div className="text-emerald-400 font-medium" style={{ fontFamily: "var(--font-departure)" }}>
@@ -726,10 +938,41 @@ function PoolTopCard({ index, token0, token1 }: { index: number; token0: `0x${st
               {formatUSD(poolData[6] as bigint)}
             </div>
           </div>
+          <div
+            className="col-span-2 mt-1 flex items-center justify-between gap-3 border-t border-[#2D2D44] pt-2"
+            title={isConnected
+              ? `Wallet owns ${lpRisk.share.replace(" share", "")} of total LP supply`
+              : "Connect wallet to calculate your LP share"}
+          >
+            <div>
+              <div className="text-[#64748B]">LP Risk</div>
+              <div className="text-[10px] text-[#64748B]">{lpRisk.share}</div>
+            </div>
+            <span className={`border px-2 py-1 text-[10px] font-bold ${lpRisk.className}`}>
+              {lpRisk.label}
+            </span>
+          </div>
         </div>
-      ) : (
-        <div className="h-10 bg-[#2D2D44]/50 rounded animate-pulse" />
-      )}
     </div>
+  );
+}
+
+function ExternalLinkIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M15 3h6v6" />
+      <path d="M10 14 21 3" />
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+    </svg>
   );
 }

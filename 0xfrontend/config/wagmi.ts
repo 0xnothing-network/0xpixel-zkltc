@@ -1,4 +1,5 @@
 import { defineChain } from "viem";
+import { LITVM_EXPLORER_URL } from "@/lib/explorer";
 
 const DEFAULT_LITVM_RPC = "https://liteforge.rpc.caldera.xyz/infra-partner-http";
 const DEFAULT_LITVM_WS = "";
@@ -21,7 +22,7 @@ export const litvm = defineChain({
   blockExplorers: {
     default: {
       name: "LiteForge Explorer",
-      url: "https://liteforge.explorer.caldera.xyz",
+      url: LITVM_EXPLORER_URL,
     },
   },
   contracts: {
