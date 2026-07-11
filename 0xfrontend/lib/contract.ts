@@ -43,7 +43,7 @@ export const publicClient = createPublicClient({
     retryDelay: 300,
     timeout: 15_000,
   }),
-  batch: { multicall: { batchSize: 64 } },
+  batch: { multicall: { batchSize: 16_384 } },
 });
 
 async function withRetry<T>(

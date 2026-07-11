@@ -50,6 +50,8 @@ interface CacheEntry<T> {
 
 const TOKEN_TTL = 60_000;
 const LISTING_TTL = 15_000;
+// Keep marketplace reads grouped while leaving headroom below provider limits.
+const MARKETPLACE_MULTICALL_BATCH_SIZE = 16_384;
 
 const tokenCache = new Map<string, CacheEntry<TokenDTO | null>>();
 const listingCache = new Map<string, CacheEntry<ListingDTO[]>>();
@@ -186,6 +188,7 @@ async function fetchActiveListings(): Promise<ListingDTO[]> {
   // Step 2: batch fetch listing details via multicall.
   const listingResults = await publicClient.multicall({
     allowFailure: true,
+    batchSize: MARKETPLACE_MULTICALL_BATCH_SIZE,
     contracts: idsRaw.map((id) => ({
       address: PIXEL_MARKETPLACE_ADDRESS,
       abi: MarketplaceAbi,
@@ -227,6 +230,7 @@ async function filterPurchasableListings(
 
   const results = await publicClient.multicall({
     allowFailure: true,
+    batchSize: MARKETPLACE_MULTICALL_BATCH_SIZE,
     contracts: listings.flatMap((listing) => {
       const tokenId = BigInt(listing.tokenId);
       return [
@@ -305,6 +309,7 @@ async function fetchTokensForListings(
   // Single multicall for all missing tokens.
   const results = await publicClient.multicall({
     allowFailure: true,
+    batchSize: MARKETPLACE_MULTICALL_BATCH_SIZE,
     contracts: missing.map((id) => ({
       address: PIXEL_NFT_CONTRACT_ADDRESS,
       abi: PixelNFTABI,

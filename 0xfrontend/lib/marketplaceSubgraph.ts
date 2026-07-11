@@ -12,6 +12,7 @@ const MARKETPLACE_SUBGRAPH_URL =
   MARKETPLACE_SUBGRAPH_URL_RAW === "disabled" ? "" : MARKETPLACE_SUBGRAPH_URL_RAW;
 
 const PIXEL_COLLECTION = PIXEL_NFT_CONTRACT_ADDRESS.toLowerCase();
+const SUBGRAPH_TOKEN_BATCH_SIZE = 500;
 
 export interface SubgraphTokenMetadata {
   tokenId: string;
@@ -343,19 +344,23 @@ export async function fetchTokenMetadataFromSubgraph(
   );
   if (unique.length === 0) return {};
 
-  const data = await graphFetch<{ tokens: TokenNode[] }>(
-    TOKEN_METADATA_BY_IDS_QUERY,
-    {
-      collection: PIXEL_COLLECTION,
-      tokenIds: unique,
-      limit: unique.length,
-    }
-  );
-
   const tokens: Record<string, SubgraphTokenMetadata | null> = {};
   for (const id of unique) tokens[id] = null;
-  for (const token of data.tokens ?? []) {
-    tokens[token.tokenId] = tokenMetadataFromNode(token, token.tokenId);
+
+  for (let start = 0; start < unique.length; start += SUBGRAPH_TOKEN_BATCH_SIZE) {
+    const batch = unique.slice(start, start + SUBGRAPH_TOKEN_BATCH_SIZE);
+    const data = await graphFetch<{ tokens: TokenNode[] }>(
+      TOKEN_METADATA_BY_IDS_QUERY,
+      {
+        collection: PIXEL_COLLECTION,
+        tokenIds: batch,
+        limit: batch.length,
+      }
+    );
+
+    for (const token of data.tokens ?? []) {
+      tokens[token.tokenId] = tokenMetadataFromNode(token, token.tokenId);
+    }
   }
   return tokens;
 }
