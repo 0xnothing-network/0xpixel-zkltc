@@ -44,10 +44,18 @@ export default function GalleryPage() {
     const arr = [...data];
     switch (sort) {
       case "newest":
-        arr.sort((a, b) => Number(BigInt(b.tokenId) - BigInt(a.tokenId)));
+        arr.sort((a, b) => {
+          const left = BigInt(a.tokenId);
+          const right = BigInt(b.tokenId);
+          return left === right ? 0 : left > right ? -1 : 1;
+        });
         break;
       case "oldest":
-        arr.sort((a, b) => Number(BigInt(a.tokenId) - BigInt(b.tokenId)));
+        arr.sort((a, b) => {
+          const left = BigInt(a.tokenId);
+          const right = BigInt(b.tokenId);
+          return left === right ? 0 : left < right ? -1 : 1;
+        });
         break;
       case "name":
         arr.sort((a, b) => a.name.localeCompare(b.name));
@@ -97,7 +105,7 @@ export default function GalleryPage() {
       (card as HTMLElement).style.willChange = "transform, opacity";
     });
 
-    gsap.fromTo(
+    const tween = gsap.fromTo(
       cards,
       { opacity: 0, y: 30, scale: 0.95 },
       {
@@ -120,6 +128,14 @@ export default function GalleryPage() {
         },
       }
     );
+
+    return () => {
+      tween.scrollTrigger?.kill();
+      tween.kill();
+      cards.forEach((card) => {
+        (card as HTMLElement).style.willChange = "auto";
+      });
+    };
   }, [sorted.length]);
 
   return (
@@ -364,7 +380,12 @@ function useUserNfts(address: `0x${string}` | undefined, refreshKey: number) {
     const ctrl = new AbortController();
     setLoading(true);
     setError(null);
-    fetch(`/api/user-nfts?address=${address}`, { signal: ctrl.signal })
+    const params = new URLSearchParams({ address });
+    if (refreshKey > 0) params.set("force", "1");
+    fetch(`/api/user-nfts?${params.toString()}`, {
+      signal: ctrl.signal,
+      cache: "no-store",
+    })
       .then(async (r) => {
         if (!r.ok) {
           const body = await r.json().catch(() => ({}));

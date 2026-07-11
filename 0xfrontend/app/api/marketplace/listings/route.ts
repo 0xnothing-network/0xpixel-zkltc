@@ -9,6 +9,7 @@ import { PixelNFTABI } from "@/lib/abi";
 import { pixelDataToSVG } from "@/lib/gridParser";
 import {
   fetchMarketplaceListingsFromSubgraph,
+  fetchTokenMetadataFromSubgraph,
   hasMarketplaceSubgraph,
 } from "@/lib/marketplaceSubgraph";
 
@@ -71,7 +72,11 @@ export async function GET(request: Request) {
     listings = cached.value;
   } else {
     try {
-      listings = await fetchActiveListings();
+      listings = await withTimeout(
+        fetchActiveListings(),
+        12_000,
+        "Marketplace RPC listing read timed out"
+      );
       listingCache.set(cacheKey, { value: listings, ts: Date.now() });
     } catch (err) {
       console.error("[marketplace] RPC listing fetch failed:", err);
@@ -105,15 +110,52 @@ export async function GET(request: Request) {
     return NextResponse.json({ listings: [], tokens: {} });
   }
 
-  const tokens = await fetchTokensForListings(listings.map((l) => l.tokenId));
+  const tokenIds = listings.map((listing) => listing.tokenId);
+  let tokens: Record<string, TokenDTO | null>;
+  try {
+    tokens = await withTimeout(
+      fetchTokensForListings(tokenIds),
+      12_000,
+      "Marketplace RPC metadata read timed out"
+    );
+  } catch (error) {
+    console.warn("[marketplace] RPC metadata fallback to subgraph:", error);
+    if (hasMarketplaceSubgraph()) {
+      try {
+        tokens = await fetchTokenMetadataFromSubgraph(tokenIds);
+      } catch (subgraphError) {
+        console.error("[marketplace] metadata subgraph fallback failed:", subgraphError);
+        tokens = Object.fromEntries(tokenIds.map((tokenId) => [tokenId, null]));
+      }
+    } else {
+      tokens = Object.fromEntries(tokenIds.map((tokenId) => [tokenId, null]));
+    }
+  }
 
   return NextResponse.json({ listings, tokens });
 }
 
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 async function fetchActiveListings(): Promise<ListingDTO[]> {
-  // Step 1: page through active listing IDs. The subgraph is the normal path;
-  // this only runs as a slower fallback.
+  // Step 1: page through active listing IDs using the contract's listing-id
+  // cursor. The offset is not an array index; it must advance to the last ID.
   const idsRaw: bigint[] = [];
+  const seenIds = new Set<string>();
   const pageSize = 100n;
   let offset = 0n;
 
@@ -126,9 +168,17 @@ async function fetchActiveListings(): Promise<ListingDTO[]> {
     })) as bigint[];
 
     if (!page || page.length === 0) break;
-    idsRaw.push(...page);
+    for (const id of page) {
+      const key = id.toString();
+      if (!seenIds.has(key)) {
+        seenIds.add(key);
+        idsRaw.push(id);
+      }
+    }
     if (page.length < Number(pageSize)) break;
-    offset += pageSize;
+    const nextOffset = page[page.length - 1];
+    if (nextOffset <= offset) break;
+    offset = nextOffset;
   }
 
   if (!idsRaw || idsRaw.length === 0) return [];
@@ -156,6 +206,7 @@ async function fetchActiveListings(): Promise<ListingDTO[]> {
       boolean,
     ];
     if (!v[4]) continue; // inactive
+    if (v[0].toLowerCase() !== PIXEL_NFT_CONTRACT_ADDRESS.toLowerCase()) continue;
     out.push({
       collection: v[0],
       listingId: idsRaw[i].toString(),
@@ -298,6 +349,11 @@ async function fetchTokensForListings(
     const now = Date.now();
     for (const [k, v] of tokenCache) {
       if (now - v.ts > TOKEN_TTL) tokenCache.delete(k);
+    }
+    while (tokenCache.size > 4096) {
+      const oldestKey = tokenCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      tokenCache.delete(oldestKey);
     }
   }
 

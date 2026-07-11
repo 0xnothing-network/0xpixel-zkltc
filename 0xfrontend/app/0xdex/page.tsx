@@ -11,9 +11,9 @@ const ChartWindow = dynamic(loadChartWindow, {
   ssr: false,
 });
 
-import { useAccount, useReadContract, useConnect, useDisconnect, useBlockNumber, useWriteContract, useSwitchChain, usePublicClient, useWatchContractEvent } from "wagmi";
-import { erc20Abi, formatUnits, maxUint256, parseUnits, parseAbiItem } from "viem";
-import { useDexStats, useAllPools, useDexRead, useRewardRead, useDexWrite, NATIVE_TOKEN, useTokenBalance, useTokenAllowance, Token } from "@/lib/use0xDex";
+import { useAccount, useReadContract, useReadContracts, useConnect, useDisconnect, useBlockNumber, useWriteContract, useSwitchChain, usePublicClient, useWatchContractEvent } from "wagmi";
+import { erc20Abi, formatUnits, maxUint256, parseUnits } from "viem";
+import { useDexStats, useAllPools, useDexRead, useRewardRead, useDexWrite, NATIVE_TOKEN, useTokenBalance, useTokenAllowance, Token, type PoolDataTuple } from "@/lib/use0xDex";
 import { DEX_ABI, DEX_ADDRESS, NATIVE_ADDRESS } from "@/lib/0xDexAbi";
 import { NUSD_ADDRESS, NUSD_ABI } from "@/lib/NUSDContract";
 import { REWARD_MANAGER_ADDRESS } from "@/lib/rewardAbi";
@@ -114,11 +114,11 @@ function castPoolData(data: unknown): PoolData | null {
 // ============================================================
 
 const BPS_DENOM = 10000n; // matches `swapFee / 10000` in 0xDex.sol
-type ChartTf = 1 | 15 | 60 | 240 | 1440;
-const DEFAULT_CHART_TF: ChartTf = 1;
-const CHART_PRELOAD_TIMEFRAMES = [1, 15, 60, 240, 1440] as const satisfies readonly ChartTf[];
-const CHART_WARM_POOL_LIMIT = 4;
-const CHART_TIMEFRAMES = new Set<number>([1, 15, 60, 240, 1440]);
+type ChartTf = 15 | 60 | 240 | 1440;
+const DEFAULT_CHART_TF: ChartTf = 15;
+const CHART_PRELOAD_TIMEFRAMES = [15, 60, 240, 1440] as const satisfies readonly ChartTf[];
+const CHART_WARM_POOL_LIMIT = 2;
+const CHART_TIMEFRAMES = new Set<number>([15, 60, 240, 1440]);
 const SWAP_SLIPPAGE_BPS = 300n;
 const SWAP_PRICE_REFRESH_MS = 2_000;
 
@@ -130,18 +130,6 @@ type ChartPreloadTarget = {
   chartToken1: string;
   chartToken1Decimals: number;
 };
-
-type PoolDataTuple = readonly [
-  `0x${string}`,
-  `0x${string}`,
-  bigint,
-  bigint,
-  bigint,
-  bigint,
-  bigint,
-  bigint,
-  bigint,
-];
 
 function parseChartTimeframe(value: string | null): ChartTf {
   const parsed = Number(value);
@@ -176,6 +164,18 @@ function minOutWithSlippage(amountOut: bigint, slippageBps = SWAP_SLIPPAGE_BPS) 
   return (amountOut * (BPS_DENOM - slippageBps)) / BPS_DENOM;
 }
 
+function farmTokenAmountForNusd(
+  amountNUSD: bigint,
+  pool: PoolDataTuple,
+  nusdAddress: `0x${string}`,
+) {
+  const nusdIsToken0 = pool[0].toLowerCase() === nusdAddress.toLowerCase();
+  const nusdReserve = nusdIsToken0 ? pool[2] : pool[3];
+  const tokenReserve = nusdIsToken0 ? pool[3] : pool[2];
+  if (pool[4] === 0n || nusdReserve <= 0n || tokenReserve <= 0n) return amountNUSD;
+  return (amountNUSD * tokenReserve) / nusdReserve;
+}
+
 /**
  * Display helper: "1 TokenIn = X TokenOut" with proper decimal scaling.
  * Uses human-readable numbers (NOT 1e18) so it's the same number you'd see on the chart.
@@ -191,8 +191,11 @@ function humanRate(
     tokenIn.toLowerCase() === pool.token0.toLowerCase() ? pool.reserve0 : pool.reserve1;
   const reserveOut =
     tokenIn.toLowerCase() === pool.token0.toLowerCase() ? pool.reserve1 : pool.reserve0;
-  const adj = 10 ** (tokenOutDecimals - tokenInDecimals);
-  return (Number(reserveIn) / Number(reserveOut)) * adj;
+  const humanIn = Number(formatUnits(reserveIn, tokenInDecimals));
+  const humanOut = Number(formatUnits(reserveOut, tokenOutDecimals));
+  return Number.isFinite(humanIn) && Number.isFinite(humanOut) && humanIn > 0
+    ? humanOut / humanIn
+    : 0;
 }
 
 const KNOWN_TOKENS: Token[] = [
@@ -227,15 +230,8 @@ function formatNum(value: bigint, decimals = 18) {
   return num.toFixed(2);
 }
 
-const SWAPPED_EVENT = parseAbiItem(
-  "event Swapped(address indexed user, address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut, uint256 fee)"
-);
-const SWAP_HISTORY_LOOKBACK_BLOCKS = 12_000n;
-const SWAP_HISTORY_COUNT_CHUNK_BLOCKS = 20_000n;
-const SWAP_HISTORY_PAGE_SIZE = 1000;
+const SWAP_HISTORY_PAGE_SIZE = 80;
 const SWAP_HISTORY_DISPLAY_LIMIT = 80;
-const SWAP_HISTORY_MAX_COUNT_PAGES = 100;
-const DEFAULT_DEX_START_BLOCK = 24_937_136n;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 
 const SWAP_HISTORY_QUERY = `
@@ -267,15 +263,6 @@ const SWAP_HISTORY_RAW_QUERY = `
     }
   }
 `;
-
-function configuredDexStartBlock(latestBlock: bigint) {
-  const value = process.env.NEXT_PUBLIC_DEX_START_BLOCK;
-  if (value && /^\d+$/.test(value)) {
-    const block = BigInt(value);
-    return block <= latestBlock ? block : latestBlock;
-  }
-  return DEFAULT_DEX_START_BLOCK <= latestBlock ? DEFAULT_DEX_START_BLOCK : 0n;
-}
 
 type TokenMeta = {
   symbol: string;
@@ -730,7 +717,7 @@ export default function DexAllInOne() {
   const { connect, connectors } = useConnect();
   const { disconnect } = useDisconnect();
   const { switchChain } = useSwitchChain();
-  const { writeContract, writeContractAsync } = useWriteContract();
+  const { writeContractAsync } = useWriteContract();
   const toast = useToast();
   const { addLiquidity, removeLiquidity, claimReward } = useDexWrite();
   const LITVM_CHAIN_ID = 4441;
@@ -740,7 +727,6 @@ export default function DexAllInOne() {
   const [swapHistoryLoading, setSwapHistoryLoading] = useState(false);
   const [swapHistoryTotalCount, setSwapHistoryTotalCount] = useState<number | null>(null);
   const lastSwapHistoryBlockRef = useRef<bigint>(0n);
-  const swapHistoryPollingRef = useRef(false);
   const swapHistorySeenIdsRef = useRef<Set<string>>(new Set());
 
   // Pixel-style stagger entry for pool cards
@@ -851,7 +837,7 @@ export default function DexAllInOne() {
 
   // Data
   const stats = useDexStats();
-  const { data: allPools } = useAllPools();
+  const { data: allPools, refetch: refetchAllPools } = useAllPools();
   const { data: nusdAddress } = useDexRead<`0x${string}`>("NUSD");
   const { data: rewardPoolNusdBalance } = useReadContract({
     address: NUSD_ADDRESS as `0x${string}`,
@@ -874,7 +860,7 @@ export default function DexAllInOne() {
     () => safeParseUnits(createAmountB, 18),
     [createAmountB],
   );
-  const needsCreateApproval =
+  const needsCreateTokenApproval =
     !!createTokenA &&
     !!createAmountAParsed &&
     createAmountAParsed > 0n &&
@@ -886,7 +872,7 @@ export default function DexAllInOne() {
     if (!allPools || !nusdAddress) return [];
     const seen = new Set<string>();
     return allPools
-      .map(({ pairId, token0, token1 }) => {
+      .map(({ pairId, token0, token1, poolData }) => {
         const token = token0.toLowerCase() === nusdAddress.toLowerCase() ? token1 : token0;
         const nusd = nusdAddress;
         // Skip duplicates
@@ -897,145 +883,80 @@ export default function DexAllInOne() {
           token,
           nusd,
           pairId,
+          poolData,
           label: `${token.toLowerCase() === NATIVE_ADDRESS.toLowerCase() ? "zkLTC" : token.slice(0, 8) + "..."}/NUSD`,
         };
       })
-      .filter(Boolean) as { token: `0x${string}`; nusd: `0x${string}`; pairId: `0x${string}`; label: string }[];
+      .filter(Boolean) as {
+        token: `0x${string}`;
+        nusd: `0x${string}`;
+        pairId: `0x${string}`;
+        poolData: PoolDataTuple;
+        label: string;
+      }[];
   }, [allPools, nusdAddress]);
 
-  // Get pool data for each option (max 8)
-  const pool0PairId = poolOptions[0]?.pairId;
-  const pool1PairId = poolOptions[1]?.pairId;
-  const pool2PairId = poolOptions[2]?.pairId;
-  const pool3PairId = poolOptions[3]?.pairId;
-  const pool4PairId = poolOptions[4]?.pairId;
-  const pool5PairId = poolOptions[5]?.pairId;
-  const pool6PairId = poolOptions[6]?.pairId;
-  const pool7PairId = poolOptions[7]?.pairId;
-
-  const { data: pool0Data, refetch: refetchPool0 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint] >("pools", pool0PairId ? [pool0PairId] : undefined);
-  const { data: pool1Data, refetch: refetchPool1 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint] >("pools", pool1PairId ? [pool1PairId] : undefined);
-  const { data: pool2Data, refetch: refetchPool2 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint] >("pools", pool2PairId ? [pool2PairId] : undefined);
-  const { data: pool3Data, refetch: refetchPool3 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint] >("pools", pool3PairId ? [pool3PairId] : undefined);
-  const { data: pool4Data, refetch: refetchPool4 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint] >("pools", pool4PairId ? [pool4PairId] : undefined);
-  const { data: pool5Data, refetch: refetchPool5 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint] >("pools", pool5PairId ? [pool5PairId] : undefined);
-  const { data: pool6Data, refetch: refetchPool6 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint] >("pools", pool6PairId ? [pool6PairId] : undefined);
-  const { data: pool7Data, refetch: refetchPool7 } = useDexRead< readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint] >("pools", pool7PairId ? [pool7PairId] : undefined);
-  const { refetch: refetchAllPools } = useAllPools();
+  const allPoolData = useMemo<PoolDataTuple[]>(
+    () => poolOptions.map((pool) => pool.poolData),
+    [poolOptions]
+  );
 
   // Calculate total volume from all pools
-  const totalVolume = useMemo(() => {
-    const volumes = [pool0Data?.[6], pool1Data?.[6], pool2Data?.[6], pool3Data?.[6], pool4Data?.[6], pool5Data?.[6], pool6Data?.[6], pool7Data?.[6]];
-    return volumes.reduce((sum: bigint, v) => sum + (v ?? 0n), 0n);
-  }, [pool0Data, pool1Data, pool2Data, pool3Data, pool4Data, pool5Data, pool6Data, pool7Data]);
+  const totalVolume = useMemo(
+    () => allPoolData.reduce((sum, pool) => sum + pool[6], 0n),
+    [allPoolData]
+  );
 
   // Fetch token symbols for each pool
-  const { data: token0Symbol } = useReadContract({
-    address: poolOptions[0]?.token !== NATIVE_ADDRESS ? poolOptions[0]?.token : undefined,
-    abi: erc20Abi,
-    functionName: "symbol",
-    query: { enabled: !!poolOptions[0]?.token && poolOptions[0]?.token !== NATIVE_ADDRESS }
-  });
-  const { data: token1Symbol } = useReadContract({
-    address: poolOptions[1]?.token !== NATIVE_ADDRESS ? poolOptions[1]?.token : undefined,
-    abi: erc20Abi,
-    functionName: "symbol",
-    query: { enabled: !!poolOptions[1]?.token && poolOptions[1]?.token !== NATIVE_ADDRESS }
-  });
-  const { data: token2Symbol } = useReadContract({
-    address: poolOptions[2]?.token !== NATIVE_ADDRESS ? poolOptions[2]?.token : undefined,
-    abi: erc20Abi,
-    functionName: "symbol",
-    query: { enabled: !!poolOptions[2]?.token && poolOptions[2]?.token !== NATIVE_ADDRESS }
-  });
-  const { data: token3Symbol } = useReadContract({
-    address: poolOptions[3]?.token !== NATIVE_ADDRESS ? poolOptions[3]?.token : undefined,
-    abi: erc20Abi,
-    functionName: "symbol",
-    query: { enabled: !!poolOptions[3]?.token && poolOptions[3]?.token !== NATIVE_ADDRESS }
-  });
-  const { data: token4Symbol } = useReadContract({
-    address: poolOptions[4]?.token !== NATIVE_ADDRESS ? poolOptions[4]?.token : undefined,
-    abi: erc20Abi,
-    functionName: "symbol",
-    query: { enabled: !!poolOptions[4]?.token && poolOptions[4]?.token !== NATIVE_ADDRESS }
-  });
-  const { data: token5Symbol } = useReadContract({
-    address: poolOptions[5]?.token !== NATIVE_ADDRESS ? poolOptions[5]?.token : undefined,
-    abi: erc20Abi,
-    functionName: "symbol",
-    query: { enabled: !!poolOptions[5]?.token && poolOptions[5]?.token !== NATIVE_ADDRESS }
-  });
-  const { data: token6Symbol } = useReadContract({
-    address: poolOptions[6]?.token !== NATIVE_ADDRESS ? poolOptions[6]?.token : undefined,
-    abi: erc20Abi,
-    functionName: "symbol",
-    query: { enabled: !!poolOptions[6]?.token && poolOptions[6]?.token !== NATIVE_ADDRESS }
-  });
-  const { data: token7Symbol } = useReadContract({
-    address: poolOptions[7]?.token !== NATIVE_ADDRESS ? poolOptions[7]?.token : undefined,
-    abi: erc20Abi,
-    functionName: "symbol",
-    query: { enabled: !!poolOptions[7]?.token && poolOptions[7]?.token !== NATIVE_ADDRESS }
-  });
-
-  const { data: token0Decimals } = useReadContract({
-    address: poolOptions[0]?.token !== NATIVE_ADDRESS ? poolOptions[0]?.token : undefined,
-    abi: erc20Abi,
-    functionName: "decimals",
-    query: { enabled: !!poolOptions[0]?.token && poolOptions[0]?.token !== NATIVE_ADDRESS }
-  });
-  const { data: token1Decimals } = useReadContract({
-    address: poolOptions[1]?.token !== NATIVE_ADDRESS ? poolOptions[1]?.token : undefined,
-    abi: erc20Abi,
-    functionName: "decimals",
-    query: { enabled: !!poolOptions[1]?.token && poolOptions[1]?.token !== NATIVE_ADDRESS }
-  });
-  const { data: token2Decimals } = useReadContract({
-    address: poolOptions[2]?.token !== NATIVE_ADDRESS ? poolOptions[2]?.token : undefined,
-    abi: erc20Abi,
-    functionName: "decimals",
-    query: { enabled: !!poolOptions[2]?.token && poolOptions[2]?.token !== NATIVE_ADDRESS }
-  });
-  const { data: token3Decimals } = useReadContract({
-    address: poolOptions[3]?.token !== NATIVE_ADDRESS ? poolOptions[3]?.token : undefined,
-    abi: erc20Abi,
-    functionName: "decimals",
-    query: { enabled: !!poolOptions[3]?.token && poolOptions[3]?.token !== NATIVE_ADDRESS }
-  });
-  const { data: token4Decimals } = useReadContract({
-    address: poolOptions[4]?.token !== NATIVE_ADDRESS ? poolOptions[4]?.token : undefined,
-    abi: erc20Abi,
-    functionName: "decimals",
-    query: { enabled: !!poolOptions[4]?.token && poolOptions[4]?.token !== NATIVE_ADDRESS }
-  });
-  const { data: token5Decimals } = useReadContract({
-    address: poolOptions[5]?.token !== NATIVE_ADDRESS ? poolOptions[5]?.token : undefined,
-    abi: erc20Abi,
-    functionName: "decimals",
-    query: { enabled: !!poolOptions[5]?.token && poolOptions[5]?.token !== NATIVE_ADDRESS }
-  });
-  const { data: token6Decimals } = useReadContract({
-    address: poolOptions[6]?.token !== NATIVE_ADDRESS ? poolOptions[6]?.token : undefined,
-    abi: erc20Abi,
-    functionName: "decimals",
-    query: { enabled: !!poolOptions[6]?.token && poolOptions[6]?.token !== NATIVE_ADDRESS }
-  });
-  const { data: token7Decimals } = useReadContract({
-    address: poolOptions[7]?.token !== NATIVE_ADDRESS ? poolOptions[7]?.token : undefined,
-    abi: erc20Abi,
-    functionName: "decimals",
-    query: { enabled: !!poolOptions[7]?.token && poolOptions[7]?.token !== NATIVE_ADDRESS }
-  });
-
-  const tokenSymbols = useMemo(
-    () => [token0Symbol, token1Symbol, token2Symbol, token3Symbol, token4Symbol, token5Symbol, token6Symbol, token7Symbol],
-    [token0Symbol, token1Symbol, token2Symbol, token3Symbol, token4Symbol, token5Symbol, token6Symbol, token7Symbol]
+  const tokenReadDescriptors = useMemo(
+    () => poolOptions.flatMap((pool, poolIndex) => {
+      if (pool.token.toLowerCase() === NATIVE_ADDRESS.toLowerCase()) return [];
+      return [
+        {
+          poolIndex,
+          kind: "symbol" as const,
+          contract: {
+            address: pool.token,
+            abi: erc20Abi,
+            functionName: "symbol" as const,
+          },
+        },
+        {
+          poolIndex,
+          kind: "decimals" as const,
+          contract: {
+            address: pool.token,
+            abi: erc20Abi,
+            functionName: "decimals" as const,
+          },
+        },
+      ];
+    }),
+    [poolOptions]
   );
-  const tokenDecimalsList = useMemo(
-    () => [token0Decimals, token1Decimals, token2Decimals, token3Decimals, token4Decimals, token5Decimals, token6Decimals, token7Decimals],
-    [token0Decimals, token1Decimals, token2Decimals, token3Decimals, token4Decimals, token5Decimals, token6Decimals, token7Decimals]
-  );
+  const { data: tokenReadResults } = useReadContracts({
+    contracts: tokenReadDescriptors.map((descriptor) => descriptor.contract),
+    allowFailure: true,
+    query: { enabled: tokenReadDescriptors.length > 0 },
+  });
+  const { tokenSymbols, tokenDecimalsList } = useMemo(() => {
+    const symbols: Array<string | undefined> = poolOptions.map((pool) =>
+      pool.token.toLowerCase() === NATIVE_ADDRESS.toLowerCase() ? "zkLTC" : undefined
+    );
+    const decimals: Array<number | undefined> = poolOptions.map((pool) =>
+      pool.token.toLowerCase() === NATIVE_ADDRESS.toLowerCase() ? 18 : undefined
+    );
+    tokenReadDescriptors.forEach((descriptor, index) => {
+      const result = tokenReadResults?.[index];
+      if (result?.status !== "success") return;
+      if (descriptor.kind === "symbol") {
+        symbols[descriptor.poolIndex] = String(result.result);
+      } else {
+        decimals[descriptor.poolIndex] = Number(result.result);
+      }
+    });
+    return { tokenSymbols: symbols, tokenDecimalsList: decimals };
+  }, [poolOptions, tokenReadDescriptors, tokenReadResults]);
 
   const tokenMetaByAddress = useMemo(() => {
     const map = new Map<string, TokenMeta>();
@@ -1112,158 +1033,41 @@ export default function DexAllInOne() {
   }, []);
 
   const loadSwapHistoryFromSubgraph = useCallback(async () => {
-    let rawSchema = false;
     let firstPage: SubgraphSwap[];
 
     try {
       firstPage = await fetchSubgraphSwapPage(0, false);
-    } catch {
-      rawSchema = true;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("429")) {
+        setSwapHistoryTotalCount((current) => current ?? 0);
+        return true;
+      }
       firstPage = await fetchSubgraphSwapPage(0, true);
     }
 
-    if (firstPage.length === 0) return false;
+    if (firstPage.length === 0) {
+      setSwapHistoryTotalCount(0);
+      return true;
+    }
 
     const firstItems = firstPage
       .map((swap, index) => parseSubgraphSwap(swap, index))
       .filter((item): item is SwapHistoryItem => !!item);
     addSwapHistoryItems(firstItems);
 
-    let totalCount = firstPage.length;
-    setSwapHistoryTotalCount(totalCount);
-
-    for (let page = 1; page < SWAP_HISTORY_MAX_COUNT_PAGES && firstPage.length === SWAP_HISTORY_PAGE_SIZE; page += 1) {
-      const nextPage = await fetchSubgraphSwapPage(page * SWAP_HISTORY_PAGE_SIZE, rawSchema);
-      totalCount += nextPage.length;
-      setSwapHistoryTotalCount(totalCount);
-      if (nextPage.length < SWAP_HISTORY_PAGE_SIZE) break;
-      firstPage = nextPage;
-    }
+    setSwapHistoryTotalCount(firstPage.length);
 
     return true;
   }, [addSwapHistoryItems, fetchSubgraphSwapPage]);
 
-  const fetchSwapHistoryRange = useCallback(async (fromBlock: bigint, toBlock: bigint, live: boolean) => {
-    if (!publicClient || toBlock < fromBlock) return 0;
-
-    const logs = await publicClient.getLogs({
-      address: DEX_ADDRESS as `0x${string}`,
-      event: SWAPPED_EVENT,
-      fromBlock,
-      toBlock,
-    }) as SwapLogLike[];
-
-    const recentLogs = logs
-      .filter(hasSwapArgs)
-      .filter((log) => log.blockNumber !== undefined)
-      .sort((a, b) => {
-        if (a.blockNumber === b.blockNumber) return Number(b.logIndex ?? 0) - Number(a.logIndex ?? 0);
-        return (a.blockNumber ?? 0n) > (b.blockNumber ?? 0n) ? -1 : 1;
-      })
-      .slice(0, 80);
-
-    const now = Math.floor(Date.now() / 1000);
-    const blockTimes = new Map<string, number>();
-    if (!live) {
-      const blockNumbers = Array.from(new Set(recentLogs.map((log) => log.blockNumber?.toString()).filter(Boolean))) as string[];
-      await Promise.all(
-        blockNumbers.map(async (blockNumberValue) => {
-          try {
-            const block = await publicClient.getBlock({ blockNumber: BigInt(blockNumberValue) });
-            blockTimes.set(blockNumberValue, Number(block.timestamp));
-          } catch {
-            blockTimes.set(blockNumberValue, now);
-          }
-        })
-      );
-    }
-
-    const historyItems = recentLogs.map((log) => ({
-      id: makeSwapHistoryId(log),
-      txHash: log.transactionHash,
-      blockNumber: log.blockNumber ?? 0n,
-      logIndex: Number(log.logIndex ?? 0),
-      user: log.args.user,
-      tokenIn: log.args.tokenIn,
-      tokenOut: log.args.tokenOut,
-      amountIn: log.args.amountIn,
-      amountOut: log.args.amountOut,
-      fee: log.args.fee,
-      timestamp: live ? now : blockTimes.get((log.blockNumber ?? 0n).toString()) ?? now,
-      live,
-    }));
-    const newItemCount = addSwapHistoryItems(historyItems);
-
-    if (live && newItemCount > 0) {
-      setSwapHistoryTotalCount((current) => current === null ? newItemCount : current + newItemCount);
-    }
-
-    if (toBlock > lastSwapHistoryBlockRef.current) {
-      lastSwapHistoryBlockRef.current = toBlock;
-    }
-
-    return logs.length;
-  }, [addSwapHistoryItems, publicClient]);
-
-  const countSwapHistoryRange = useCallback(async (fromBlock: bigint, toBlock: bigint) => {
-    if (!publicClient || toBlock < fromBlock) return 0;
-
-    let total = 0;
-    let cursor = fromBlock;
-    let chunkSize = SWAP_HISTORY_COUNT_CHUNK_BLOCKS;
-
-    while (cursor <= toBlock) {
-      const chunkTo = cursor + chunkSize > toBlock ? toBlock : cursor + chunkSize;
-      try {
-        const logs = await publicClient.getLogs({
-          address: DEX_ADDRESS as `0x${string}`,
-          event: SWAPPED_EVENT,
-          fromBlock: cursor,
-          toBlock: chunkTo,
-        });
-        total += logs.length;
-        cursor = chunkTo + 1n;
-        if (chunkSize < SWAP_HISTORY_COUNT_CHUNK_BLOCKS) {
-          chunkSize = chunkSize * 2n > SWAP_HISTORY_COUNT_CHUNK_BLOCKS
-            ? SWAP_HISTORY_COUNT_CHUNK_BLOCKS
-            : chunkSize * 2n;
-        }
-      } catch (error) {
-        if (chunkSize <= 500n) throw error;
-        chunkSize = chunkSize / 2n;
-      }
-    }
-
-    return total;
-  }, [publicClient]);
-
   useEffect(() => {
-    if (!publicClient) return;
     let cancelled = false;
 
     async function loadSwapHistory() {
       setSwapHistoryLoading(true);
       try {
-        const loadedFromSubgraph = await loadSwapHistoryFromSubgraph();
+        await loadSwapHistoryFromSubgraph();
         if (cancelled) return;
-
-        const latestBlock = await publicClient.getBlockNumber();
-        const countFromBlock = configuredDexStartBlock(latestBlock);
-        const recentFromBlock = latestBlock > SWAP_HISTORY_LOOKBACK_BLOCKS
-          ? latestBlock - SWAP_HISTORY_LOOKBACK_BLOCKS
-          : countFromBlock;
-
-        if (!loadedFromSubgraph) {
-          await fetchSwapHistoryRange(recentFromBlock, latestBlock, false);
-          if (cancelled) return;
-        }
-
-        if (countFromBlock <= latestBlock) {
-          const totalCount = await countSwapHistoryRange(countFromBlock, latestBlock);
-          if (!cancelled) {
-            setSwapHistoryTotalCount(totalCount);
-          }
-        }
       } catch (error) {
         console.warn("Failed to load swap history", error);
       } finally {
@@ -1275,7 +1079,7 @@ export default function DexAllInOne() {
     return () => {
       cancelled = true;
     };
-  }, [countSwapHistoryRange, fetchSwapHistoryRange, loadSwapHistoryFromSubgraph, publicClient]);
+  }, [loadSwapHistoryFromSubgraph]);
 
   useWatchContractEvent({
     address: DEX_ADDRESS as `0x${string}`,
@@ -1323,46 +1127,6 @@ export default function DexAllInOne() {
       }
     },
   });
-
-  useEffect(() => {
-    if (!publicClient) return;
-    let cancelled = false;
-
-    async function pollNewSwapLogs() {
-      if (cancelled || swapHistoryPollingRef.current) return;
-      swapHistoryPollingRef.current = true;
-      try {
-        const latestBlock = await publicClient.getBlockNumber();
-        const lastSeen = lastSwapHistoryBlockRef.current;
-        const fromBlock = lastSeen > 0n
-          ? lastSeen + 1n
-          : latestBlock > 80n
-            ? latestBlock - 80n
-            : 0n;
-        if (latestBlock >= fromBlock) {
-          await fetchSwapHistoryRange(fromBlock, latestBlock, true);
-        } else if (latestBlock > lastSwapHistoryBlockRef.current) {
-          lastSwapHistoryBlockRef.current = latestBlock;
-        }
-      } catch (error) {
-        console.warn("Failed to poll swap history", error);
-      } finally {
-        swapHistoryPollingRef.current = false;
-      }
-    }
-
-    const intervalId = window.setInterval(pollNewSwapLogs, 6_000);
-    pollNewSwapLogs();
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, [fetchSwapHistoryRange, publicClient]);
-
-  // Collect all pool data
-  const allPoolData = useMemo<(PoolDataTuple | undefined)[]>(() => {
-    return [pool0Data, pool1Data, pool2Data, pool3Data, pool4Data, pool5Data, pool6Data, pool7Data] as (PoolDataTuple | undefined)[];
-  }, [pool0Data, pool1Data, pool2Data, pool3Data, pool4Data, pool5Data, pool6Data, pool7Data]);
 
   const getPoolTokenDecimals = useCallback((poolIndex: number) => {
     const pool = poolOptions[poolIndex];
@@ -1463,46 +1227,48 @@ export default function DexAllInOne() {
     options: { force?: boolean; onTimeframeDone?: () => void; timeframes?: readonly ChartTf[] } = {},
   ) => {
     const timeframes = options.timeframes?.length ? options.timeframes : CHART_PRELOAD_TIMEFRAMES;
-    await Promise.allSettled(
-      timeframes.map(async (tf) => {
-        try {
-          const queryOptions = {
-            queryKey: getCandlesQueryKey(
-              target.pairId,
-              target.chartToken0,
-              target.chartToken1,
-              tf,
-              18,
-              target.chartToken1Decimals,
-            ),
-            queryFn: ({ signal }: { signal?: AbortSignal }) => fetchCandlesRequest({
-              token0: target.chartToken0,
-              token1: target.chartToken1,
-              intervalMinutes: tf,
-              subgraphUrl: "/api/candles",
-              token0Decimals: 18,
-              token1Decimals: target.chartToken1Decimals,
-              requestSignal: signal,
-            }),
-            staleTime: tf <= 1 ? 2_500 : tf <= 15 ? 10_000 : tf <= 60 ? 20_000 : 45_000,
-          };
+    // Keep Goldsky requests sequential. Warming every timeframe in parallel for
+    // several pools was enough to trip the public endpoint rate limit.
+    for (const tf of timeframes) {
+      try {
+        const queryOptions = {
+          queryKey: getCandlesQueryKey(
+            target.pairId,
+            target.chartToken0,
+            target.chartToken1,
+            tf,
+            18,
+            target.chartToken1Decimals,
+          ),
+          queryFn: ({ signal }: { signal?: AbortSignal }) => fetchCandlesRequest({
+            token0: target.chartToken0,
+            token1: target.chartToken1,
+            intervalMinutes: tf,
+            subgraphUrl: "/api/candles",
+            token0Decimals: 18,
+            token1Decimals: target.chartToken1Decimals,
+            requestSignal: signal,
+          }),
+          staleTime: tf <= 15 ? 10_000 : tf <= 60 ? 20_000 : 45_000,
+        };
 
-          if (options.force) {
-            await queryClient.fetchQuery(queryOptions);
-          } else {
-            await queryClient.prefetchQuery(queryOptions);
-          }
-        } finally {
-          options.onTimeframeDone?.();
+        if (options.force) {
+          await queryClient.fetchQuery(queryOptions);
+        } else {
+          await queryClient.prefetchQuery(queryOptions);
         }
-      }),
-    );
+      } catch {
+        // A background warm-up must never block opening the DEX.
+      } finally {
+        options.onTimeframeDone?.();
+      }
+    }
   }, [queryClient]);
 
   const warmChartForPool = useCallback((
     poolIndex: number,
     anchor?: { price: number | null; tokenDecimals: number },
-    timeframes: readonly ChartTf[] = CHART_PRELOAD_TIMEFRAMES,
+    timeframes: readonly ChartTf[] = [DEFAULT_CHART_TF],
   ) => {
     const target = getChartPreloadTarget(poolIndex, anchor);
     if (!target) return;
@@ -1597,11 +1363,11 @@ export default function DexAllInOne() {
       switch (pairFilter) {
         case "tvl":
           // Use NUSD reserve as TVL proxy (all pools are paired with NUSD)
-          return Number(dataB[3]) - Number(dataA[3]);
+          return dataA[3] === dataB[3] ? 0 : dataA[3] > dataB[3] ? -1 : 1;
         case "vol24h":
-          return Number(dataB[5]) - Number(dataA[5]); // volume24h (index 5)
+          return dataA[5] === dataB[5] ? 0 : dataA[5] > dataB[5] ? -1 : 1; // volume24h (index 5)
         case "volAll":
-          return Number(dataB[6]) - Number(dataA[6]); // totalVolume (index 6)
+          return dataA[6] === dataB[6] ? 0 : dataA[6] > dataB[6] ? -1 : 1; // totalVolume (index 6)
         case "new":
           return b - a; // newest first by index
         default:
@@ -1663,25 +1429,29 @@ export default function DexAllInOne() {
     if (poolOptions.length <= selectedFarmPool) return true;
     const pd = allPoolData[selectedFarmPool];
     if (!pd) return true;
-    const token0 = pd[0];
-    return token0 === nusdAddress || pd[1] === nusdAddress;
+    if (!nusdAddress) return false;
+    const normalizedNusd = nusdAddress.toLowerCase();
+    return pd[0].toLowerCase() === normalizedNusd || pd[1].toLowerCase() === normalizedNusd;
   }, [poolOptions, selectedFarmPool, allPoolData, nusdAddress]);
 
   // Get pool data
   const { data: pairId } = useDexRead<`0x${string}`>(
     "getPairId",
-    swapTokenIn && swapTokenOut ? [swapTokenIn.address, swapTokenOut.address] : undefined
+    swapTokenIn && swapTokenOut ? [swapTokenIn.address, swapTokenOut.address] : undefined,
+    !!swapTokenIn && !!swapTokenOut
   );
-  const { data: poolData } = useDexRead("pools", pairId ? [pairId] : undefined);
+  const { data: poolData } = useDexRead("pools", pairId ? [pairId] : undefined, !!pairId);
 
   // Farm LP queries - use selectedFarmPool index
   const farmPairId = poolOptions.length > selectedFarmPool ? poolOptions[selectedFarmPool]?.pairId : undefined;
   const farmPoolToken = poolOptions.length > selectedFarmPool ? poolOptions[selectedFarmPool]?.token : undefined;
   const { data: farmLPData, refetch: refetchFarmLP } = useDexRead<bigint>("userLP",
-    farmPairId && address ? [farmPairId, address as `0x${string}`] : undefined
+    farmPairId && address ? [farmPairId, address as `0x${string}`] : undefined,
+    !!farmPairId && !!address
   );
   const { data: farmPendingReward, refetch: refetchPendingReward } = useRewardRead<bigint>("getUserPendingReward",
-    address ? [address as `0x${string}`] : undefined
+    address ? [address as `0x${string}`] : undefined,
+    !!address
   );
   
   // Farm token allowance
@@ -1705,7 +1475,7 @@ export default function DexAllInOne() {
 
   // Real-time block updates for auto-refresh
   const { data: blockNumber } = useBlockNumber({ watch: true });
-  const { refetch: refetchPool } = useDexRead("pools", pairId ? [pairId] : undefined);
+  const { refetch: refetchPool } = useDexRead("pools", pairId ? [pairId] : undefined, !!pairId);
 
   // Allowances - use useReadContract directly for better reliability
   const { data: allowanceIn, refetch: refetchAllowanceIn, isError: allowanceInError } = useReadContract({
@@ -1725,6 +1495,13 @@ export default function DexAllInOne() {
     query: {
       enabled: !!address && !!poolToken && poolToken.address !== NATIVE_ADDRESS,
     },
+  });
+  const { data: allowanceNUSDForLiquidity, refetch: refetchAllowanceNUSD } = useReadContract({
+    address: NUSD_ADDRESS as `0x${string}`,
+    abi: erc20Abi,
+    functionName: "allowance",
+    args: address ? [address, DEX_ADDRESS as `0x${string}`] : undefined,
+    query: { enabled: !!address },
   });
 
   // Live swap fee from contract — defaults to 10 (0.1%) until first read returns.
@@ -1754,36 +1531,22 @@ export default function DexAllInOne() {
     refetchAllowanceIn?.();
     refetchAllowancePool?.();
     refetchPool?.();
-    refetchPool0?.();
-    refetchPool1?.();
-    refetchPool2?.();
-    refetchPool3?.();
-    refetchPool4?.();
-    refetchPool5?.();
-    refetchPool6?.();
-    refetchPool7?.();
     refetchAllPools?.();
     refetchFarmLP?.();
     refetchPendingReward?.();
     refetchFarmAllowance?.();
     refetchAllowance?.();
+    refetchAllowanceNUSD();
   }, [
     refetchAllowanceIn,
     refetchAllowancePool,
     refetchPool,
-    refetchPool0,
-    refetchPool1,
-    refetchPool2,
-    refetchPool3,
-    refetchPool4,
-    refetchPool5,
-    refetchPool6,
-    refetchPool7,
     refetchAllPools,
     refetchFarmLP,
     refetchPendingReward,
     refetchFarmAllowance,
     refetchAllowance,
+    refetchAllowanceNUSD,
   ]);
 
   const scheduleDexLiveReads = useCallback(() => {
@@ -1817,7 +1580,7 @@ export default function DexAllInOne() {
 
   useEffect(() => { setMounted(true); }, []);
 
-  const handleSwapApprove = () => {
+  const handleSwapApprove = async () => {
     if (!isConnected) {
       toast.error("Not connected", "Please connect your wallet first");
       return;
@@ -1832,15 +1595,20 @@ export default function DexAllInOne() {
     toast.info("Approving", `Please approve ${swapTokenIn.symbol}...`);
 
     try {
-      writeContract({
+      const hash = await writeContractAsync({
         address: tokenAddr,
         abi,
         functionName: "approve",
         args: [DEX_ADDRESS as `0x${string}`, maxUint256],
       });
+      if (publicClient) {
+        const receipt = await publicClient.waitForTransactionReceipt({ hash });
+        if (receipt.status !== "success") throw new Error("Approval transaction reverted");
+      }
+      await refetchAllowanceIn?.();
+      toast.success("Approved", `${swapTokenIn.symbol} is ready`);
     } catch (err) {
-      console.error("Approve error:", err);
-      toast.error("Error", "Failed to send approval transaction");
+      toast.handleError(err, "Failed to send approval transaction");
     }
   };
 
@@ -1908,7 +1676,7 @@ export default function DexAllInOne() {
     }
   };
 
-  const handleAddLiquidity = () => {
+  const handleAddLiquidity = async () => {
     if (!isConnected || !ensureCorrectChain()) return;
     if (!poolToken || !poolAmountToken || !poolAmountNUSD) return;
     const amountToken = safeParseUnits(poolAmountToken, poolToken.decimals);
@@ -1921,12 +1689,20 @@ export default function DexAllInOne() {
       toast.error("Approval required", `Please approve ${poolToken.symbol} first`);
       return;
     }
-    addLiquidity(poolToken.address, nusdAddress!, amountToken, amountNUSD);
-    toast.info("Adding liquidity", "Please confirm transaction...");
+    if (allowanceNUSDForLiquidity === undefined || allowanceNUSDForLiquidity < amountNUSD) {
+      toast.error("Approval required", "Please approve NUSD first");
+      return;
+    }
+    try {
+      toast.info("Adding liquidity", "Please confirm transaction...");
+      await addLiquidity(poolToken.address, nusdAddress!, amountToken, amountNUSD);
+    } catch (error) {
+      toast.handleError(error, "Add liquidity failed");
+    }
   };
 
   // Farm handlers - Add Liquidity to farm
-  const handleFarmAdd = () => {
+  const handleFarmAdd = async () => {
     if (!isConnected || !ensureCorrectChain()) return;
     if (!farmNUSDAmount || !farmPairId) return;
     if (!farmPoolToken) return;
@@ -1941,25 +1717,7 @@ export default function DexAllInOne() {
     if (!pd) return;
     
     // Calculate token amount based on pool ratio
-    const reserve0 = pd[2];
-    const reserve1 = pd[3];
-    const totalLP = pd[4];
-    
-    // Calculate how much token needed for the NUSD amount
-    let tokenAmount: bigint;
-    if (totalLP === 0n) {
-      // New pool - use 1:1 ratio
-      tokenAmount = amountNUSD;
-    } else {
-      // Existing pool - use ratio from reserves
-      if (nusdAddress === pd[0]) {
-        // NUSD is token0
-        tokenAmount = reserve1 > 0 ? (amountNUSD * reserve1) / reserve0 : amountNUSD;
-      } else {
-        // NUSD is token1
-        tokenAmount = reserve0 > 0 ? (amountNUSD * reserve0) / reserve1 : amountNUSD;
-      }
-    }
+    const tokenAmount = farmTokenAmountForNusd(amountNUSD, pd, nusdAddress!);
     
     // Check approval for non-native tokens
     if (farmPoolToken !== NATIVE_ADDRESS) {
@@ -1968,12 +1726,20 @@ export default function DexAllInOne() {
         return;
       }
     }
+    if (allowanceNUSDForLiquidity === undefined || allowanceNUSDForLiquidity < amountNUSD) {
+      toast.error("Approval required", "Please approve NUSD first");
+      return;
+    }
     
-    addLiquidity(farmPoolToken, nusdAddress!, tokenAmount, amountNUSD);
-    toast.info("Adding Liquidity", "Please confirm transaction to farm...");
+    try {
+      toast.info("Adding Liquidity", "Please confirm transaction to farm...");
+      await addLiquidity(farmPoolToken, nusdAddress!, tokenAmount, amountNUSD);
+    } catch (error) {
+      toast.handleError(error, "Add liquidity failed");
+    }
   };
 
-  const handleFarmRemove = () => {
+  const handleFarmRemove = async () => {
     if (!isConnected || !ensureCorrectChain()) return;
     if (!farmLpAmount || !farmPairId || !farmUserLP) return;
     const amount = safeParseUnits(farmLpAmount, 18);
@@ -1989,14 +1755,22 @@ export default function DexAllInOne() {
       toast.error("Insufficient LP", `You only have ${formatNum(farmUserLP)} LP`);
       return;
     }
-    removeLiquidity(farmPairId, amount);
-    toast.info("Removing Liquidity", "Please confirm transaction...");
+    try {
+      toast.info("Removing Liquidity", "Please confirm transaction...");
+      await removeLiquidity(farmPairId, amount);
+    } catch (error) {
+      toast.handleError(error, "Remove liquidity failed");
+    }
   };
 
-  const handleClaim = () => {
+  const handleClaim = async () => {
     if (!isConnected || !ensureCorrectChain()) return;
-    claimReward();
-    toast.info("Claiming reward", "Please confirm transaction...");
+    try {
+      toast.info("Claiming reward", "Please confirm transaction...");
+      await claimReward();
+    } catch (error) {
+      toast.handleError(error, "Claim reward failed");
+    }
   };
 
   // Auto-switch to LitVM helper
@@ -2009,7 +1783,7 @@ export default function DexAllInOne() {
     return true;
   };
 
-  const handleApprove = (token: Token) => {
+  const handleApprove = async (token: Token) => {
     if (!isConnected) {
       toast.error("Not connected", "Please connect your wallet first");
       return;
@@ -2020,44 +1794,66 @@ export default function DexAllInOne() {
     const abi = isNUSD ? NUSD_ABI : erc20Abi;
 
     toast.info("Approving", `Please approve ${token.symbol || "Token"}...`);
-    writeContract({
-      address: token.address as `0x${string}`,
-      abi,
-      functionName: "approve",
-      args: [DEX_ADDRESS as `0x${string}`, maxUint256],
-    });
+    try {
+      const hash = await writeContractAsync({
+        address: token.address as `0x${string}`,
+        abi,
+        functionName: "approve",
+        args: [DEX_ADDRESS as `0x${string}`, maxUint256],
+      });
+      if (publicClient) {
+        const receipt = await publicClient.waitForTransactionReceipt({ hash });
+        if (receipt.status !== "success") throw new Error("Approval transaction reverted");
+      }
+      await Promise.allSettled([
+        refetchAllowanceIn?.(),
+        refetchAllowancePool?.(),
+        refetchFarmAllowance?.(),
+        refetchAllowanceNUSD(),
+      ]);
+      toast.success("Approved", `${token.symbol || "Token"} is ready`);
+    } catch (error) {
+      toast.handleError(error, "Approval failed");
+    }
   };
 
-  const handleApproveCustomToken = () => {
+  const handleApproveCustomToken = async () => {
     if (!isConnected) {
       toast.error("Not connected", "Please connect your wallet first");
       return;
     }
-    if (!createTokenA) return;
+    if (!createTokenA || !needsCreateApproval) return;
 
-    const isNUSD = createTokenA.toLowerCase() === NUSD_ADDRESS.toLowerCase();
+    const isNUSD = createApprovalToken.address.toLowerCase() === NUSD_ADDRESS.toLowerCase();
     const abi = isNUSD ? NUSD_ABI : erc20Abi;
 
-    toast.info("Approving", `Please approve ${tokenSymbol || "Token"}...`);
-    writeContract({
-      address: createTokenA as `0x${string}`,
-      abi,
-      functionName: "approve",
-      args: [DEX_ADDRESS as `0x${string}`, maxUint256],
-    }, {
-      onSuccess: () => {
-        setTimeout(() => {
-          refetchAllowance?.();
-          refetchAllowanceIn?.();
-          refetchAllowancePool?.();
-          refetchFarmAllowance?.();
-        }, 2000);
+    toast.info("Approving", `Please approve ${createApprovalToken.symbol || "Token"}...`);
+    try {
+      const hash = await writeContractAsync({
+        address: createApprovalToken.address,
+        abi,
+        functionName: "approve",
+        args: [DEX_ADDRESS as `0x${string}`, maxUint256],
+      });
+      if (publicClient) {
+        const receipt = await publicClient.waitForTransactionReceipt({ hash });
+        if (receipt.status !== "success") throw new Error("Approval transaction reverted");
       }
-    });
+      await Promise.allSettled([
+        refetchAllowance?.(),
+        refetchAllowanceIn?.(),
+        refetchAllowancePool?.(),
+        refetchFarmAllowance?.(),
+        refetchAllowanceNUSD(),
+      ]);
+      toast.success("Approved", `${createApprovalToken.symbol || "Token"} is ready`);
+    } catch (error) {
+      toast.handleError(error, "Approval failed");
+    }
   };
 
   // Anyone can create a pool by adding initial liquidity to a new pair
-  const handleCreatePool = () => {
+  const handleCreatePool = async () => {
     if (!isConnected || !ensureCorrectChain()) return;
     if (!createTokenA || !createAmountA || !createAmountB) return;
 
@@ -2071,18 +1867,82 @@ export default function DexAllInOne() {
     }
     
     // Check approval for tokenA
-    if (tokenA !== NATIVE_ADDRESS && needsCreateApproval) {
-      toast.error("Approval required", `Please approve ${tokenSymbol || "token"} first`);
+    if (needsCreateApproval) {
+      toast.error("Approval required", `Please approve ${createApprovalToken.symbol || "token"} first`);
       return;
     }
     
     // Use addLiquidity to create pool (creates pool + adds liquidity in one tx)
-    addLiquidity(tokenA, tokenB, amountA, amountB);
-    toast.info("Creating Pool", "Please confirm transaction...");
+    try {
+      toast.info("Creating Pool", "Please confirm transaction...");
+      await addLiquidity(tokenA, tokenB, amountA, amountB);
+    } catch (error) {
+      toast.handleError(error, "Create pool failed");
+    }
   };
 
-  const needsSwapApproval = swapTokenIn && swapTokenIn.address !== NATIVE_ADDRESS && !allowanceInError && allowanceIn !== undefined && allowanceIn === 0n;
-  const needsPoolApproval = poolToken && poolToken.address !== NATIVE_ADDRESS && !allowancePoolError && allowancePoolToken !== undefined && allowancePoolToken === 0n;
+  const swapApprovalAmount = safeParseUnits(swapAmountIn, swapTokenIn.decimals) ?? 0n;
+  const poolApprovalAmount = safeParseUnits(poolAmountToken, poolToken.decimals) ?? 0n;
+  const poolNusdApprovalAmount = safeParseUnits(poolAmountNUSD, 18) ?? 0n;
+  const needsSwapApproval = Boolean(
+    swapTokenIn.address !== NATIVE_ADDRESS &&
+    !allowanceInError &&
+    swapApprovalAmount > 0n &&
+    (allowanceIn === undefined || allowanceIn < swapApprovalAmount)
+  );
+  const needsPoolTokenApproval = Boolean(
+    poolToken.address !== NATIVE_ADDRESS &&
+    !allowancePoolError &&
+    poolApprovalAmount > 0n &&
+    (allowancePoolToken === undefined || allowancePoolToken < poolApprovalAmount)
+  );
+  const needsPoolNusdApproval = Boolean(
+    poolNusdApprovalAmount > 0n &&
+    (allowanceNUSDForLiquidity === undefined || allowanceNUSDForLiquidity < poolNusdApprovalAmount)
+  );
+  const needsPoolApproval = needsPoolTokenApproval || needsPoolNusdApproval;
+  const poolApprovalToken = needsPoolTokenApproval ? poolToken : KNOWN_TOKENS[1];
+
+  const createNusdApprovalAmount = createAmountBParsed ?? 0n;
+  const needsCreateNusdApproval = Boolean(
+    createNusdApprovalAmount > 0n &&
+    (allowanceNUSDForLiquidity === undefined || allowanceNUSDForLiquidity < createNusdApprovalAmount)
+  );
+  const needsCreateApproval = needsCreateTokenApproval || needsCreateNusdApproval;
+  const createApprovalToken: Token = needsCreateTokenApproval
+    ? {
+        address: createTokenA as `0x${string}`,
+        symbol: (tokenSymbol as string) || "TOKEN",
+        decimals: Number(tokenDecimals ?? 18),
+        name: (tokenName as string) || "Token",
+      }
+    : KNOWN_TOKENS[1];
+
+  const farmNusdApprovalAmount = safeParseUnits(farmNUSDAmount, 18) ?? 0n;
+  const farmPoolData = allPoolData[selectedFarmPool];
+  const farmTokenApprovalAmount = farmPoolData && farmNusdApprovalAmount > 0n && nusdAddress
+    ? farmTokenAmountForNusd(farmNusdApprovalAmount, farmPoolData, nusdAddress)
+    : 0n;
+  const needsFarmTokenApproval = Boolean(
+    farmPoolToken &&
+    farmPoolToken !== NATIVE_ADDRESS &&
+    farmTokenApprovalAmount > 0n &&
+    (farmTokenAllowance === undefined || farmTokenAllowance < farmTokenApprovalAmount)
+  );
+  const needsFarmNusdApproval = Boolean(
+    farmNusdApprovalAmount > 0n &&
+    (allowanceNUSDForLiquidity === undefined || allowanceNUSDForLiquidity < farmNusdApprovalAmount)
+  );
+  const farmApprovalToken: Token | null = needsFarmTokenApproval && farmPoolToken
+    ? {
+        address: farmPoolToken,
+        symbol: (tokenSymbols[selectedFarmPool] as string) || "TOKEN",
+        decimals: getPoolTokenDecimals(selectedFarmPool),
+        name: "Token",
+      }
+    : needsFarmNusdApproval
+      ? KNOWN_TOKENS[1]
+      : null;
 
   if (!mounted) return <PageLoader />;
 
@@ -2309,7 +2169,9 @@ export default function DexAllInOne() {
                         const r0 = pd[2];
                         const r1 = pd[3];
                         const reserveIn = swapTokenIn.address === t0 ? r0 : r1;
-                        const priceImpact = reserveIn > 0n ? (Number(amountInWei) / Number(reserveIn) * 100) : 0;
+                        const priceImpact = reserveIn > 0n
+                          ? Number((amountInWei * 10_000n) / reserveIn) / 100
+                          : 0;
                         return (
                           <span className={priceImpact > 5 ? "text-red-400" : "text-emerald-400"}>
                             {priceImpact.toFixed(2)}%
@@ -2395,7 +2257,11 @@ export default function DexAllInOne() {
                       onChange={(e) => setPoolToken(KNOWN_TOKENS.find(t => t.address === e.target.value)!)}
                       className="bg-[#13131F] p-3 rounded-lg text-white border border-[#2D2D44] outline-none"
                     >
-                      {KNOWN_TOKENS.map(t => <option key={t.address} value={t.address}>{t.symbol}</option>)}
+                      {KNOWN_TOKENS.map(t => (
+                        <option key={t.address} value={t.address} disabled={t.address === NUSD_ADDRESS}>
+                          {t.symbol}
+                        </option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -2421,8 +2287,8 @@ export default function DexAllInOne() {
 
                 {/* Approval */}
                 {needsPoolApproval && (
-                  <button onClick={() => handleApprove(poolToken)} className="w-full mb-3 pixel-btn-soft pixel-btn-soft-amber">
-                    APPROVE {poolToken.symbol}
+                  <button onClick={() => handleApprove(poolApprovalToken)} className="w-full mb-3 pixel-btn-soft pixel-btn-soft-amber">
+                    APPROVE {poolApprovalToken.symbol}
                   </button>
                 )}
 
@@ -2735,22 +2601,10 @@ export default function DexAllInOne() {
                     {farmNUSDAmount && allPoolData[selectedFarmPool] ? (
                       (() => {
                         const pd = allPoolData[selectedFarmPool];
-                        const reserve0 = pd[2] as bigint;
-                        const reserve1 = pd[3] as bigint;
-                        const totalLP = pd[4] as bigint;
                         const amountNUSD = safeParseUnits(farmNUSDAmount, 18);
-                        if (!amountNUSD) return "0.0000";
-                        let tokenAmt: bigint;
-                        if (totalLP === 0n) {
-                          tokenAmt = amountNUSD;
-                        } else {
-                          if (nusdAddress === pd[0]) {
-                            tokenAmt = reserve1 > 0n ? (amountNUSD * reserve1) / reserve0 : amountNUSD;
-                          } else {
-                            tokenAmt = reserve0 > 0n ? (amountNUSD * reserve0) / reserve1 : amountNUSD;
-                          }
-                        }
-                        return `${Number(formatUnits(tokenAmt, 18)).toFixed(4)}`;
+                        if (!amountNUSD || !nusdAddress) return "0.0000";
+                        const tokenAmt = farmTokenAmountForNusd(amountNUSD, pd, nusdAddress);
+                        return `${Number(formatUnits(tokenAmt, getPoolTokenDecimals(selectedFarmPool))).toFixed(4)}`;
                       })()
                     ) : "0.0000"}
                   </span>
@@ -2758,19 +2612,14 @@ export default function DexAllInOne() {
               </div>
 
               {/* Check if approval needed for farm */}
-              {farmPoolToken && farmPoolToken !== NATIVE_ADDRESS && (
+              {(farmApprovalToken || (farmPoolToken && farmPoolToken !== NATIVE_ADDRESS)) && (
                 <div className="mb-4">
-                  {(!farmTokenAllowance || (farmTokenAllowance as bigint) === 0n) ? (
+                  {farmApprovalToken ? (
                     <button
-                      onClick={() => handleApprove({
-                        address: farmPoolToken as `0x${string}`,
-                        symbol: (tokenSymbols[selectedFarmPool] as string) || "TOKEN",
-                        decimals: 18,
-                        name: "Token"
-                      })}
+                      onClick={() => handleApprove(farmApprovalToken)}
                       className="w-full py-3 pixel-btn-soft pixel-btn-soft-amber"
                     >
-                      APPROVE {(tokenSymbols[selectedFarmPool] as string) || "TOKEN"}
+                      APPROVE {farmApprovalToken.symbol}
                     </button>
                   ) : (
                     <div className="text-xs text-emerald-400 text-center p-2 rounded-xl bg-emerald-500/10" style={{ fontFamily: "var(--font-departure)" }}>

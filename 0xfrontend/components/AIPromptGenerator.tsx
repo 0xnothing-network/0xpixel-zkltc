@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 interface AIPromptGeneratorProps {
   gridSize: number;
@@ -11,9 +11,13 @@ export function AIPromptGenerator({ gridSize, onApplyPixelData }: AIPromptGenera
   const [generated, setGenerated] = useState("");
   const [parsed, setParsed] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const parsedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setMounted(true);
+    return () => {
+      if (parsedTimerRef.current) clearTimeout(parsedTimerRef.current);
+    };
   }, []);
 
   const parseGridData = (text: string): string[][] => {
@@ -44,7 +48,11 @@ export function AIPromptGenerator({ gridSize, onApplyPixelData }: AIPromptGenera
     if (onApplyPixelData) {
       onApplyPixelData(pixelData);
       setParsed(true);
-      setTimeout(() => setParsed(false), 2000);
+      if (parsedTimerRef.current) clearTimeout(parsedTimerRef.current);
+      parsedTimerRef.current = setTimeout(() => {
+        parsedTimerRef.current = null;
+        setParsed(false);
+      }, 2000);
     }
   };
 

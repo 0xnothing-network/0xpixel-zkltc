@@ -1,33 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { encodePacked, keccak256 } from 'viem';
+import {
+  loadDexOnchainFallback,
+  loadDexPoolSnapshot,
+  type DexPoolSnapshot,
+} from '@/lib/dexOnchainFallback';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 const DEFAULT_DEX_SUBGRAPH_URL =
-  'https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.0/gn';
+  'https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.6/gn';
 const SUBGRAPH_URL_RAW = process.env.NEXT_PUBLIC_SUBGRAPH_URL || DEFAULT_DEX_SUBGRAPH_URL;
 const SUBGRAPH_URL = SUBGRAPH_URL_RAW === 'disabled' ? '' : SUBGRAPH_URL_RAW;
 
-const SWAP_PAGE_SIZE = 1000;
-const RECENT_SWAPS_PER_DIRECTION = 30_000;
-const FULL_HISTORY_SWAPS_PER_DIRECTION = 30_000;
-const HISTORY_HEAD_SWAPS_PER_DIRECTION = 2_000;
-const GENESIS_CACHE_TTL_MS = 5 * 60_000;
-const SWAP_CACHE_TTL_MS = 10_000;
-const LATEST_SWAP_CACHE_TTL_MS = 2_500;
-const INDEXED_SCHEMA_RETRY_MS = 60_000;
-const SUPPORTED_INTERVALS = new Set([1, 15, 60, 240, 1440]);
+const SUPPORTED_INTERVALS = new Set([15, 60, 240, 1440]);
+const PAGE_SIZE = 1000;
+const MAX_PAGES = 100;
+const UPSTREAM_TIMEOUT_MS = 4_000;
+const REQUEST_BUDGET_MS = 9_000;
+const MAX_SUBGRAPH_BLOCK_LAG = 20_000;
 
-interface SwapEvent {
-  id: string;
-  timestamp: string | { seconds?: string | number; nanos?: number };
-  timestamp_?: string | { seconds?: string | number; nanos?: number };
-  amountIn: string;
-  amountOut: string;
-  fee: string;
-  tokenIn: string;
-  tokenOut: string;
-}
+type CandleSource = 'indexed-candles' | 'hybrid' | 'onchain' | 'unavailable';
 
 interface CandleData {
   time: number;
@@ -37,266 +30,49 @@ interface CandleData {
   close: number;
 }
 
-interface CandlesResponseBody {
-  candles: CandleData[];
-  count: number;
-  interval: number;
-  source: 'indexed-candles' | 'raw-swaps-fallback';
-  timestampGte: number;
-  recentWindowStart: number;
-  genesisTime: number | null;
-  latestPrice: LatestPrice | null;
-}
-
-interface LatestPrice {
-  price: number;
-  timestamp: number;
-  source: 'subgraph-swap' | 'candle';
-}
-
 interface IndexedCandle {
-  id: string;
-  timestamp: string | { seconds?: string | number; nanos?: number };
+  timestamp: string | number | { seconds?: string | number };
   open: string;
   high: string;
   low: string;
   close: string;
 }
 
-interface LiquidityAddedEvent {
-  id: string;
-  pairId: string;
-  amount0: string;
-  amount1: string;
-  timestamp: string | { seconds?: string | number; nanos?: number };
-  timestamp_?: string | { seconds?: string | number; nanos?: number };
+interface SubgraphMeta {
+  hasIndexingErrors?: boolean;
+  block?: { number?: string | number } | null;
 }
 
-interface CandleBuildContext {
-  t0: string;
-  t1: string;
-  token0Decimals: number;
-  token1Decimals: number;
+interface CandlesResponseBody {
+  candles: CandleData[];
+  count: number;
+  interval: number;
+  source: CandleSource;
+  complete: boolean;
+  indexedBlock: number | null;
+  hasIndexingErrors: boolean;
+  latestPrice: {
+    price: number;
+    timestamp: number;
+    source: 'candle' | 'pool';
+  } | null;
+  upstreamError?: string;
 }
 
-const responseCache = new Map<string, { expires: number; body: CandlesResponseBody }>();
-const responseInFlight = new Map<string, Promise<CandlesResponseBody>>();
-const genesisCache = new Map<string, { expires: number; value: LiquidityAddedEvent | null }>();
-const genesisInFlight = new Map<string, Promise<LiquidityAddedEvent | null>>();
-const swapCache = new Map<string, { expires: number; value: SwapEvent[] }>();
-const swapInFlight = new Map<string, Promise<SwapEvent[]>>();
-const latestSwapCache = new Map<string, { expires: number; value: SwapEvent | null }>();
-const latestSwapInFlight = new Map<string, Promise<SwapEvent | null>>();
-let indexedSchemaUnavailableUntil = 0;
-let useGoldskyRawSwapSchema = false;
-let useGoldskyRawLiquiditySchema = false;
+interface CachedResponse {
+  expiresAt: number;
+  body: CandlesResponseBody;
+}
 
-const PAIR_QUERY_RECENT = `
-  query GetRecentCandleSwaps(
-    $timestampGte: BigInt!
-    $timestampLte: BigInt!
-    $tokenIn: Bytes!
-    $tokenOut: Bytes!
-    $limit: Int!
-  ) {
-    swaps(
-      first: $limit
-      orderBy: timestamp
-      orderDirection: desc
-      where: {
-        timestamp_gte: $timestampGte
-        timestamp_lte: $timestampLte
-        tokenIn: $tokenIn
-        tokenOut: $tokenOut
-      }
-    ) {
-      id
-      timestamp
-      amountIn
-      amountOut
-      fee
-      tokenIn
-      tokenOut
-    }
-  }
-`;
-
-const PAIR_QUERY_ASC = `
-  query GetCandleSwapsAsc(
-    $timestampGte: BigInt!
-    $tokenIn: Bytes!
-    $tokenOut: Bytes!
-    $limit: Int!
-  ) {
-    swaps(
-      first: $limit
-      orderBy: timestamp
-      orderDirection: asc
-      where: {
-        timestamp_gte: $timestampGte
-        tokenIn: $tokenIn
-        tokenOut: $tokenOut
-      }
-    ) {
-      id
-      timestamp
-      amountIn
-      amountOut
-      fee
-      tokenIn
-      tokenOut
-    }
-  }
-`;
-
-const PAIR_QUERY_GOLDSKY_RAW_RECENT = `
-  query GetRecentCandleSwappeds(
-    $timestampGte: BigInt!
-    $timestampLte: BigInt!
-    $tokenIn: String!
-    $tokenOut: String!
-    $limit: Int!
-  ) {
-    swaps: swappeds(
-      first: $limit
-      orderBy: timestamp_
-      orderDirection: desc
-      where: {
-        timestamp__gte: $timestampGte
-        timestamp__lte: $timestampLte
-        tokenIn: $tokenIn
-        tokenOut: $tokenOut
-      }
-    ) {
-      id
-      timestamp: timestamp_
-      amountIn
-      amountOut
-      fee
-      tokenIn
-      tokenOut
-    }
-  }
-`;
-
-const PAIR_QUERY_GOLDSKY_RAW_ASC = `
-  query GetCandleSwappedsAsc(
-    $timestampGte: BigInt!
-    $tokenIn: String!
-    $tokenOut: String!
-    $limit: Int!
-  ) {
-    swaps: swappeds(
-      first: $limit
-      orderBy: timestamp_
-      orderDirection: asc
-      where: {
-        timestamp__gte: $timestampGte
-        tokenIn: $tokenIn
-        tokenOut: $tokenOut
-      }
-    ) {
-      id
-      timestamp: timestamp_
-      amountIn
-      amountOut
-      fee
-      tokenIn
-      tokenOut
-    }
-  }
-`;
-
-const GENESIS_QUERY = `
-  query GetGenesisLiquidity($pairId: Bytes!) {
-    liquidityAddeds(
-      first: 1
-      orderBy: timestamp
-      orderDirection: asc
-      where: { pairId: $pairId }
-    ) {
-      id
-      pairId
-      amount0
-      amount1
-      timestamp
-    }
-  }
-`;
-
-const GENESIS_QUERY_GOLDSKY_RAW = `
-  query GetGenesisLiquidityRaw($pairId: String!) {
-    liquidityAddeds(
-      first: 1
-      orderBy: timestamp_
-      orderDirection: asc
-      where: { pairId: $pairId }
-    ) {
-      id
-      pairId
-      amount0
-      amount1
-      timestamp: timestamp_
-    }
-  }
-`;
-
-const LATEST_SWAP_QUERY = `
-  query GetLatestCandleSwap(
-    $tokenIn: Bytes!
-    $tokenOut: Bytes!
-  ) {
-    swaps(
-      first: 1
-      orderBy: timestamp
-      orderDirection: desc
-      where: {
-        tokenIn: $tokenIn
-        tokenOut: $tokenOut
-      }
-    ) {
-      id
-      timestamp
-      amountIn
-      amountOut
-      fee
-      tokenIn
-      tokenOut
-    }
-  }
-`;
-
-const LATEST_SWAP_QUERY_GOLDSKY_RAW = `
-  query GetLatestCandleSwapped(
-    $tokenIn: String!
-    $tokenOut: String!
-  ) {
-    swaps: swappeds(
-      first: 1
-      orderBy: timestamp_
-      orderDirection: desc
-      where: {
-        tokenIn: $tokenIn
-        tokenOut: $tokenOut
-      }
-    ) {
-      id
-      timestamp: timestamp_
-      amountIn
-      amountOut
-      fee
-      tokenIn
-      tokenOut
-    }
-  }
-`;
+const responseCache = new Map<string, CachedResponse>();
+const inFlight = new Map<string, Promise<CandlesResponseBody>>();
 
 const CANDLES_QUERY = `
-  query GetIndexedCandles(
+  query GetCandles(
     $pairId: Bytes!
     $interval: Int!
     $limit: Int!
-    $lastTimestamp: BigInt!
+    $after: BigInt!
   ) {
     candles(
       first: $limit
@@ -305,753 +81,489 @@ const CANDLES_QUERY = `
       where: {
         pairId: $pairId
         interval: $interval
-        timestamp_gt: $lastTimestamp
+        timestamp_gt: $after
       }
     ) {
-      id
       timestamp
       open
       high
       low
       close
     }
+    _meta {
+      hasIndexingErrors
+      block { number }
+    }
   }
 `;
 
-function getLookbackSeconds(intervalMinutes: number): number {
-  if (intervalMinutes <= 1) return 24 * 60 * 60;
-  if (intervalMinutes <= 15) return 3 * 24 * 60 * 60;
-  if (intervalMinutes <= 60) return 14 * 24 * 60 * 60;
-  if (intervalMinutes <= 240) return 45 * 24 * 60 * 60;
-  return 180 * 24 * 60 * 60;
+function emptyResponse(
+  interval: number,
+  source: CandleSource,
+  upstreamError?: string,
+): CandlesResponseBody {
+  return {
+    candles: [],
+    count: 0,
+    interval,
+    source,
+    complete: source === 'indexed-candles',
+    indexedBlock: null,
+    hasIndexingErrors: false,
+    latestPrice: null,
+    ...(upstreamError ? { upstreamError } : {}),
+  };
 }
 
-function responseCacheTtlMs(intervalMinutes: number): number {
-  if (intervalMinutes <= 1) return 6_000;
-  if (intervalMinutes <= 15) return 30_000;
-  if (intervalMinutes <= 60) return 60_000;
+function cacheTtlMs(interval: number) {
+  if (interval <= 15) return 12_000;
+  if (interval <= 60) return 25_000;
+  if (interval <= 240) return 60_000;
   return 120_000;
 }
 
-function responseCacheControl(intervalMinutes: number): string {
-  if (intervalMinutes <= 1) return 'public, max-age=0, s-maxage=6, stale-while-revalidate=30';
-  if (intervalMinutes <= 15) return 'public, max-age=0, s-maxage=30, stale-while-revalidate=180';
-  if (intervalMinutes <= 60) return 'public, max-age=0, s-maxage=60, stale-while-revalidate=300';
+function cacheControl(interval: number) {
+  if (interval <= 15) return 'public, max-age=0, s-maxage=12, stale-while-revalidate=90';
+  if (interval <= 60) return 'public, max-age=0, s-maxage=25, stale-while-revalidate=180';
+  if (interval <= 240) return 'public, max-age=0, s-maxage=60, stale-while-revalidate=300';
   return 'public, max-age=0, s-maxage=120, stale-while-revalidate=600';
 }
 
-function shouldLoadFullHistory(intervalMinutes: number): boolean {
-  return intervalMinutes >= 15;
-}
-
-function pairIdForTokens(a: string, b: string): string | null {
+function pairIdForTokens(tokenA: string, tokenB: string): `0x${string}` | null {
   try {
-    const [tokenA, tokenB] = BigInt(a) < BigInt(b) ? [a, b] : [b, a];
-    return keccak256(encodePacked(['address', 'address'], [tokenA as `0x${string}`, tokenB as `0x${string}`]));
+    const a = tokenA as `0x${string}`;
+    const b = tokenB as `0x${string}`;
+    const [first, second] = BigInt(a) < BigInt(b) ? [a, b] : [b, a];
+    return keccak256(encodePacked(['address', 'address'], [first, second]));
   } catch {
     return null;
   }
 }
 
-function timestampOf(swap: SwapEvent): number {
-  const rawTs = swap.timestamp ?? swap.timestamp_;
-  return typeof rawTs === 'object' && rawTs !== null
-    ? Number(rawTs.seconds ?? 0)
-    : Number(rawTs);
-}
-
-function timestampOfLiquidity(event: LiquidityAddedEvent): number {
-  const rawTs = event.timestamp ?? event.timestamp_;
-  return typeof rawTs === 'object' && rawTs !== null
-    ? Number(rawTs.seconds ?? 0)
-    : Number(rawTs);
-}
-
-function timestampOfIndexedCandle(candle: IndexedCandle): number {
-  const rawTs = candle.timestamp;
-  return typeof rawTs === 'object' && rawTs !== null
-    ? Number(rawTs.seconds ?? 0)
-    : Number(rawTs);
-}
-
-function parseDecimals(value: string | null, fallback = 18): number {
+function parseDecimals(value: string | null, fallback = 18) {
   const parsed = Number(value ?? fallback);
-  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 36) return fallback;
-  return parsed;
+  return Number.isInteger(parsed) && parsed >= 0 && parsed <= 36 ? parsed : fallback;
 }
 
-function amountToFloat(raw: string | number, decimals: number): number {
-  const n = typeof raw === 'number' ? raw : Number(raw);
-  if (!Number.isFinite(n)) return NaN;
-  return n / 10 ** decimals;
+function timestampOf(value: IndexedCandle['timestamp']) {
+  const raw = typeof value === 'object' && value !== null ? value.seconds : value;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : null;
 }
 
-function decimalsForPoolToken(poolToken: string, ctx: CandleBuildContext): number {
-  if (poolToken === ctx.t0) return ctx.token0Decimals;
-  if (poolToken === ctx.t1) return ctx.token1Decimals;
-  return 18;
-}
+function normalizeOhlc(
+  raw: IndexedCandle,
+  token0: string,
+  token1: string,
+  token0Decimals: number,
+  token1Decimals: number,
+): CandleData | null {
+  const time = timestampOf(raw.timestamp);
+  let open = Number(raw.open);
+  let high = Number(raw.high);
+  let low = Number(raw.low);
+  let close = Number(raw.close);
 
-async function fetchGenesisLiquidity(pairId: string): Promise<LiquidityAddedEvent | null> {
-  const cached = genesisCache.get(pairId);
-  if (cached && cached.expires > Date.now()) return cached.value;
-
-  const existing = genesisInFlight.get(pairId);
-  if (existing) return existing;
-
-  const request = fetchGenesisLiquidityUncached(pairId).catch(() => null);
-  genesisInFlight.set(pairId, request);
-  try {
-    const value = await request;
-    genesisCache.set(pairId, { expires: Date.now() + GENESIS_CACHE_TTL_MS, value });
-    return value;
-  } finally {
-    genesisInFlight.delete(pairId);
-  }
-}
-
-async function fetchGenesisLiquidityUncached(pairId: string): Promise<LiquidityAddedEvent | null> {
-  const res = await fetch(SUBGRAPH_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      query: useGoldskyRawLiquiditySchema ? GENESIS_QUERY_GOLDSKY_RAW : GENESIS_QUERY,
-      variables: { pairId },
-    }),
-    signal: AbortSignal.timeout(8_000),
-  });
-
-  if (!res.ok) throw new Error(`Genesis subgraph request failed: ${res.status}`);
-
-  const json = await res.json();
-  if (json.errors?.length) {
-    if (!useGoldskyRawLiquiditySchema) {
-      useGoldskyRawLiquiditySchema = true;
-      return fetchGenesisLiquidityUncached(pairId);
-    }
-    throw new Error(json.errors[0]?.message ?? 'Genesis subgraph query error');
+  if (
+    time === null ||
+    ![open, high, low, close].every(value => Number.isFinite(value) && value > 0)
+  ) {
+    return null;
   }
 
-  return json.data?.liquidityAddeds?.[0] ?? null;
-}
+  const token0IsSortedFirst = BigInt(token0) < BigInt(token1);
+  const sortedFirstDecimals = token0IsSortedFirst ? token0Decimals : token1Decimals;
+  const sortedSecondDecimals = token0IsSortedFirst ? token1Decimals : token0Decimals;
+  const decimalScale = 10 ** (sortedSecondDecimals - sortedFirstDecimals);
 
-function normalizeIndexedCandle(candle: CandleData, invert: boolean): CandleData | null {
-  if (!invert) return candle;
-  if (candle.open <= 0 || candle.high <= 0 || candle.low <= 0 || candle.close <= 0) return null;
+  open *= decimalScale;
+  high *= decimalScale;
+  low *= decimalScale;
+  close *= decimalScale;
 
-  const open = 1 / candle.open;
-  const close = 1 / candle.close;
-  const high = 1 / candle.low;
-  const low = 1 / candle.high;
-  return { time: candle.time, open, high, low, close };
-}
-
-async function fetchIndexedCandles(
-  pairId: string,
-  intervalMinutes: number,
-  invertPrice: boolean,
-  timestampGte: number,
-): Promise<CandleData[] | null> {
-  if (Date.now() < indexedSchemaUnavailableUntil) return null;
-
-  const out: CandleData[] = [];
-  let lastTimestamp = Math.max(-1, timestampGte - 1);
-  const pageSize = 1000;
-
-  while (true) {
-    const res = await fetch(SUBGRAPH_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query: CANDLES_QUERY,
-        variables: {
-          pairId,
-          interval: intervalMinutes,
-          limit: pageSize,
-          lastTimestamp: String(lastTimestamp),
-        },
-      }),
-      signal: AbortSignal.timeout(8_000),
-    });
-
-    if (!res.ok) return null;
-
-    const json = await res.json();
-    if (json.errors?.length) {
-      indexedSchemaUnavailableUntil = Date.now() + INDEXED_SCHEMA_RETRY_MS;
-      return null;
-    }
-
-    const page: IndexedCandle[] = json.data?.candles ?? [];
-    if (page.length === 0) break;
-
-    for (const candle of page) {
-      const time = timestampOfIndexedCandle(candle);
-      const open = Number(candle.open);
-      const high = Number(candle.high);
-      const low = Number(candle.low);
-      const close = Number(candle.close);
-      if (![time, open, high, low, close].every(Number.isFinite)) continue;
-      if (time <= lastTimestamp) continue;
-      const normalized = normalizeIndexedCandle({ time, open, high, low, close }, invertPrice);
-      if (!normalized) continue;
-      out.push(normalized);
-      lastTimestamp = time;
-    }
-
-    if (page.length < pageSize) break;
+  // The subgraph stores reserve0/reserve1 for the address-sorted pair. The
+  // frontend requests quote/base (NUSD/token), so invert when request token0 is
+  // the sorted token1. High and low must swap when a candle is inverted.
+  if (!token0IsSortedFirst) {
+    const invertedOpen = 1 / open;
+    const invertedClose = 1 / close;
+    const invertedHigh = 1 / low;
+    const invertedLow = 1 / high;
+    open = invertedOpen;
+    close = invertedClose;
+    high = invertedHigh;
+    low = invertedLow;
   }
 
-  return out;
-}
-
-async function fetchSwapDirection(
-  timestampGte: number,
-  tokenIn: string,
-  tokenOut: string,
-  maxSwaps: number,
-): Promise<SwapEvent[]> {
-  const out: SwapEvent[] = [];
-  const floor = Math.max(0, Math.floor(timestampGte));
-  let cursor = Math.floor(Date.now() / 1000) + 60;
-
-  while (out.length < maxSwaps) {
-    const limit = Math.min(SWAP_PAGE_SIZE, maxSwaps - out.length);
-    const res = await fetch(SUBGRAPH_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query: useGoldskyRawSwapSchema ? PAIR_QUERY_GOLDSKY_RAW_RECENT : PAIR_QUERY_RECENT,
-        variables: {
-          timestampGte: String(floor),
-          timestampLte: String(cursor),
-          tokenIn,
-          tokenOut,
-          limit,
-        },
-      }),
-      signal: AbortSignal.timeout(8_000),
-    });
-
-    if (!res.ok) {
-      throw new Error(`Subgraph request failed: ${res.status}`);
-    }
-
-    const json = await res.json();
-    if (json.errors?.length) {
-      if (!useGoldskyRawSwapSchema) {
-        useGoldskyRawSwapSchema = true;
-        continue;
-      }
-      throw new Error(json.errors[0]?.message ?? 'Subgraph query error');
-    }
-
-    const page: SwapEvent[] = json.data?.swaps ?? [];
-    if (page.length === 0) break;
-
-    out.push(...page);
-
-    const oldestTs = timestampOf(page[page.length - 1]);
-    if (!isFinite(oldestTs) || oldestTs <= floor || page.length < limit) break;
-    cursor = oldestTs - 1;
+  if (![open, high, low, close].every(value => Number.isFinite(value) && value > 0)) {
+    return null;
   }
 
-  return out;
+  return {
+    time,
+    open,
+    high: Math.max(high, open, close),
+    low: Math.min(low, open, close),
+    close,
+  };
 }
 
-async function fetchSwapDirectionAsc(
-  timestampGte: number,
-  tokenIn: string,
-  tokenOut: string,
-  maxSwaps: number,
-): Promise<SwapEvent[]> {
-  const out: SwapEvent[] = [];
-  let cursor = Math.max(0, Math.floor(timestampGte));
+function mergeCanonicalCandles(candles: CandleData[]) {
+  candles.sort((a, b) => a.time - b.time);
+  const merged: CandleData[] = [];
 
-  while (out.length < maxSwaps) {
-    const limit = Math.min(SWAP_PAGE_SIZE, maxSwaps - out.length);
-    const res = await fetch(SUBGRAPH_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query: useGoldskyRawSwapSchema ? PAIR_QUERY_GOLDSKY_RAW_ASC : PAIR_QUERY_ASC,
-        variables: {
-          timestampGte: String(cursor),
-          tokenIn,
-          tokenOut,
-          limit,
-        },
-      }),
-      signal: AbortSignal.timeout(8_000),
-    });
-
-    if (!res.ok) {
-      throw new Error(`Subgraph request failed: ${res.status}`);
+  for (const candle of candles) {
+    const previous = merged[merged.length - 1];
+    if (!previous || candle.time > previous.time) {
+      merged.push(candle);
+      continue;
     }
 
-    const json = await res.json();
-    if (json.errors?.length) {
-      if (!useGoldskyRawSwapSchema) {
-        useGoldskyRawSwapSchema = true;
-        continue;
-      }
-      throw new Error(json.errors[0]?.message ?? 'Subgraph query error');
-    }
-
-    const page: SwapEvent[] = json.data?.swaps ?? [];
-    if (page.length === 0) break;
-
-    out.push(...page);
-
-    const newestTs = timestampOf(page[page.length - 1]);
-    if (!isFinite(newestTs) || newestTs <= cursor || page.length < limit) break;
-    cursor = newestTs + 1;
-  }
-
-  return out;
-}
-
-function mergeSwaps(...groups: SwapEvent[][]): SwapEvent[] {
-  const seen = new Set<string>();
-  const merged: SwapEvent[] = [];
-
-  for (const group of groups) {
-    for (const swap of group) {
-      if (seen.has(swap.id)) continue;
-      seen.add(swap.id);
-      merged.push(swap);
+    if (candle.time === previous.time) {
+      previous.high = Math.max(previous.high, candle.high);
+      previous.low = Math.min(previous.low, candle.low);
+      previous.close = candle.close;
     }
   }
-
-  merged.sort((a, b) => {
-    const tsDiff = timestampOf(a) - timestampOf(b);
-    return tsDiff || a.id.localeCompare(b.id);
-  });
 
   return merged;
 }
 
-async function fetchSwaps(
-  timestampGte: number,
-  t0: string,
-  t1: string,
-  maxSwapsPerDirection = RECENT_SWAPS_PER_DIRECTION,
-): Promise<SwapEvent[]> {
-  const sortedA = BigInt(t0) < BigInt(t1) ? t0 : t1;
-  const sortedB = sortedA === t0 ? t1 : t0;
-  const cacheKey = `${sortedA}:${sortedB}:${timestampGte}:${maxSwapsPerDirection}`;
-  const cached = swapCache.get(cacheKey);
-  if (cached && cached.expires > Date.now()) return cached.value;
-
-  const existing = swapInFlight.get(cacheKey);
-  if (existing) return existing;
-
-  const request = fetchSwapsUncached(timestampGte, t0, t1, maxSwapsPerDirection);
-  swapInFlight.set(cacheKey, request);
-  try {
-    const value = await request;
-    swapCache.set(cacheKey, { expires: Date.now() + SWAP_CACHE_TTL_MS, value });
-    return value;
-  } finally {
-    swapInFlight.delete(cacheKey);
-  }
+function wait(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function fetchSwapsUncached(
-  timestampGte: number,
-  t0: string,
-  t1: string,
-  maxSwapsPerDirection: number,
-): Promise<SwapEvent[]> {
-  const results = await Promise.allSettled([
-    fetchSwapDirection(timestampGte, t0, t1, maxSwapsPerDirection),
-    fetchSwapDirection(timestampGte, t1, t0, maxSwapsPerDirection),
-  ]);
-  const [forward, reverse] = results.map(result => (
-    result.status === 'fulfilled' ? result.value : []
-  ));
+async function fetchGraphql(
+  variables: Record<string, string | number>,
+  deadline: number,
+): Promise<{ candles: IndexedCandle[]; meta: SubgraphMeta | null }> {
+  let lastError: Error | null = null;
 
-  return mergeSwaps(forward, reverse).slice(0, maxSwapsPerDirection * 2);
-}
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error('Subgraph request budget exceeded');
 
-async function fetchBookendSwaps(
-  timestampGte: number,
-  t0: string,
-  t1: string,
-  maxRecentSwapsPerDirection: number,
-  maxHeadSwapsPerDirection = HISTORY_HEAD_SWAPS_PER_DIRECTION,
-): Promise<SwapEvent[]> {
-  const [headForward, headReverse, recentForward, recentReverse] = await Promise.all([
-    fetchSwapDirectionAsc(timestampGte, t0, t1, maxHeadSwapsPerDirection).catch(() => []),
-    fetchSwapDirectionAsc(timestampGte, t1, t0, maxHeadSwapsPerDirection).catch(() => []),
-    fetchSwapDirection(timestampGte, t0, t1, maxRecentSwapsPerDirection).catch(() => []),
-    fetchSwapDirection(timestampGte, t1, t0, maxRecentSwapsPerDirection).catch(() => []),
-  ]);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(
+      () => controller.abort(),
+      Math.max(250, Math.min(UPSTREAM_TIMEOUT_MS, remaining)),
+    );
 
-  return mergeSwaps(headForward, headReverse, recentForward, recentReverse);
-}
+    try {
+      const response = await fetch(SUBGRAPH_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ query: CANDLES_QUERY, variables }),
+        cache: 'no-store',
+        signal: controller.signal,
+      });
 
-async function fetchLatestSwapDirection(tokenIn: string, tokenOut: string): Promise<SwapEvent | null> {
-  const res = await fetch(SUBGRAPH_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      query: useGoldskyRawSwapSchema ? LATEST_SWAP_QUERY_GOLDSKY_RAW : LATEST_SWAP_QUERY,
-      variables: { tokenIn, tokenOut },
-    }),
-    signal: AbortSignal.timeout(5_000),
-  });
+      if (response.ok) {
+        const json = await response.json();
+        if (json.errors?.length) {
+          throw new Error(json.errors[0]?.message ?? 'Subgraph query failed');
+        }
+        return {
+          candles: Array.isArray(json.data?.candles) ? json.data.candles : [],
+          meta: json.data?._meta ?? null,
+        };
+      }
 
-  if (!res.ok) return null;
-  const json = await res.json();
-  if (json.errors?.length) {
-    if (!useGoldskyRawSwapSchema) {
-      useGoldskyRawSwapSchema = true;
-      return fetchLatestSwapDirection(tokenIn, tokenOut);
-    }
-    return null;
-  }
-  return json.data?.swaps?.[0] ?? null;
-}
+      lastError = new Error(`Subgraph request failed: ${response.status}`);
+      if (response.status !== 429 && response.status < 500) throw lastError;
 
-async function fetchLatestSwap(t0: string, t1: string): Promise<SwapEvent | null> {
-  const sortedA = BigInt(t0) < BigInt(t1) ? t0 : t1;
-  const sortedB = sortedA === t0 ? t1 : t0;
-  const cacheKey = `${sortedA}:${sortedB}`;
-  const cached = latestSwapCache.get(cacheKey);
-  if (cached && cached.expires > Date.now()) return cached.value;
-
-  const existing = latestSwapInFlight.get(cacheKey);
-  if (existing) return existing;
-
-  const request = (async () => {
-    const results = await Promise.allSettled([
-      fetchLatestSwapDirection(t0, t1),
-      fetchLatestSwapDirection(t1, t0),
-    ]);
-    const swaps = results
-      .filter((result): result is PromiseFulfilledResult<SwapEvent | null> => result.status === 'fulfilled')
-      .map(result => result.value)
-      .filter((swap): swap is SwapEvent => !!swap);
-
-    swaps.sort((a, b) => timestampOf(b) - timestampOf(a) || b.id.localeCompare(a.id));
-    return swaps[0] ?? null;
-  })();
-
-  latestSwapInFlight.set(cacheKey, request);
-  try {
-    const value = await request;
-    latestSwapCache.set(cacheKey, { expires: Date.now() + LATEST_SWAP_CACHE_TTL_MS, value });
-    return value;
-  } finally {
-    latestSwapInFlight.delete(cacheKey);
-  }
-}
-
-function buildGenesisCandle(
-  genesis: LiquidityAddedEvent | null,
-  intervalMinutes: number,
-  ctx: CandleBuildContext,
-): CandleData | null {
-  if (!genesis) return null;
-
-  const poolToken0 = BigInt(ctx.t0) < BigInt(ctx.t1) ? ctx.t0 : ctx.t1;
-  const poolToken1 = poolToken0 === ctx.t0 ? ctx.t1 : ctx.t0;
-  const amount0 = amountToFloat(genesis.amount0, decimalsForPoolToken(poolToken0, ctx));
-  const amount1 = amountToFloat(genesis.amount1, decimalsForPoolToken(poolToken1, ctx));
-  if (!isFinite(amount0) || !isFinite(amount1) || amount0 <= 0 || amount1 <= 0) return null;
-
-  const ts = timestampOfLiquidity(genesis);
-  if (!isFinite(ts) || ts <= 0) return null;
-
-  const price = poolToken0 === ctx.t0 ? amount0 / amount1 : amount1 / amount0;
-  if (!isFinite(price) || price <= 0) return null;
-
-  const interval = intervalMinutes * 60;
-  const candleTime = Math.floor(ts / interval) * interval;
-  return { time: candleTime, open: price, high: price, low: price, close: price };
-}
-
-function priceFromSwapForChart(swap: SwapEvent, ctx: CandleBuildContext): number | null {
-  const ti = swap.tokenIn.toLowerCase();
-  const to = swap.tokenOut.toLowerCase();
-  if (!((ti === ctx.t0 && to === ctx.t1) || (ti === ctx.t1 && to === ctx.t0))) return null;
-
-  const amountIn = amountToFloat(swap.amountIn, decimalsForPoolToken(ti, ctx));
-  const amountOut = amountToFloat(swap.amountOut, decimalsForPoolToken(to, ctx));
-  if (!Number.isFinite(amountIn) || !Number.isFinite(amountOut) || amountIn <= 0 || amountOut <= 0) {
-    return null;
-  }
-
-  const price = ti === ctx.t0
-    ? amountIn / amountOut
-    : amountOut / amountIn;
-  return Number.isFinite(price) && price > 0 ? price : null;
-}
-
-function buildCandlesFromSwaps(
-  swaps: SwapEvent[],
-  intervalMinutes: number,
-  ctx: CandleBuildContext,
-): CandleData[] {
-  const interval = intervalMinutes * 60;
-  const candles: CandleData[] = [];
-  let current: { time: number; open: number; close: number; prices: number[] } | null = null;
-
-  const finalizeBucket = () => {
-    if (!current) return;
-    const sortedPrices = [...current.prices].sort((a, b) => a - b);
-    const useTrimmedRange = sortedPrices.length >= 12;
-    const lowIndex = useTrimmedRange ? Math.floor((sortedPrices.length - 1) * 0.02) : 0;
-    const highIndex = useTrimmedRange ? Math.ceil((sortedPrices.length - 1) * 0.98) : sortedPrices.length - 1;
-    const rangeLow = sortedPrices[lowIndex] ?? current.close;
-    const rangeHigh = sortedPrices[highIndex] ?? current.close;
-    candles.push({
-      time: current.time,
-      open: current.open,
-      high: Math.max(current.open, current.close, rangeHigh),
-      low: Math.min(current.open, current.close, rangeLow),
-      close: current.close,
-    });
-  };
-
-  for (const swap of swaps) {
-    const ts = timestampOf(swap);
-    const price = priceFromSwapForChart(swap, ctx);
-    if (!price || !Number.isFinite(ts) || ts <= 0) continue;
-
-    const candleTime = Math.floor(ts / interval) * interval;
-    if (!current || current.time !== candleTime) {
-      finalizeBucket();
-      current = { time: candleTime, open: price, close: price, prices: [price] };
-    } else {
-      current.close = price;
-      current.prices.push(price);
+      const retryAfter = Number(response.headers.get('retry-after'));
+      const delay = Number.isFinite(retryAfter) && retryAfter > 0
+        ? retryAfter * 1000
+        : 300 * 2 ** attempt;
+      await wait(Math.min(delay, Math.max(0, deadline - Date.now())));
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt >= 1) break;
+      await wait(Math.min(300 * 2 ** attempt, Math.max(0, deadline - Date.now())));
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
-  finalizeBucket();
-  return candles;
+  throw lastError ?? new Error('Subgraph request failed');
 }
 
-function latestPriceFromSwap(swap: SwapEvent | null, ctx: CandleBuildContext): LatestPrice | null {
-  if (!swap) return null;
-  const price = priceFromSwapForChart(swap, ctx);
-  const timestamp = timestampOf(swap);
-  if (!price || !Number.isFinite(timestamp) || timestamp <= 0) return null;
-  return { price, timestamp, source: 'subgraph-swap' };
-}
-
-function latestPriceFromCandles(candles: CandleData[]): LatestPrice | null {
-  const last = candles[candles.length - 1];
-  if (!last || !Number.isFinite(last.close) || last.close <= 0) return null;
-  return { price: last.close, timestamp: last.time, source: 'candle' };
-}
-
-function appendLatestSwapIfMissing(swaps: SwapEvent[], latestSwap: SwapEvent | null): SwapEvent[] {
-  if (!latestSwap) return swaps;
-  const latestTs = timestampOf(latestSwap);
-  if (!Number.isFinite(latestTs) || latestTs <= 0) return swaps;
-
-  const existingIndex = swaps.findIndex(swap => swap.id === latestSwap.id);
-  if (existingIndex >= 0) {
-    const next = swaps.slice();
-    next[existingIndex] = latestSwap;
-    return next;
-  }
-
-  const lastTs = swaps.length ? timestampOf(swaps[swaps.length - 1]) : 0;
-  if (latestTs < lastTs) return swaps;
-
-  return [...swaps, latestSwap].sort((a, b) => {
-    const tsDiff = timestampOf(a) - timestampOf(b);
-    return tsDiff || a.id.localeCompare(b.id);
-  });
-}
-
-function prependGenesisCandle(candles: CandleData[], genesis: CandleData | null): CandleData[] {
-  if (!genesis) return candles;
-  if (candles.length === 0) return [genesis];
-
-  const first = candles[0];
-  if (genesis.time < first.time) return [genesis, ...candles];
-  if (genesis.time > first.time) return candles;
-
-  return [
-    {
-      time: first.time,
-      open: genesis.open,
-      high: Math.max(genesis.high, first.high),
-      low: Math.min(genesis.low, first.low),
-      close: first.close,
-    },
-    ...candles.slice(1),
-  ];
-}
-
-function prependGenesisCandleWhenContiguous(
-  candles: CandleData[],
-  genesis: CandleData | null,
-  intervalMinutes: number,
-): CandleData[] {
-  if (!genesis) return candles;
-  if (candles.length === 0) return [genesis];
-
-  const first = candles[0];
-  const intervalSeconds = intervalMinutes * 60;
-  const gap = first.time - genesis.time;
-  if (!Number.isFinite(gap) || gap < 0) return candles;
-
-  // Raw swap fallback can be truncated under very high volume. In that case,
-  // adding genesis creates a fake candle bridge across hours/days. Keep genesis
-  // only when it is adjacent to the first raw candle.
-  if (gap > intervalSeconds * 2) return candles;
-  return prependGenesisCandle(candles, genesis);
-}
-
-function fullHistoryStart(genesis: LiquidityAddedEvent | null): number {
-  if (!genesis) return 0;
-  const genesisTs = timestampOfLiquidity(genesis);
-  if (!isFinite(genesisTs) || genesisTs <= 0) return 0;
-  return Math.max(0, genesisTs - 1);
-}
-
-async function buildCandlesResponse(
-  t0: string,
-  t1: string,
+async function loadIndexedCandles(
+  pairId: `0x${string}`,
+  token0: string,
+  token1: string,
   interval: number,
   token0Decimals: number,
   token1Decimals: number,
 ): Promise<CandlesResponseBody> {
-  const recentWindowStart = Math.floor(Date.now() / 1000) - getLookbackSeconds(interval);
-  const pairId = pairIdForTokens(t0, t1);
-  const ctx: CandleBuildContext = { t0, t1, token0Decimals, token1Decimals };
-  const [genesisLiquidity, latestSwap] = await Promise.all([
-    pairId ? fetchGenesisLiquidity(pairId) : Promise.resolve(null),
-    fetchLatestSwap(t0, t1),
-  ]);
-  const genesisCandle = buildGenesisCandle(genesisLiquidity, interval, ctx);
-  const sortedToken0 = BigInt(t0) < BigInt(t1) ? t0 : t1;
-  const historyStart = shouldLoadFullHistory(interval)
-    ? fullHistoryStart(genesisLiquidity)
-    : recentWindowStart;
-  const indexedCandles = pairId ? await fetchIndexedCandles(pairId, interval, sortedToken0 !== t0, historyStart) : null;
+  const deadline = Date.now() + REQUEST_BUDGET_MS;
+  const candles: CandleData[] = [];
+  let cursor = -1;
+  let complete = false;
+  let indexedBlock: number | null = null;
+  let hasIndexingErrors = false;
 
-  if (indexedCandles && indexedCandles.length > 0) {
-    const candles = prependGenesisCandle(indexedCandles, genesisCandle);
-    const latestPrice = latestPriceFromSwap(latestSwap, ctx) ?? latestPriceFromCandles(candles);
+  for (let pageIndex = 0; pageIndex < MAX_PAGES; pageIndex += 1) {
+    if (Date.now() >= deadline) break;
+
+    const page = await fetchGraphql(
+      {
+        pairId,
+        interval,
+        limit: PAGE_SIZE,
+        after: String(cursor),
+      },
+      deadline,
+    );
+
+    const metaBlock = Number(page.meta?.block?.number);
+    if (Number.isFinite(metaBlock)) indexedBlock = metaBlock;
+    hasIndexingErrors = Boolean(page.meta?.hasIndexingErrors);
+
+    if (page.candles.length === 0) {
+      complete = true;
+      break;
+    }
+
+    let nextCursor = cursor;
+    for (const raw of page.candles) {
+      const timestamp = timestampOf(raw.timestamp);
+      if (timestamp !== null) nextCursor = Math.max(nextCursor, timestamp);
+
+      const candle = normalizeOhlc(
+        raw,
+        token0,
+        token1,
+        token0Decimals,
+        token1Decimals,
+      );
+      if (candle) candles.push(candle);
+    }
+
+    if (nextCursor <= cursor) {
+      complete = true;
+      break;
+    }
+    cursor = nextCursor;
+
+    if (page.candles.length < PAGE_SIZE) {
+      complete = true;
+      break;
+    }
+  }
+
+  const canonical = mergeCanonicalCandles(candles);
+  const last = canonical[canonical.length - 1];
+  return {
+    candles: canonical,
+    count: canonical.length,
+    interval,
+    source: 'indexed-candles',
+    complete,
+    indexedBlock,
+    hasIndexingErrors,
+    latestPrice: last
+      ? { price: last.close, timestamp: last.time, source: 'candle' }
+      : null,
+  };
+}
+
+async function loadCandlesWithFallback({
+  pairId,
+  token0,
+  token1,
+  interval,
+  token0Decimals,
+  token1Decimals,
+}: {
+  pairId: `0x${string}`;
+  token0: string;
+  token1: string;
+  interval: number;
+  token0Decimals: number;
+  token1Decimals: number;
+}): Promise<CandlesResponseBody> {
+  const snapshotPromise: Promise<DexPoolSnapshot | null> = loadDexPoolSnapshot({
+    pairId,
+    token0,
+    token1,
+    token0Decimals,
+    token1Decimals,
+  }).catch((error) => {
+    console.warn('[dex] on-chain pool price read failed:', error);
+    return null;
+  });
+
+  let indexed: CandlesResponseBody | null = null;
+  let upstreamError = SUBGRAPH_URL ? '' : 'DEX subgraph is disabled';
+  if (SUBGRAPH_URL) {
+    try {
+      indexed = await loadIndexedCandles(
+        pairId,
+        token0,
+        token1,
+        interval,
+        token0Decimals,
+        token1Decimals,
+      );
+    } catch (error) {
+      upstreamError = error instanceof Error ? error.message : 'Subgraph unavailable';
+    }
+  }
+
+  const snapshot = await snapshotPromise;
+  if (indexed && snapshot) {
+    const blockLag = indexed.indexedBlock === null
+      ? Number.POSITIVE_INFINITY
+      : Math.max(0, snapshot.blockNumber - indexed.indexedBlock);
+    const needsHistoryFallback =
+      indexed.hasIndexingErrors ||
+      blockLag > MAX_SUBGRAPH_BLOCK_LAG ||
+      indexed.candles.length === 0;
+
+    if (!needsHistoryFallback) {
+      return {
+        ...indexed,
+        latestPrice: {
+          price: snapshot.price,
+          timestamp: snapshot.timestamp,
+          source: 'pool',
+        },
+      };
+    }
+
+    const onchain = await loadDexOnchainFallback({
+      pairId,
+      token0,
+      token1,
+      intervalMinutes: interval,
+      token0Decimals,
+      token1Decimals,
+      snapshot,
+    });
+    const candles = mergeCanonicalCandles([
+      ...indexed.candles,
+      ...onchain.candles,
+    ]);
+    const staleReason = indexed.hasIndexingErrors
+      ? 'DEX subgraph reports indexing errors'
+      : indexed.candles.length === 0
+        ? 'DEX subgraph returned no candles'
+        : `DEX subgraph is ${blockLag} blocks behind`;
+
     return {
       candles,
       count: candles.length,
       interval,
-      source: 'indexed-candles',
-      timestampGte: genesisCandle?.time ?? candles[0]?.time ?? historyStart,
-      recentWindowStart,
-      genesisTime: genesisCandle?.time ?? null,
-      latestPrice,
+      source: indexed.candles.length > 0 ? 'hybrid' : 'onchain',
+      complete: false,
+      indexedBlock: onchain.blockNumber,
+      hasIndexingErrors: indexed.hasIndexingErrors,
+      latestPrice: onchain.latestPrice,
+      upstreamError: staleReason,
     };
   }
 
-  const rawHistoryStart = shouldLoadFullHistory(interval)
-    ? historyStart
-    : recentWindowStart;
-  const maxSwapsPerDirection = shouldLoadFullHistory(interval)
-    ? FULL_HISTORY_SWAPS_PER_DIRECTION
-    : RECENT_SWAPS_PER_DIRECTION;
-  const rawSwaps = shouldLoadFullHistory(interval)
-    ? await fetchBookendSwaps(rawHistoryStart, t0, t1, maxSwapsPerDirection)
-    : await fetchSwaps(rawHistoryStart, t0, t1, maxSwapsPerDirection);
-  const swaps = appendLatestSwapIfMissing(
-    rawSwaps,
-    latestSwap,
-  );
-  const rawCandles = buildCandlesFromSwaps(swaps, interval, ctx);
-  const candles = prependGenesisCandleWhenContiguous(rawCandles, genesisCandle, interval);
-  const latestPrice = latestPriceFromSwap(swaps[swaps.length - 1] ?? null, ctx)
-    ?? latestPriceFromCandles(candles);
+  if (indexed) return indexed;
+  if (snapshot) {
+    const onchain = await loadDexOnchainFallback({
+      pairId,
+      token0,
+      token1,
+      intervalMinutes: interval,
+      token0Decimals,
+      token1Decimals,
+      snapshot,
+    });
+    return {
+      candles: onchain.candles,
+      count: onchain.candles.length,
+      interval,
+      source: 'onchain',
+      complete: false,
+      indexedBlock: onchain.blockNumber,
+      hasIndexingErrors: false,
+      latestPrice: onchain.latestPrice,
+      ...(upstreamError ? { upstreamError } : {}),
+    };
+  }
 
-  return {
-    candles,
-    count: candles.length,
+  return emptyResponse(
     interval,
-    source: 'raw-swaps-fallback',
-    timestampGte: rawHistoryStart,
-    recentWindowStart,
-    genesisTime: genesisCandle?.time ?? null,
-    latestPrice,
-  };
+    'unavailable',
+    upstreamError || 'Subgraph and on-chain price are unavailable',
+  );
+}
+
+function pruneCache() {
+  if (responseCache.size <= 200) return;
+  const now = Date.now();
+  for (const [key, value] of responseCache) {
+    if (value.expiresAt <= now) responseCache.delete(key);
+  }
+  while (responseCache.size > 200) {
+    const oldestKey = responseCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    responseCache.delete(oldestKey);
+  }
 }
 
 export async function GET(request: NextRequest) {
-  if (!SUBGRAPH_URL) {
-    return NextResponse.json({ error: 'DEX subgraph URL is not configured' }, { status: 503 });
+  const params = request.nextUrl.searchParams;
+  const token0 = params.get('token0')?.toLowerCase() ?? '';
+  const token1 = params.get('token1')?.toLowerCase() ?? '';
+  const interval = Number(params.get('interval') ?? 15);
+  const token0Decimals = parseDecimals(params.get('token0Decimals'));
+  const token1Decimals = parseDecimals(params.get('token1Decimals'));
+
+  if (!SUPPORTED_INTERVALS.has(interval)) {
+    return NextResponse.json(
+      { error: 'Unsupported candle interval' },
+      { status: 400 },
+    );
   }
 
-  const { searchParams } = request.nextUrl;
-  const token0 = searchParams.get('token0') ?? '';
-  const token1 = searchParams.get('token1') ?? '';
-  const interval = parseInt(searchParams.get('interval') ?? '1440', 10);
-  const token0Decimals = parseDecimals(searchParams.get('token0Decimals'));
-  const token1Decimals = parseDecimals(searchParams.get('token1Decimals'));
-
-  if (!token0 || !token1 || !Number.isFinite(interval) || !SUPPORTED_INTERVALS.has(interval)) {
-    return NextResponse.json({ error: 'Missing token0, token1, or supported interval' }, { status: 400 });
+  const pairId = pairIdForTokens(token0, token1);
+  if (!pairId) {
+    return NextResponse.json({ error: 'Invalid token address' }, { status: 400 });
   }
 
-  const t0 = token0.toLowerCase();
-  const t1 = token1.toLowerCase();
-  const responseKey = `${t0}:${t1}:${interval}:${token0Decimals}:${token1Decimals}`;
-  const cacheControl = responseCacheControl(interval);
-  const cached = responseCache.get(responseKey);
-  if (cached && cached.expires > Date.now()) {
-    return NextResponse.json(cached.body, {
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': cacheControl,
-        'X-Candles-Cache': 'HIT',
-      },
+  const headers = { 'Cache-Control': cacheControl(interval) };
+  const cacheKey = `${pairId}:${token0}:${token1}:${interval}:${token0Decimals}:${token1Decimals}`;
+  const cached = responseCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return NextResponse.json(cached.body, { headers });
+  }
+
+  let requestPromise = inFlight.get(cacheKey);
+  if (!requestPromise) {
+    requestPromise = loadCandlesWithFallback({
+      pairId,
+      token0,
+      token1,
+      interval,
+      token0Decimals,
+      token1Decimals,
     });
+    inFlight.set(cacheKey, requestPromise);
   }
 
   try {
-    const existing = responseInFlight.get(responseKey);
-    const body = existing ?? buildCandlesResponse(t0, t1, interval, token0Decimals, token1Decimals);
-    if (!existing) responseInFlight.set(responseKey, body);
-    const payload = await body;
-    responseInFlight.delete(responseKey);
-    responseCache.set(responseKey, { expires: Date.now() + responseCacheTtlMs(interval), body: payload });
-
+    const body = await requestPromise;
+    responseCache.set(cacheKey, {
+      expiresAt: Date.now() + cacheTtlMs(interval),
+      body,
+    });
+    pruneCache();
+    return NextResponse.json(body, { headers });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Subgraph unavailable';
     return NextResponse.json(
-      payload,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Cache-Control': cacheControl,
-          'X-Candles-Cache': existing ? 'JOINED' : 'MISS',
-        },
-      },
+      emptyResponse(interval, 'unavailable', message),
+      { headers: { 'Cache-Control': 'public, max-age=0, s-maxage=5, stale-while-revalidate=30' } },
     );
-  } catch (err) {
-    responseInFlight.delete(responseKey);
-    if (cached) {
-      return NextResponse.json(cached.body, {
-        headers: {
-          'Content-Type': 'application/json',
-          'Cache-Control': 'public, max-age=0, s-maxage=5, stale-while-revalidate=60',
-          'X-Candles-Cache': 'STALE-ERROR',
-        },
-      });
-    }
-
-    const message = err instanceof Error ? err.message : 'Server error';
-    return NextResponse.json(
-      { candles: [], count: 0, interval, timestampGte: 0, upstreamError: message },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Cache-Control': 'public, max-age=5, s-maxage=5, stale-while-revalidate=30',
-        },
-      },
-    );
+  } finally {
+    if (inFlight.get(cacheKey) === requestPromise) inFlight.delete(cacheKey);
   }
 }

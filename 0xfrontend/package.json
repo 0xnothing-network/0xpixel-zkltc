@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "prediction:settle": "node scripts/auto-settle-prediction.mjs",
-    "lint": "next lint"
+    "lint": "eslint ."
   },
   "dependencies": {
     "@gsap/react": "^2.1.2",

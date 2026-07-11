@@ -9,7 +9,7 @@
  * - Stale-While-Revalidate: serves stale data instantly, refreshes in background
  * - Delta query detection: uses query name to differentiate cache keys
  * - LRU eviction: max 512 entries, oldest half evicted when full
- * - FNV-1a cache key: fast 32-bit hash per query+variables
+ * - SHA-256 cache key: collision-resistant per query+variables
  * - Upstream timeout: 10s hard cap to prevent hanging requests
  *
  * This eliminates:
@@ -22,7 +22,7 @@ import { NextRequest, NextResponse } from 'next/server';
 export const runtime = 'edge';
 
 const DEFAULT_DEX_SUBGRAPH_URL =
-  'https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.0/gn';
+  'https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.6/gn';
 const SUBGRAPH_URL_RAW = process.env.NEXT_PUBLIC_SUBGRAPH_URL || DEFAULT_DEX_SUBGRAPH_URL;
 const SUBGRAPH_URL = SUBGRAPH_URL_RAW === 'disabled' ? '' : SUBGRAPH_URL_RAW;
 
@@ -34,12 +34,20 @@ interface CacheEntry {
   isDelta: boolean;
 }
 
+interface UpstreamResult {
+  body: string;
+  status: number;
+}
+
 const SHORT_TTL = 5_000;   // delta queries — matches React Query poll interval
 const LONG_TTL  = 120_000; // historical queries — 2 min window for timeframe switches
 const MAX_CACHE = 512;
+const MAX_QUERY_LENGTH = 100_000;
+const MAX_VARIABLES_LENGTH = 50_000;
 
 // Module-level singleton — persists across requests in Edge runtime
 const cache = new Map<string, CacheEntry>();
+const inFlight = new Map<string, Promise<UpstreamResult>>();
 
 function isDeltaQuery(query: string, variables: Record<string, unknown>): boolean {
   if (!query.includes('GetDeltaSwaps')) return false;
@@ -49,15 +57,11 @@ function isDeltaQuery(query: string, variables: Record<string, unknown>): boolea
   return age < 600; // delta = last 10 min of data
 }
 
-function cacheKey(query: string, variables: Record<string, unknown>, isDelta: boolean): string {
+async function cacheKey(query: string, variables: Record<string, unknown>, isDelta: boolean): Promise<string> {
   const payload = JSON.stringify({ query, variables });
-  const seed = isDelta ? 0x811c9dc5 : 0x84222325; // different seed per type
-  let h = seed;
-  for (let i = 0; i < payload.length; i++) {
-    h ^= payload.charCodeAt(i);
-    h = (h * 0x01000193) | 0;
-  }
-  return `${isDelta ? 'd' : 'h'}_${(h >>> 0).toString(36)}`;
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(payload));
+  const hash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+  return `${isDelta ? 'd' : 'h'}_${hash}`;
 }
 
 function evictLRU(): void {
@@ -72,16 +76,37 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'DEX subgraph URL is not configured' }, { status: 503 });
   }
 
-  let payload: { query?: string; variables?: Record<string, unknown> };
+  let payload: unknown;
   try {
     payload = await request.json();
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  const { query = '', variables = {} } = payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return NextResponse.json({ error: 'Request body must be an object' }, { status: 400 });
+  }
+  const body = payload as { query?: unknown; variables?: unknown };
+  if (
+    typeof body.query !== 'string' ||
+    body.query.trim().length === 0 ||
+    body.query.length > MAX_QUERY_LENGTH
+  ) {
+    return NextResponse.json({ error: 'Invalid GraphQL query' }, { status: 400 });
+  }
+  if (
+    body.variables !== undefined &&
+    (body.variables === null || typeof body.variables !== 'object' || Array.isArray(body.variables))
+  ) {
+    return NextResponse.json({ error: 'Variables must be an object' }, { status: 400 });
+  }
+  const query = body.query;
+  const variables = (body.variables ?? {}) as Record<string, unknown>;
+  if (JSON.stringify(variables).length > MAX_VARIABLES_LENGTH) {
+    return NextResponse.json({ error: 'Variables payload is too large' }, { status: 413 });
+  }
   const delta = isDeltaQuery(query, variables);
-  const key = cacheKey(query, variables, delta);
+  const key = await cacheKey(query, variables, delta);
   const now = Date.now();
 
   // ── Cache hit (fresh) ────────────────────────────────────
@@ -105,7 +130,7 @@ export async function POST(request: NextRequest) {
 
     // Stale: serve immediately, refresh non-blocking
     cached.accessed = now;
-    refreshStale(key, query, variables, delta, cached);
+    void refreshStale(key, query, variables, delta, cached);
     return new NextResponse(cached.body, {
       status: cached.status,
       headers: {
@@ -120,24 +145,18 @@ export async function POST(request: NextRequest) {
   evictLRU();
 
   try {
-    const upstream = await fetch(SUBGRAPH_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, variables }),
-      signal: AbortSignal.timeout(10_000),
-    });
+    const upstream = await fetchUpstreamOnce(key, query, variables);
+    if (isCacheable(upstream)) {
+      cache.set(key, {
+        body: upstream.body,
+        ts: now,
+        status: upstream.status,
+        accessed: now,
+        isDelta: delta,
+      });
+    }
 
-    const text = await upstream.text();
-
-    cache.set(key, {
-      body: text,
-      ts: now,
-      status: upstream.status,
-      accessed: now,
-      isDelta: delta,
-    });
-
-    return new NextResponse(text, {
+    return new NextResponse(upstream.body, {
       status: upstream.status,
       headers: {
         'Content-Type': 'application/json',
@@ -153,6 +172,32 @@ export async function POST(request: NextRequest) {
   }
 }
 
+async function fetchUpstreamOnce(
+  key: string,
+  query: string,
+  variables: Record<string, unknown>,
+): Promise<UpstreamResult> {
+  const existing = inFlight.get(key);
+  if (existing) return existing;
+
+  const request = fetch(SUBGRAPH_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, variables }),
+    signal: AbortSignal.timeout(10_000),
+  })
+    .then(async (upstream) => ({
+      body: await upstream.text(),
+      status: upstream.status,
+    }))
+    .finally(() => {
+      inFlight.delete(key);
+    });
+
+  inFlight.set(key, request);
+  return request;
+}
+
 async function refreshStale(
   key: string,
   query: string,
@@ -161,18 +206,10 @@ async function refreshStale(
   existing: CacheEntry,
 ): Promise<void> {
   try {
-    const upstream = await fetch(SUBGRAPH_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, variables }),
-      signal: AbortSignal.timeout(10_000),
-    });
-
-    if (!upstream.ok) return;
-
-    const text = await upstream.text();
+    const upstream = await fetchUpstreamOnce(key, query, variables);
+    if (!isCacheable(upstream)) return;
     cache.set(key, {
-      body: text,
+      body: upstream.body,
       ts: Date.now(),
       status: upstream.status,
       accessed: existing.accessed,
@@ -180,6 +217,16 @@ async function refreshStale(
     });
   } catch {
     // Background refresh failed — keep serving stale, no action needed
+  }
+}
+
+function isCacheable(result: UpstreamResult): boolean {
+  if (result.status < 200 || result.status >= 300) return false;
+  try {
+    const parsed = JSON.parse(result.body) as { errors?: unknown };
+    return !Array.isArray(parsed.errors) || parsed.errors.length === 0;
+  } catch {
+    return false;
   }
 }
 

@@ -13,6 +13,7 @@ export const revalidate = 30;
 interface CacheEntry<T> {
   value: T;
   ts: number;
+  error?: boolean;
 }
 const CACHE = new Map<string, CacheEntry<TokenMetadata | null>>();
 const CACHE_TTL = 30_000;
@@ -80,7 +81,8 @@ async function fetchMetadataBatch(
   const missing: string[] = [];
   for (const id of tokenIds) {
     const cached = CACHE.get(id);
-    if (cached && Date.now() - cached.ts < CACHE_TTL) {
+    const ttl = cached?.error ? CACHE_TTL_ERROR : CACHE_TTL;
+    if (cached && Date.now() - cached.ts < ttl) {
       out[id] = cached.value;
     } else {
       missing.push(id);
@@ -136,7 +138,7 @@ async function fetchMetadataBatch(
     const r = results[i];
     if (!r || r.status !== "success") {
       // Cache the miss briefly so we don't hammer a bad token id.
-      CACHE.set(id, { value: null, ts: Date.now() });
+      CACHE.set(id, { value: null, ts: Date.now(), error: true });
       out[id] = null;
       continue;
     }
@@ -160,12 +162,15 @@ async function fetchMetadataBatch(
   if (CACHE.size > 4096) {
     const now = Date.now();
     for (const [k, v] of CACHE) {
-      if (now - v.ts > CACHE_TTL) CACHE.delete(k);
+      const ttl = v.error ? CACHE_TTL_ERROR : CACHE_TTL;
+      if (now - v.ts > ttl) CACHE.delete(k);
+    }
+    while (CACHE.size > 4096) {
+      const oldestKey = CACHE.keys().next().value;
+      if (oldestKey === undefined) break;
+      CACHE.delete(oldestKey);
     }
   }
-
-  // Mark error cache briefly for entries we couldn't parse.
-  void CACHE_TTL_ERROR;
 
   return out;
 }

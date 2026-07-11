@@ -335,7 +335,7 @@ function PairStatusButton({
           ? settleReady
             ? "Settle now"
             : "Waiting oracle"
-          : activeRound && nextWindowCountdown
+          : nextWindowCountdown
             ? `Next entry ~ ${nextWindowCountdown}`
             : "Closed";
 
@@ -622,44 +622,60 @@ export default function PredictionPage() {
     }
 
     let cancelled = false;
+    let loading = false;
+    let nextLogBlock = startBlock();
+    let logScanEnabled = true;
+    let lastFallbackScanAt = 0;
+    const byRound = new Map<
+      bigint,
+      { roundId: bigint; txHash?: `0x${string}` }
+    >();
     const userAddress = walletAddress;
 
     async function loadHistory() {
+      if (cancelled || loading) return;
+      loading = true;
       try {
         setHistoryLoading(true);
         setHistoryError("");
 
-        const byRound = new Map<
-          bigint,
-          { roundId: bigint; txHash?: `0x${string}` }
-        >();
+        if (logScanEnabled) {
+          try {
+            const latestBlock = await publicClient.getBlockNumber();
+            const logs = nextLogBlock <= latestBlock
+              ? await publicClient.getLogs({
+                  address: PREDICTION_ADDRESS,
+                  event: BET_PLACED_EVENT,
+                  args: { user: userAddress },
+                  fromBlock: nextLogBlock,
+                  toBlock: latestBlock,
+                })
+              : [];
 
-        try {
-          const logs = await publicClient.getLogs({
-            address: PREDICTION_ADDRESS,
-            event: BET_PLACED_EVENT,
-            args: { user: userAddress },
-            fromBlock: startBlock(),
-            toBlock: "latest",
-          });
-
-          for (const log of logs) {
-            const roundId = log.args.roundId;
-            if (roundId === undefined) continue;
-            byRound.set(roundId, {
-              roundId,
-              txHash: log.transactionHash,
-            });
+            for (const log of logs) {
+              const roundId = log.args.roundId;
+              if (roundId === undefined) continue;
+              byRound.set(roundId, {
+                roundId,
+                txHash: log.transactionHash,
+              });
+            }
+            nextLogBlock = latestBlock + 1n;
+          } catch {
+            // Some RPC nodes are flaky with indexed event filters. Fall back to recent rounds.
+            logScanEnabled = false;
           }
-        } catch {
-          // Some RPC nodes are flaky with indexed event filters. Fall back to scanning recent rounds.
         }
 
         let recentRounds = Array.from(byRound.values())
-          .sort((a, b) => Number(b.roundId - a.roundId))
+          .sort((a, b) => (a.roundId === b.roundId ? 0 : a.roundId > b.roundId ? -1 : 1))
           .slice(0, 16);
 
         if (recentRounds.length === 0) {
+          const nowMs = Date.now();
+          if (lastFallbackScanAt > 0 && nowMs - lastFallbackScanAt < 60_000) return;
+          lastFallbackScanAt = nowMs;
+
           const totalRounds = (await publicClient.readContract({
             address: PREDICTION_ADDRESS,
             abi: PREDICTION_ABI,
@@ -681,43 +697,47 @@ export default function PredictionPage() {
 
         const rows = (
           await Promise.all(
-            recentRounds.map(async ({ roundId, txHash }) => {
-            const [core, pos, due] = await Promise.all([
-              publicClient.readContract({
-                address: PREDICTION_ADDRESS,
-                abi: PREDICTION_ABI,
-                functionName: "getRoundCore",
-                args: [roundId],
-              }) as Promise<RoundCoreTuple>,
-              publicClient.readContract({
-                address: PREDICTION_ADDRESS,
-                abi: PREDICTION_ABI,
-                functionName: "getPosition",
-                args: [roundId, userAddress],
-              }) as Promise<PositionTuple>,
-              publicClient.readContract({
-                address: PREDICTION_ADDRESS,
-                abi: PREDICTION_ABI,
-                functionName: "getClaimable",
-                args: [roundId, userAddress],
-              }) as Promise<bigint>,
-            ]);
+            recentRounds.map(async ({ roundId, txHash }): Promise<HistoryItem | null> => {
+              try {
+                const [core, pos, due] = await Promise.all([
+                  publicClient.readContract({
+                    address: PREDICTION_ADDRESS,
+                    abi: PREDICTION_ABI,
+                    functionName: "getRoundCore",
+                    args: [roundId],
+                  }) as Promise<RoundCoreTuple>,
+                  publicClient.readContract({
+                    address: PREDICTION_ADDRESS,
+                    abi: PREDICTION_ABI,
+                    functionName: "getPosition",
+                    args: [roundId, userAddress],
+                  }) as Promise<PositionTuple>,
+                  publicClient.readContract({
+                    address: PREDICTION_ADDRESS,
+                    abi: PREDICTION_ABI,
+                    functionName: "getClaimable",
+                    args: [roundId, userAddress],
+                  }) as Promise<bigint>,
+                ]);
 
-            const itemOutcome = Number(core[7]);
-            return {
-              roundId,
-              symbol: core[1],
-              upAmount: pos[0],
-              downAmount: pos[1],
-              claimed: pos[2],
-              claimable: due,
-              outcome: outcomeLabel(itemOutcome),
-              result: historyResult(itemOutcome, pos[0], pos[1]),
-              txHash,
-            } satisfies HistoryItem;
+                const itemOutcome = Number(core[7]);
+                return {
+                  roundId,
+                  symbol: core[1],
+                  upAmount: pos[0],
+                  downAmount: pos[1],
+                  claimed: pos[2],
+                  claimable: due,
+                  outcome: outcomeLabel(itemOutcome),
+                  result: historyResult(itemOutcome, pos[0], pos[1]),
+                  txHash,
+                };
+              } catch {
+                return null;
+              }
             })
           )
-        ).filter((item) => item.upAmount > 0n || item.downAmount > 0n);
+        ).filter((item): item is HistoryItem => !!item && (item.upAmount > 0n || item.downAmount > 0n));
 
         if (!cancelled) setHistory(rows);
       } catch (error) {
@@ -727,12 +747,13 @@ export default function PredictionPage() {
           );
         }
       } finally {
+        loading = false;
         if (!cancelled) setHistoryLoading(false);
       }
     }
 
     void loadHistory();
-    const id = window.setInterval(loadHistory, 5_000);
+    const id = window.setInterval(loadHistory, 15_000);
     return () => {
       cancelled = true;
       window.clearInterval(id);
@@ -761,12 +782,14 @@ export default function PredictionPage() {
   };
 
   async function ensureWallet() {
+    let activeChainId = chainId;
     if (!isConnected) {
       const connector = connectors[0];
       if (!connector) throw new Error("No wallet connector found");
-      await connectAsync({ connector });
+      const connection = await connectAsync({ connector });
+      activeChainId = connection.chainId;
     }
-    if (chainId && chainId !== litvm.id) {
+    if (activeChainId !== litvm.id) {
       await switchChainAsync({ chainId: litvm.id });
     }
   }
@@ -778,7 +801,8 @@ export default function PredictionPage() {
       await ensureWallet();
       const hash = await fn();
       toast.info(`${label} sent`, shortAddress(hash));
-      await publicClient.waitForTransactionReceipt({ hash });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") throw new Error(`${label} transaction reverted`);
       toast.success(`${label} confirmed`);
       await refetchAll();
     } catch (error) {
@@ -827,7 +851,7 @@ export default function PredictionPage() {
                 type="button"
                 className="pixel-btn-soft pixel-btn-soft-indigo pixel-btn-soft-sm"
                 disabled={isConnecting}
-                onClick={() => void ensureWallet()}
+                onClick={() => void ensureWallet().catch((error) => toast.handleError(error, "Connect failed"))}
               >
                 Connect
               </button>

@@ -57,6 +57,11 @@ interface GraphQLResponse<T> {
   errors?: Array<{ message?: string }>;
 }
 
+interface SubgraphMetaNode {
+  hasIndexingErrors?: boolean;
+  block?: { number?: string | number } | null;
+}
+
 interface TokenNode {
   id: string;
   tokenId: string;
@@ -65,6 +70,8 @@ interface TokenNode {
   pixelData: string | null;
   creator: string;
   mintedAt: string;
+  mintedBlock?: string;
+  mintedTx?: string;
   activeListing?: {
     listingId: string;
     price: string;
@@ -103,9 +110,11 @@ const USER_NFTS_QUERY = `
     $owner: Bytes!
     $collection: Bytes!
     $limit: Int!
+    $skip: Int!
   ) {
     tokens(
       first: $limit
+      skip: $skip
       orderBy: tokenId
       orderDirection: desc
       where: {
@@ -120,11 +129,17 @@ const USER_NFTS_QUERY = `
       pixelData
       creator
       mintedAt
+      mintedBlock
+      mintedTx
       activeListing {
         listingId
         price
         active
       }
+    }
+    _meta {
+      hasIndexingErrors
+      block { number }
     }
   }
 `;
@@ -201,6 +216,10 @@ const MARKET_EVENTS_QUERY = `
         }
       }
     }
+    _meta {
+      hasIndexingErrors
+      block { number }
+    }
   }
 `;
 
@@ -243,6 +262,10 @@ const MARKET_EVENTS_BY_TYPE_QUERY = `
         }
       }
     }
+    _meta {
+      hasIndexingErrors
+      block { number }
+    }
   }
 `;
 
@@ -268,6 +291,12 @@ const MINTED_EVENTS_QUERY = `
       pixelData
       creator
       mintedAt
+      mintedBlock
+      mintedTx
+    }
+    _meta {
+      hasIndexingErrors
+      block { number }
     }
   }
 `;
@@ -333,16 +362,36 @@ export async function fetchTokenMetadataFromSubgraph(
 
 export async function fetchUserNftsFromSubgraph(
   address: string,
-  limit = 500
-): Promise<SubgraphOwnedNft[]> {
+  limit = 5000
+): Promise<{
+  tokens: SubgraphOwnedNft[];
+  indexedBlock: number | null;
+  hasIndexingErrors: boolean;
+}> {
   const owner = normalizeAddress(address);
-  const data = await graphFetch<{ tokens: TokenNode[] }>(USER_NFTS_QUERY, {
-    owner,
-    collection: PIXEL_COLLECTION,
-    limit,
-  });
+  const pageSize = Math.min(Math.max(1, limit), 500);
+  const tokenNodes: TokenNode[] = [];
+  let skip = 0;
+  let meta: SubgraphMetaNode | null = null;
 
-  return (data.tokens ?? []).map((token) => {
+  while (tokenNodes.length < limit) {
+    const data = await graphFetch<{
+      tokens: TokenNode[];
+      _meta?: SubgraphMetaNode | null;
+    }>(USER_NFTS_QUERY, {
+      owner,
+      collection: PIXEL_COLLECTION,
+      limit: Math.min(pageSize, limit - tokenNodes.length),
+      skip,
+    });
+    const page = data.tokens ?? [];
+    tokenNodes.push(...page);
+    meta = data._meta ?? meta;
+    if (page.length < pageSize) break;
+    skip += page.length;
+  }
+
+  const tokens = tokenNodes.map((token) => {
     const activeListing = token.activeListing?.active
       ? {
           listingId: token.activeListing.listingId,
@@ -357,6 +406,13 @@ export async function fetchUserNftsFromSubgraph(
       listing: activeListing,
     };
   });
+
+  const indexedBlock = Number(meta?.block?.number);
+  return {
+    tokens,
+    indexedBlock: Number.isSafeInteger(indexedBlock) ? indexedBlock : null,
+    hasIndexingErrors: Boolean(meta?.hasIndexingErrors),
+  };
 }
 
 export async function fetchMarketplaceListingsFromSubgraph(
@@ -417,7 +473,11 @@ export async function fetchMarketplaceActivityFromSubgraph({
   limit?: number;
   skip?: number;
   eventTypes?: SubgraphMarketEventType[];
-} = {}): Promise<{ events: SubgraphMarketEventDTO[] }> {
+} = {}): Promise<{
+  events: SubgraphMarketEventDTO[];
+  indexedBlock: number | null;
+  hasIndexingErrors: boolean;
+}> {
   const safeLimit = Math.min(Math.max(1, limit), 100);
   const safeSkip = Math.max(0, skip);
   const filteredTypes = eventTypes?.filter(isMarketEventType);
@@ -428,23 +488,31 @@ export async function fetchMarketplaceActivityFromSubgraph({
     : filteredTypes.filter((type) => type !== "MINTED");
   const windowSize = Math.min(1000, safeLimit + safeSkip);
 
-  const [marketEvents, mintedEvents] = await Promise.all([
+  const [marketResult, mintedResult] = await Promise.all([
     marketTypes.length
       ? fetchMarketEvents({
           limit: windowSize,
           skip: 0,
           eventTypes: includeAll ? undefined : marketTypes,
         })
-      : Promise.resolve([]),
+      : Promise.resolve({ events: [], meta: null }),
     includeMinted
       ? fetchMintedEvents({ limit: windowSize, skip: 0 })
-      : Promise.resolve([]),
+      : Promise.resolve({ events: [], meta: null }),
   ]);
 
+  const indexedBlocks = [marketResult.meta, mintedResult.meta]
+    .map((meta) => Number(meta?.block?.number))
+    .filter((value) => Number.isSafeInteger(value) && value >= 0);
+
   return {
-    events: [...marketEvents, ...mintedEvents]
+    events: [...marketResult.events, ...mintedResult.events]
       .sort((a, b) => b.timestamp - a.timestamp || b.id.localeCompare(a.id))
       .slice(safeSkip, safeSkip + safeLimit),
+    indexedBlock: indexedBlocks.length ? Math.min(...indexedBlocks) : null,
+    hasIndexingErrors: Boolean(
+      marketResult.meta?.hasIndexingErrors || mintedResult.meta?.hasIndexingErrors
+    ),
   };
 }
 
@@ -456,7 +524,7 @@ async function fetchMarketEvents({
   limit: number;
   skip: number;
   eventTypes?: readonly Exclude<SubgraphMarketEventType, "MINTED">[];
-}): Promise<SubgraphMarketEventDTO[]> {
+}): Promise<{ events: SubgraphMarketEventDTO[]; meta: SubgraphMetaNode | null }> {
   const query = eventTypes?.length
     ? MARKET_EVENTS_BY_TYPE_QUERY
     : MARKET_EVENTS_QUERY;
@@ -470,12 +538,15 @@ async function fetchMarketEvents({
     variables.eventTypes = eventTypes;
   }
 
-  const data = await graphFetch<{ marketEvents: MarketEventNode[] }>(
+  const data = await graphFetch<{
+    marketEvents: MarketEventNode[];
+    _meta?: SubgraphMetaNode | null;
+  }>(
     query,
     variables
   );
 
-  return (data.marketEvents ?? []).map((event) => {
+  const events = (data.marketEvents ?? []).map((event) => {
     const token = event.listing?.token ?? null;
     const tokenId = event.tokenId || token?.tokenId || "0";
     return {
@@ -492,6 +563,7 @@ async function fetchMarketEvents({
       token: token ? tokenMetadataFromNode(token, tokenId) : null,
     };
   });
+  return { events, meta: data._meta ?? null };
 }
 
 async function fetchMintedEvents({
@@ -500,8 +572,11 @@ async function fetchMintedEvents({
 }: {
   limit: number;
   skip: number;
-}): Promise<SubgraphMarketEventDTO[]> {
-  const data = await graphFetch<{ tokens: TokenNode[] }>(
+}): Promise<{ events: SubgraphMarketEventDTO[]; meta: SubgraphMetaNode | null }> {
+  const data = await graphFetch<{
+    tokens: TokenNode[];
+    _meta?: SubgraphMetaNode | null;
+  }>(
     MINTED_EVENTS_QUERY,
     {
       collection: PIXEL_COLLECTION,
@@ -510,19 +585,22 @@ async function fetchMintedEvents({
     }
   );
 
-  return (data.tokens ?? []).map((token) => ({
+  const events: SubgraphMarketEventDTO[] = (data.tokens ?? []).map((token) => ({
     id: `minted-${token.id}`,
     listingId: "0",
     tokenId: token.tokenId,
-    eventType: "MINTED",
+    eventType: "MINTED" as const,
     price: null,
     seller: normalizeAddress(token.creator),
     buyer: null,
     timestamp: Number(token.mintedAt || 0),
-    blockNumber: 0,
-    txHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    blockNumber: Number(token.mintedBlock || 0),
+    txHash: token.mintedTx
+      ? normalizeAddress(token.mintedTx)
+      : "0x0000000000000000000000000000000000000000000000000000000000000000",
     token: tokenMetadataFromNode(token, token.tokenId),
   }));
+  return { events, meta: data._meta ?? null };
 }
 
 async function graphFetch<T>(

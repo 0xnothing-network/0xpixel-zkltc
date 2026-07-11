@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { gsap } from "gsap";
 import { useGSAP } from "@gsap/react";
@@ -175,7 +175,7 @@ function ListForSaleControl({
 }) {
   const { writeContractAsync, isPending, data: approveHash, error: approveErr } =
     useWriteContract();
-  const { isSuccess: approved, isLoading: waitingApprove } =
+  const { data: approveReceipt, isLoading: waitingApprove, error: approveReceiptErr } =
     useWaitForTransactionReceipt({ hash: approveHash });
   const {
     writeContractAsync: writeListAsync,
@@ -183,9 +183,11 @@ function ListForSaleControl({
     data: listHash,
     error: listErr,
   } = useWriteContract();
-  const { isSuccess: listed, isLoading: waitingList } =
+  const { data: listReceipt, isLoading: waitingList, error: listReceiptErr } =
     useWaitForTransactionReceipt({ hash: listHash });
   const firedRef = useRef(false);
+  const approved = approveReceipt?.status === "success";
+  const listed = listReceipt?.status === "success";
 
   useEffect(() => {
     if (listed && !firedRef.current) {
@@ -194,22 +196,31 @@ function ListForSaleControl({
     }
   }, [listed, onSuccess]);
 
-  const priceValid = /^\d+(?:\.\d+)?$/.test(price) && parseEther(price) > 0n;
+  const priceWei = useMemo(() => {
+    if (!/^\d+(?:\.\d+)?$/.test(price)) return null;
+    try {
+      const parsed = parseEther(price);
+      return parsed > 0n ? parsed : null;
+    } catch {
+      return null;
+    }
+  }, [price]);
+  const priceValid = priceWei !== null;
   const busy = isPending || waitingApprove || listing || waitingList;
 
   const doList = useCallback(async () => {
-    if (!priceValid) return;
+    if (priceWei === null) return;
     try {
       await writeListAsync({
         address: PIXEL_MARKETPLACE_ADDRESS,
         abi: MarketplaceAbi,
         functionName: "list",
-        args: [PIXEL_NFT_CONTRACT_ADDRESS, tokenId, parseEther(price)],
+        args: [PIXEL_NFT_CONTRACT_ADDRESS, tokenId, priceWei],
       });
     } catch {
       // surfaced via listErr
     }
-  }, [priceValid, writeListAsync, price, tokenId]);
+  }, [priceWei, writeListAsync, tokenId]);
 
   useEffect(() => {
     if (approved && price && !firedRef.current && !listing && !listHash) {
@@ -282,9 +293,12 @@ function ListForSaleControl({
           Approval tx ↗
         </a>
       ) : null}
-      {approveErr || listErr ? (
+      {approveErr || listErr || approveReceiptErr || listReceiptErr || approveReceipt?.status === "reverted" || listReceipt?.status === "reverted" ? (
         <p className="text-xs text-red-300 break-all">
-          {(approveErr || listErr)?.message}
+          {(approveErr || listErr || approveReceiptErr || listReceiptErr)?.message ||
+            (approveReceipt?.status === "reverted"
+              ? "Approval transaction reverted"
+              : "Listing transaction reverted")}
         </p>
       ) : null}
     </div>
@@ -302,17 +316,17 @@ function CancelListingControl({
 }) {
   const { writeContractAsync, isPending, data: txHash, error } =
     useWriteContract();
-  const { isLoading: waiting, isSuccess } = useWaitForTransactionReceipt({
+  const { data: receipt, isLoading: waiting, error: receiptError } = useWaitForTransactionReceipt({
     hash: txHash,
   });
   const firedRef = useRef(false);
 
   useEffect(() => {
-    if (isSuccess && !firedRef.current) {
+    if (receipt?.status === "success" && !firedRef.current) {
       firedRef.current = true;
       onSuccess();
     }
-  }, [isSuccess, onSuccess]);
+  }, [receipt, onSuccess]);
 
   const handleCancel = async () => {
     firedRef.current = false;
@@ -347,8 +361,10 @@ function CancelListingControl({
           "REMOVE LISTING"
         )}
       </button>
-      {error ? (
-        <p className="text-xs text-red-300 break-all">{error.message}</p>
+      {error || receiptError || receipt?.status === "reverted" ? (
+        <p className="text-xs text-red-300 break-all">
+          {(error || receiptError)?.message || "Cancel transaction reverted"}
+        </p>
       ) : null}
     </div>
   );

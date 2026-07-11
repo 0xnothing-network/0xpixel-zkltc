@@ -53,13 +53,11 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
     }
   }, [isConnected, chainId, switchChain, toast]);
 
-  const { isLoading: isConfirming, isSuccess: isConfirmed } =
+  const { data: mintReceipt, isLoading: isConfirming } =
     useWaitForTransactionReceipt({ hash: txHash ?? undefined });
 
   const firedRef = useRef(false);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Keep the latest tx hash accessible inside async callbacks without re-binding handlers.
-  const txHashRef = useRef<`0x${string}` | null>(null);
   const toastIdsRef = useRef<{ submitted?: string; confirmed?: string }>({});
 
   useEffect(() => {
@@ -71,10 +69,6 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     };
   }, []);
-
-  useEffect(() => {
-    txHashRef.current = txHash;
-  }, [txHash]);
 
   const hasDrawing = useMemo(
     () => pixelData.some((row) => row.some((cell) => cell !== "transparent")),
@@ -122,16 +116,20 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
   // real tokenId. Calling onMintSuccess with a hard-coded 0n used to break
   // gallery refresh — this fixes that race.
   useEffect(() => {
-    if (!isConfirmed || !txHash || firedRef.current) return;
+    if (!mintReceipt || !txHash || firedRef.current) return;
     firedRef.current = true;
+
+    if (mintReceipt.status !== "success") {
+      if (toastIdsRef.current.submitted) toast.dismiss(toastIdsRef.current.submitted);
+      toast.error("Mint failed", "The mint transaction reverted on-chain.");
+      return;
+    }
 
     let cancelled = false;
     (async () => {
       try {
-        const client = wcClient ?? publicClient;
-        const receipt = await client.getTransactionReceipt({ hash: txHash });
         let tokenId: bigint | null = null;
-        for (const log of receipt.logs) {
+        for (const log of mintReceipt.logs) {
           try {
             const decoded = decodeEventLog({
               abi: PixelNFTABI,
@@ -175,7 +173,7 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
     return () => {
       cancelled = true;
     };
-  }, [isConfirmed, txHash, wcClient, onMintSuccess, toast]);
+  }, [mintReceipt, txHash, onMintSuccess, toast]);
 
   const handleMint = useCallback(async () => {
     if (!isConnected || !address) {
@@ -223,24 +221,22 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
         args: [name.trim(), BigInt(gridSize), packedPixelBytes],
       });
 
-      // Calldata is huge (pixel data stored on-chain), so intrinsic gas alone
-      // exceeds viem's default ceiling. Compute gas from calldata size and
-      // add a comfortable margin for contract execution. Cap at 30M to stay
-      // well under MetaMask's ~50M hard cap while covering RLE-packed 64x64.
-      const dataHex = data.slice(2);
-      let zeroBytes = 0;
-      let nonZeroBytes = 0;
-      for (let i = 0; i < dataHex.length; i += 2) {
-        const byte = parseInt(dataHex.slice(i, i + 2), 16);
-        if (byte === 0) zeroBytes++;
-        else nonZeroBytes++;
+      const client = wcClient ?? publicClient;
+      const [estimatedGas, latestBlock] = await Promise.all([
+        client.estimateContractGas({
+          account: address,
+          address: PIXEL_NFT_CONTRACT_ADDRESS,
+          abi: MintAbi,
+          functionName: "mint",
+          args: [name.trim(), BigInt(gridSize), packedPixelBytes],
+        }),
+        client.getBlock(),
+      ]);
+      const gasLimit = estimatedGas + estimatedGas / 5n + 100_000n;
+      const safeBlockLimit = (latestBlock.gasLimit * 9n) / 10n;
+      if (gasLimit > safeBlockLimit) {
+        throw new Error("Artwork is too complex to mint within the current block gas limit");
       }
-      const intrinsic =
-        21_000n + 16n * BigInt(zeroBytes) + 68n * BigInt(nonZeroBytes);
-      const desiredGas = intrinsic * 2n;
-      const cap = 30_000_000n;
-      const floor = 1_500_000n;
-      const gasLimit = desiredGas < floor ? floor : desiredGas > cap ? cap : desiredGas;
 
       const hash = await sendTransactionAsync({
         to: PIXEL_NFT_CONTRACT_ADDRESS,
@@ -250,7 +246,6 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
       });
 
       setTxHash(hash);
-      txHashRef.current = hash;
 
       toastIdsRef.current.submitted = toast.show({
         title: "Transaction submitted",
@@ -278,6 +273,7 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
     hasDrawing,
     isOriginal,
     gridSize,
+    wcClient,
     sendTransactionAsync,
     packedPixelBytes,
     toast,

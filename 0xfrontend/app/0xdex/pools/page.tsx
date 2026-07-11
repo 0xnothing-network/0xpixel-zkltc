@@ -2,11 +2,11 @@
 
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
-import { useAccount, useReadContract } from "wagmi";
+import { useAccount, usePublicClient, useReadContract, useSwitchChain } from "wagmi";
 import { useDexWrite, NATIVE_TOKEN, Token, useTokenBalance, useDexRead, useAllPools } from "@/lib/use0xDex";
 import { DEX_ADDRESS, NATIVE_ADDRESS } from "@/lib/0xDexAbi";
 import { NUSD_ADDRESS } from "@/lib/NUSDContract";
-import { formatUnits, parseUnits } from "viem";
+import { erc20Abi, formatUnits, parseUnits } from "viem";
 import { useToast } from "@/components/Toast";
 import { useChainId } from "wagmi";
 import { LITVM_CHAIN_ID } from "@/lib/chainSwitch";
@@ -35,15 +35,27 @@ function formatUSD(value: bigint, decimals = 18) {
   return `$${num.toFixed(2)}`;
 }
 
+function safeParseAmount(value: string, decimals: number) {
+  try {
+    const parsed = parseUnits(value, decimals);
+    return parsed > 0n ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function PoolsPage() {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
+  const publicClient = usePublicClient();
+  const { switchChainAsync } = useSwitchChain();
   const toast = useToast();
-  const { addLiquidity, removeLiquidity } = useDexWrite();
+  const { addLiquidity, approveToken, removeLiquidity } = useDexWrite();
   
   const [mounted, setMounted] = useState(false);
   const [activeTab, setActiveTab] = useState<"add" | "remove">("add");
   const [showTopPools, setShowTopPools] = useState(true);
+  const [busy, setBusy] = useState(false);
   
   // Add liquidity state
   const [selectedPoolIndex, setSelectedPoolIndex] = useState<number>(0);
@@ -66,8 +78,12 @@ export default function PoolsPage() {
   const poolOptions = useMemo(() => {
     if (!allPools || !nusdAddress) return [];
     return allPools.map(({ pairId, token0, token1 }) => {
-      const displayToken = token0 === nusdAddress ? token1 : token0;
-      const label = `${displayToken === NATIVE_ADDRESS ? "zkLTC" : "NUSD"} / NUSD`;
+      const displayToken = token0.toLowerCase() === nusdAddress.toLowerCase() ? token1 : token0;
+      const knownToken = KNOWN_TOKENS.find(
+        (token) => token.address.toLowerCase() === displayToken.toLowerCase(),
+      );
+      const displaySymbol = knownToken?.symbol ?? `${displayToken.slice(0, 6)}...${displayToken.slice(-4)}`;
+      const label = `${displaySymbol} / NUSD`;
       return {
         token0,
         token1,
@@ -77,33 +93,61 @@ export default function PoolsPage() {
       };
     });
   }, [allPools, nusdAddress]);
+  const selectedPool = poolOptions[selectedPoolIndex];
+  const customTokenAddress = selectedPool
+    ? [selectedPool.token0, selectedPool.token1].find((address) =>
+        !KNOWN_TOKENS.some((token) => token.address.toLowerCase() === address.toLowerCase()),
+      )
+    : undefined;
+  const { data: customTokenSymbol } = useReadContract({
+    address: customTokenAddress,
+    abi: erc20Abi,
+    functionName: "symbol",
+    query: { enabled: !!customTokenAddress },
+  });
+  const { data: customTokenDecimals } = useReadContract({
+    address: customTokenAddress,
+    abi: erc20Abi,
+    functionName: "decimals",
+    query: { enabled: !!customTokenAddress },
+  });
+  const { data: customTokenName } = useReadContract({
+    address: customTokenAddress,
+    abi: erc20Abi,
+    functionName: "name",
+    query: { enabled: !!customTokenAddress },
+  });
   
   // Get pool info for selected pool
   const { data: pairId } = useDexRead<`0x${string}`>(
     "getPairId",
-    tokenA && tokenB ? [tokenA.address, tokenB.address] : undefined
+    tokenA && tokenB ? [tokenA.address, tokenB.address] : undefined,
+    !!tokenA && !!tokenB
   );
+  const removePairId = poolOptions[selectedRemovePool]?.pairId;
   
   const { data: poolExists } = useDexRead<boolean>(
     "poolExists",
-    pairId ? [pairId] : undefined
+    pairId ? [pairId] : undefined,
+    !!pairId
   );
   
   // Get user LP balance for selected pool
   const { data: userLP } = useDexRead<bigint>(
     "userLP",
-    pairId && address ? [pairId, address] : undefined
+    removePairId && address ? [removePairId, address] : undefined,
+    !!removePairId && !!address
   );
   
   // Get pool reserves
-  const { data: poolData } = useDexRead<readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint]>("pools", pairId ? [pairId] : undefined);
+  const { data: poolData } = useDexRead<readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint]>("pools", pairId ? [pairId] : undefined, !!pairId);
   
   // Balances
   const { data: balanceA } = useTokenBalance(address, tokenA);
   const { data: balanceB } = useTokenBalance(address, tokenB);
   
   // Allowance check
-  const { data: allowanceA } = useReadContract({
+  const { data: allowanceA, refetch: refetchAllowanceA } = useReadContract({
     address: tokenA?.address !== NATIVE_TOKEN.address ? tokenA?.address : undefined,
     abi: [
       {
@@ -121,13 +165,78 @@ export default function PoolsPage() {
     args: tokenA?.address !== NATIVE_TOKEN.address && address ? [address, DEX_ADDRESS] : undefined,
     query: { enabled: !!address && !!tokenA && tokenA.address !== NATIVE_TOKEN.address }
   });
+  const { data: allowanceB, refetch: refetchAllowanceB } = useReadContract({
+    address: tokenB?.address !== NATIVE_TOKEN.address ? tokenB?.address : undefined,
+    abi: [
+      {
+        name: "allowance",
+        type: "function",
+        inputs: [
+          { name: "owner", type: "address" },
+          { name: "spender", type: "address" }
+        ],
+        outputs: [{ name: "", type: "uint256" }],
+        stateMutability: "view",
+      }
+    ],
+    functionName: "allowance",
+    args: tokenB?.address !== NATIVE_TOKEN.address && address ? [address, DEX_ADDRESS] : undefined,
+    query: { enabled: !!address && !!tokenB && tokenB.address !== NATIVE_TOKEN.address }
+  });
   
-  const needsApproval = tokenA && tokenA.address !== NATIVE_TOKEN.address && allowanceA !== undefined;
-  const hasAllowance = !needsApproval || (allowanceA && allowanceA >= (amountA ? parseUnits(amountA, tokenA.decimals) : 0n));
+  const amountAParsed = useMemo(
+    () => tokenA && amountA ? safeParseAmount(amountA, tokenA.decimals) : null,
+    [amountA, tokenA],
+  );
+  const amountBParsed = useMemo(
+    () => tokenB && amountB ? safeParseAmount(amountB, tokenB.decimals) : null,
+    [amountB, tokenB],
+  );
+  const lpAmountParsed = useMemo(
+    () => lpAmount ? safeParseAmount(lpAmount, 18) : null,
+    [lpAmount],
+  );
+  const needsApprovalA = Boolean(
+    tokenA &&
+    tokenA.address !== NATIVE_TOKEN.address &&
+    amountAParsed &&
+    (allowanceA === undefined || allowanceA < amountAParsed)
+  );
+  const needsApprovalB = Boolean(
+    tokenB &&
+    tokenB.address !== NATIVE_TOKEN.address &&
+    amountBParsed &&
+    (allowanceB === undefined || allowanceB < amountBParsed)
+  );
+  const needsApproval = needsApprovalA || needsApprovalB;
+  const approvalToken = needsApprovalA ? tokenA : needsApprovalB ? tokenB : null;
+  const hasAllowance = !needsApproval;
 
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    const pool = poolOptions[selectedPoolIndex];
+    if (!pool) return;
+    const resolveToken = (tokenAddress: `0x${string}`): Token | null => {
+      const known = KNOWN_TOKENS.find(
+        (token) => token.address.toLowerCase() === tokenAddress.toLowerCase(),
+      );
+      if (known) return known;
+      if (!customTokenAddress || tokenAddress.toLowerCase() !== customTokenAddress.toLowerCase()) return null;
+      return {
+        address: tokenAddress,
+        symbol: (customTokenSymbol as string | undefined) || "TOKEN",
+        decimals: Number(customTokenDecimals ?? 18),
+        name: (customTokenName as string | undefined) || "Token",
+      };
+    };
+    const nextTokenA = resolveToken(pool.token0);
+    const nextTokenB = resolveToken(pool.token1);
+    setTokenA((current) => current?.address === nextTokenA?.address ? current : nextTokenA);
+    setTokenB((current) => current?.address === nextTokenB?.address ? current : nextTokenB);
+  }, [customTokenAddress, customTokenDecimals, customTokenName, customTokenSymbol, poolOptions, selectedPoolIndex]);
   
   useEffect(() => {
     if (mounted && isConnected && chainId !== LITVM_CHAIN_ID) {
@@ -135,51 +244,87 @@ export default function PoolsPage() {
     }
   }, [mounted, isConnected, chainId, toast]);
 
-  const handleApprove = () => {
-    if (!tokenA || !amountA) return;
-    toast.info("Approving", `Approving ${tokenA.symbol}...`);
+  const ensureCorrectChain = async () => {
+    if (chainId === LITVM_CHAIN_ID) return true;
+    try {
+      await switchChainAsync({ chainId: LITVM_CHAIN_ID });
+      return true;
+    } catch (error) {
+      toast.handleError(error, "Network switch failed");
+      return false;
+    }
+  };
+
+  const handleApprove = async () => {
+    if (!approvalToken || !publicClient || busy) return;
+    if (!(await ensureCorrectChain())) return;
+    setBusy(true);
+    try {
+      toast.info("Approving", `Approving ${approvalToken.symbol}...`);
+      const hash = await approveToken(approvalToken.address, DEX_ADDRESS);
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") throw new Error("Approval transaction reverted");
+      await Promise.allSettled([refetchAllowanceA(), refetchAllowanceB()]);
+      toast.success("Approved", `${approvalToken.symbol} is ready`);
+    } catch (error) {
+      toast.handleError(error, "Approval failed");
+    } finally {
+      setBusy(false);
+    }
   };
   
-  const handleAddLiquidity = () => {
-    if (!tokenA || !tokenB || !amountA || !amountB) {
+  const handleAddLiquidity = async () => {
+    if (!tokenA || !tokenB || !amountAParsed || !amountBParsed || !publicClient || busy) {
       toast.error("Invalid input", "Please select tokens and enter amounts");
       return;
     }
+    if (!(await ensureCorrectChain())) return;
     
     if (needsApproval && !hasAllowance) {
       toast.error("Approval required", "Please approve the token first");
       return;
     }
     
-    const amountAFormatted = parseUnits(amountA, tokenA.decimals);
-    const amountBFormatted = parseUnits(amountB, tokenB.decimals);
-    
+    setBusy(true);
     try {
-      addLiquidity(tokenA.address, tokenB.address, amountAFormatted, amountBFormatted);
+      const hash = await addLiquidity(tokenA.address, tokenB.address, amountAParsed, amountBParsed);
       toast.info("Adding liquidity", "Please confirm the transaction...");
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") throw new Error("Add liquidity transaction reverted");
+      toast.success("Liquidity added");
     } catch (err) {
-      console.error("Add liquidity error:", err);
-      toast.error("Failed", "Could not add liquidity");
+      toast.handleError(err, "Could not add liquidity");
+    } finally {
+      setBusy(false);
     }
   };
   
-  const handleRemoveLiquidity = () => {
-    if (!pairId || !lpAmount) {
+  const handleRemoveLiquidity = async () => {
+    if (!removePairId || !lpAmountParsed || !publicClient || busy) {
       toast.error("Invalid input", "Please select a pool and enter amount");
       return;
     }
-    
-    const lpFormatted = parseUnits(lpAmount, 18);
-    
+    if (!(await ensureCorrectChain())) return;
+    if (userLP !== undefined && lpAmountParsed > userLP) {
+      toast.error("Invalid input", "LP amount exceeds your balance");
+      return;
+    }
+
+    setBusy(true);
     try {
-      removeLiquidity(pairId, lpFormatted);
+      const hash = await removeLiquidity(removePairId, lpAmountParsed);
       toast.info("Removing liquidity", "Please confirm the transaction...");
-    } catch {
-      toast.error("Failed", "Could not remove liquidity");
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") throw new Error("Remove liquidity transaction reverted");
+      toast.success("Liquidity removed");
+    } catch (error) {
+      toast.handleError(error, "Could not remove liquidity");
+    } finally {
+      setBusy(false);
     }
   };
   
-  const isValidAdd = tokenA && tokenB && amountA && amountB && parseFloat(amountA) > 0 && parseFloat(amountB) > 0 && poolExists !== false && hasAllowance;
+  const isValidAdd = Boolean(tokenA && tokenB && amountAParsed && amountBParsed && poolExists !== false && hasAllowance && !busy);
 
   return (
     <div className="min-h-screen bg-[#0F0F23]">
@@ -295,10 +440,10 @@ export default function PoolsPage() {
                     setSelectedPoolIndex(idx);
                     const pool = poolOptions[idx];
                     if (pool) {
-                      setTokenA(pool.token0 === NATIVE_ADDRESS 
+                      setTokenA(pool.token0.toLowerCase() === NATIVE_ADDRESS.toLowerCase()
                         ? NATIVE_TOKEN 
-                        : KNOWN_TOKENS.find(t => t.address === pool.token0) || null);
-                      setTokenB(KNOWN_TOKENS.find(t => t.address === pool.token1) || null);
+                        : KNOWN_TOKENS.find(t => t.address.toLowerCase() === pool.token0.toLowerCase()) || null);
+                      setTokenB(KNOWN_TOKENS.find(t => t.address.toLowerCase() === pool.token1.toLowerCase()) || null);
                     }
                   }}
                   className="w-full bg-[#13131F] p-4 rounded-lg text-white border border-[#2D2D44] outline-none focus:border-indigo-500"
@@ -406,13 +551,13 @@ export default function PoolsPage() {
               {needsApproval && !hasAllowance && (
                 <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
                   <p className="text-xs text-amber-400 mb-3">
-                    You need to approve {tokenA?.symbol} before adding liquidity
+                    You need to approve {approvalToken?.symbol} before adding liquidity
                   </p>
                   <button
                     onClick={handleApprove}
                     className="w-full py-2 pixel-btn-soft pixel-btn-soft-amber"
                   >
-                    APPROVE {tokenA?.symbol}
+                    APPROVE {approvalToken?.symbol}
                   </button>
                 </div>
               )}
@@ -496,7 +641,7 @@ export default function PoolsPage() {
               {/* Remove Button */}
               <button
                 onClick={handleRemoveLiquidity}
-                disabled={!lpAmount || !mounted || !isConnected || !pairId}
+                disabled={!lpAmountParsed || !mounted || !isConnected || !removePairId || busy}
                 className={`w-full py-4 font-bold text-white pixel-btn-soft pixel-btn-soft-full ${
                   lpAmount && mounted && isConnected ? "pixel-btn-soft-emerald" : "pixel-btn-soft-secondary"
                 }`}
@@ -539,13 +684,22 @@ export default function PoolsPage() {
 function PoolTopCard({ index, token0, token1 }: { index: number; token0: `0x${string}`; token1: `0x${string}` }) {
   const { data: pairId } = useDexRead<`0x${string}`>(
     "getPairId",
-    token0 && token1 ? [token0, token1] : undefined
+    token0 && token1 ? [token0, token1] : undefined,
+    !!token0 && !!token1
   );
   
-  const { data: poolData } = useDexRead<readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint]>("pools", pairId ? [pairId] : undefined);
+  const { data: poolData } = useDexRead<readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint]>("pools", pairId ? [pairId] : undefined, !!pairId);
   
-  const token0Symbol = token0 === NATIVE_ADDRESS ? "zkLTC" : "TKN";
-  const token1Symbol = "NUSD";
+  const token0Symbol = token0.toLowerCase() === NATIVE_ADDRESS.toLowerCase()
+    ? "zkLTC"
+    : token0.toLowerCase() === NUSD_ADDRESS.toLowerCase()
+      ? "NUSD"
+      : "TKN";
+  const token1Symbol = token1.toLowerCase() === NATIVE_ADDRESS.toLowerCase()
+    ? "zkLTC"
+    : token1.toLowerCase() === NUSD_ADDRESS.toLowerCase()
+      ? "NUSD"
+      : "TKN";
   
   return (
     <div className="p-4 rounded-xl bg-[#13131F] border border-[#2D2D44]">

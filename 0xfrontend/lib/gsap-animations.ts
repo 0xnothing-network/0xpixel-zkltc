@@ -140,12 +140,22 @@ export function useHoverScale<T extends HTMLElement>(scale = 1.05) {
   useGsapReact(
     () => {
       if (!ref.current) return;
-      ref.current.addEventListener("mouseenter", () => {
-        gsap.to(ref.current, { scale, duration: 0.3, ease: "power2.out" });
-      });
-      ref.current.addEventListener("mouseleave", () => {
-        gsap.to(ref.current, { scale: 1, duration: 0.3, ease: "power2.out" });
-      });
+      const element = ref.current;
+      const handleMouseEnter = () => {
+        gsap.to(element, { scale, duration: 0.3, ease: "power2.out" });
+      };
+      const handleMouseLeave = () => {
+        gsap.to(element, { scale: 1, duration: 0.3, ease: "power2.out" });
+      };
+
+      element.addEventListener("mouseenter", handleMouseEnter);
+      element.addEventListener("mouseleave", handleMouseLeave);
+
+      return () => {
+        element.removeEventListener("mouseenter", handleMouseEnter);
+        element.removeEventListener("mouseleave", handleMouseLeave);
+        gsap.killTweensOf(element);
+      };
     },
     { scope: ref }
   );

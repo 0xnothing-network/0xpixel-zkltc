@@ -6,19 +6,19 @@ import {
   LiquidityRemoved,
   PoolCreated,
   RewardClaimed,
-} from '../generated/schema';
+} from "../generated/schema";
 import {
   Swapped,
   LiquidityAdded as LiquidityAddedEvent,
   LiquidityRemoved as LiquidityRemovedEvent,
   PoolCreated as PoolCreatedEvent,
   RewardClaimed as RewardClaimedEvent,
-} from '../generated/ZeroXDex/ZeroXDex';
-import { BigDecimal, BigInt, Bytes, crypto } from '@graphprotocol/graph-ts';
+} from "../generated/ZeroXDex/ZeroXDex";
+import { BigDecimal, BigInt, Bytes, crypto } from "@graphprotocol/graph-ts";
 
 const ZERO_BI = BigInt.fromI32(0);
 const ONE_BI = BigInt.fromI32(1);
-const CANDLE_INTERVALS = [60, 240, 720, 1440, 10080, 43200];
+const CANDLE_INTERVALS = [15, 60, 240, 1440];
 
 function pairIdForTokens(tokenA: Bytes, tokenB: Bytes): Bytes {
   const first = tokenA.toHexString() < tokenB.toHexString() ? tokenA : tokenB;
@@ -51,7 +51,12 @@ function updateCandle(
 ): void {
   const intervalSeconds = BigInt.fromI32(intervalMinutes * 60);
   const bucket = timestamp.div(intervalSeconds).times(intervalSeconds);
-  const id = pairId.toHexString() + '-' + intervalMinutes.toString() + '-' + bucket.toString();
+  const id =
+    pairId.toHexString() +
+    "-" +
+    intervalMinutes.toString() +
+    "-" +
+    bucket.toString();
   let candle = Candle.load(id);
 
   if (candle === null) {
@@ -85,8 +90,7 @@ function updateCandle(
 }
 
 export function handleSwapped(event: Swapped): void {
-  const id =
-    event.transaction.hash.toHex() + '-' + event.logIndex.toString();
+  const id = event.transaction.hash.toHex() + "-" + event.logIndex.toString();
   const pairId = pairIdForTokens(event.params.tokenIn, event.params.tokenOut);
 
   const swap = new Swap(id);
@@ -138,8 +142,7 @@ export function handleSwapped(event: Swapped): void {
 }
 
 export function handleLiquidityAdded(event: LiquidityAddedEvent): void {
-  const id =
-    event.transaction.hash.toHex() + '-' + event.logIndex.toString();
+  const id = event.transaction.hash.toHex() + "-" + event.logIndex.toString();
 
   const entity = new LiquidityAdded(id);
   entity.user = event.params.user;
@@ -161,8 +164,7 @@ export function handleLiquidityAdded(event: LiquidityAddedEvent): void {
 }
 
 export function handleLiquidityRemoved(event: LiquidityRemovedEvent): void {
-  const id =
-    event.transaction.hash.toHex() + '-' + event.logIndex.toString();
+  const id = event.transaction.hash.toHex() + "-" + event.logIndex.toString();
 
   const entity = new LiquidityRemoved(id);
   entity.user = event.params.user;
@@ -226,8 +228,7 @@ export function handlePoolCreated(event: PoolCreatedEvent): void {
 }
 
 export function handleRewardClaimed(event: RewardClaimedEvent): void {
-  const id =
-    event.transaction.hash.toHex() + '-' + event.logIndex.toString();
+  const id = event.transaction.hash.toHex() + "-" + event.logIndex.toString();
 
   const entity = new RewardClaimed(id);
   entity.user = event.params.user;

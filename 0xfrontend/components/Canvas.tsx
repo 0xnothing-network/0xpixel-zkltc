@@ -336,38 +336,54 @@ export function Canvas({
   const paintPixels = useCallback((gridX: number, gridY: number, tool: Tool, color: string) => {
     const fillColor = tool === "eraser" ? "transparent" : color;
     const half = Math.floor(brushSize / 2);
+    const coordinates = new Set<number>();
 
-    const applyToPixel = (px: number, py: number) => {
+    const collectPixel = (px: number, py: number) => {
       if (px < 0 || px >= gridSize || py < 0 || py >= gridSize) return;
       if (pixelDataRef.current[py]?.[px] === fillColor) return;
-      setPixelData(prev => {
-        const next = prev.map(row => [...row]);
-        next[py][px] = fillColor;
-        return next;
-      });
+      coordinates.add(py * gridSize + px);
     };
 
     for (let dy = -half; dy < brushSize - half; dy++) {
       for (let dx = -half; dx < brushSize - half; dx++) {
         const cx = gridX + dx;
         const cy = gridY + dy;
-        applyToPixel(cx, cy);
+        collectPixel(cx, cy);
 
         if (symmetry !== "none") {
           const mirrorH = gridSize - 1 - cx;
           const mirrorV = gridSize - 1 - cy;
           if (symmetry === "horizontal" || symmetry === "both") {
-            applyToPixel(mirrorH, cy);
+            collectPixel(mirrorH, cy);
           }
           if (symmetry === "vertical" || symmetry === "both") {
-            applyToPixel(cx, mirrorV);
+            collectPixel(cx, mirrorV);
           }
           if (symmetry === "both") {
-            applyToPixel(mirrorH, mirrorV);
+            collectPixel(mirrorH, mirrorV);
           }
         }
       }
     }
+
+    if (coordinates.size === 0) return;
+    setPixelData(prev => {
+      const next = [...prev];
+      const clonedRows = new Set<number>();
+      let changed = false;
+      for (const coordinate of coordinates) {
+        const py = Math.floor(coordinate / gridSize);
+        const px = coordinate % gridSize;
+        if (prev[py]?.[px] === fillColor) continue;
+        if (!clonedRows.has(py)) {
+          next[py] = [...prev[py]];
+          clonedRows.add(py);
+        }
+        next[py][px] = fillColor;
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
   }, [gridSize, brushSize, symmetry, setPixelData]);
 
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -387,17 +403,10 @@ export function Canvas({
     isDrawingRef.current = true;
     const tool = currentToolRef.current;
 
-    if (tool === "pencil" || tool === "eraser") {
-      if (!strokeSnapshotRef.current) {
-        strokeSnapshotRef.current = pixelDataRef.current.map(row => [...row]);
-        onStrokeStart?.(strokeSnapshotRef.current);
-      }
-    }
-
     if (tool === "fill") {
       isDrawingRef.current = false;
-      floodFill(coords.x, coords.y, selectedColorRef.current);
       onStrokeStart?.(pixelDataRef.current);
+      floodFill(coords.x, coords.y, selectedColorRef.current);
       return;
     }
 
@@ -462,6 +471,7 @@ export function Canvas({
     isDrawingRef.current = false;
     isPanningRef.current = false;
     activePointerRef.current = null;
+    strokeSnapshotRef.current = null;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
   }, []);
 
@@ -469,6 +479,7 @@ export function Canvas({
     isDrawingRef.current = false;
     isPanningRef.current = false;
     activePointerRef.current = null;
+    strokeSnapshotRef.current = null;
     const previewCanvas = previewCanvasRef.current;
     if (previewCanvas) {
       const pctx = previewCanvas.getContext("2d");

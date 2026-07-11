@@ -346,6 +346,9 @@ async function sendTx(ctx, action, roundId) {
   if (config.waitReceipt) {
     const receipt = await client.waitForTransactionReceipt({ hash });
     console.log(`  receipt status=${receipt.status} block=${receipt.blockNumber}`);
+    if (receipt.status !== "success") {
+      throw new Error(`${functionName} transaction reverted: ${hash}`);
+    }
   }
 
   return hash;

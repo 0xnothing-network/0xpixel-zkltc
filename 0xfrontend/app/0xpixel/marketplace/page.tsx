@@ -141,7 +141,7 @@ function MarketplaceBody({ userAddress }: BodyProps) {
       console.error("[marketplace] load failed:", err);
       setError("Couldn't load listings. Please retry.");
     } finally {
-      setLoading(false);
+      if (!ctrl.signal.aborted) setLoading(false);
     }
   }, []);
 
@@ -169,14 +169,14 @@ function MarketplaceBody({ userAddress }: BodyProps) {
     const arr = [...listings];
     switch (sort) {
       case "price-asc":
-        arr.sort((a, b) => Number(a.price - b.price));
+        arr.sort((a, b) => (a.price === b.price ? 0 : a.price < b.price ? -1 : 1));
         break;
       case "price-desc":
-        arr.sort((a, b) => Number(b.price - a.price));
+        arr.sort((a, b) => (a.price === b.price ? 0 : a.price > b.price ? -1 : 1));
         break;
       case "newest":
       default:
-        arr.sort((a, b) => Number(b.listingId - a.listingId));
+        arr.sort((a, b) => (a.listingId === b.listingId ? 0 : a.listingId > b.listingId ? -1 : 1));
     }
     return arr;
   }, [listings, sort]);
@@ -605,16 +605,32 @@ function ListingCard({
   const { address, isConnected, chainId } = useAccount();
   const { switchChain, isPending: isSwitchingChain } = useSwitchChain();
   const publicClient = usePublicClient();
+  const handledTxRef = useRef<`0x${string}` | null>(null);
 
   const priceEth = formatEther(listing.price);
   const isOwner = userAddress && listing.seller.toLowerCase() === userAddress.toLowerCase();
 
   const { writeContractAsync, data: txHash } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess: isConfirmed } =
+  const {
+    data: receipt,
+    error: receiptError,
+    isError: isReceiptError,
+    isLoading: isConfirming,
+    isSuccess: isConfirmed,
+  } =
     useWaitForTransactionReceipt({ hash: txHash });
 
   useEffect(() => {
-    if (!isConfirmed || !txHash) return;
+    if (!isConfirmed || !txHash || !receipt || handledTxRef.current === txHash) return;
+    handledTxRef.current = txHash;
+
+    if (receipt.status !== "success") {
+      toast.error("Transaction failed", "The transaction was reverted onchain.");
+      setBusy(null);
+      onActionComplete();
+      return;
+    }
+
     const action = busy === "buy" ? "Purchase" : "Cancelled";
     toast.show({
       title: `${action} successful`,
@@ -624,7 +640,13 @@ function ListingCard({
     });
     setBusy(null);
     onActionComplete();
-  }, [isConfirmed, txHash, busy, listing.tokenId, meta, toast, onActionComplete]);
+  }, [isConfirmed, txHash, receipt, busy, listing.tokenId, meta, toast, onActionComplete]);
+
+  useEffect(() => {
+    if (!isReceiptError || !receiptError || !busy) return;
+    toast.handleError(receiptError, "Transaction failed");
+    setBusy(null);
+  }, [busy, isReceiptError, receiptError, toast]);
 
   const handleBuy = useCallback(async () => {
     if (!isConnected || !address) {

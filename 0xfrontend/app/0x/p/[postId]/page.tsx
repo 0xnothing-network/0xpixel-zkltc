@@ -101,20 +101,20 @@ export default function ZeroxPostPage() {
   async function runTx(label: string, request: SocialTxRequest) {
     if (!isConnected) {
       toast.warning("Connect wallet", "Connect your wallet to use 0x.");
-      return;
+      return false;
     }
     if (!hasProfile) {
       toast.warning("Create account first", "Open 0x and create your onchain profile before interacting.");
-      return;
+      return false;
     }
     if (!publicClient) {
       toast.error("RPC unavailable", "Please refresh and try again.");
-      return;
-    }
-    if (chainId !== litvm.id) {
-      await switchChainAsync({ chainId: litvm.id });
+      return false;
     }
     try {
+      if (chainId !== litvm.id) {
+        await switchChainAsync({ chainId: litvm.id });
+      }
       const hash = await writeContractAsync({
         address: ZEROXN_ADDRESS,
         abi: ZEROXN_ABI,
@@ -122,12 +122,15 @@ export default function ZeroxPostPage() {
         args: (request.args ?? []) as never,
       });
       toast.info(`${label} sent`, shortAddress(hash));
-      await publicClient.waitForTransactionReceipt({ hash });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") throw new Error(`${label} transaction reverted`);
       toast.success(`${label} confirmed`);
       setRefreshKey((value) => value + 1);
       void refetch();
+      return true;
     } catch (error) {
       toast.handleError(error, `${label} failed`);
+      return false;
     }
   }
 

@@ -79,10 +79,27 @@ interface TokenData {
 
 const CACHE_TTL_SUCCESS = 30_000;
 const CACHE_TTL_ERROR = 2_000;
+const TOKEN_DATA_CACHE_MAX = 4_096;
+const USER_NFT_CACHE_MAX = 1_024;
 
 type CacheEntry<T> = { data: T; timestamp: number; isError?: boolean };
 const tokenDataCache = new Map<string, CacheEntry<TokenData | null>>();
 const userNftCache = new Map<string, CacheEntry<bigint[]>>();
+
+function setBoundedCache<K, V>(
+  cache: Map<K, V>,
+  key: K,
+  value: V,
+  maxEntries: number
+) {
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > maxEntries) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey === undefined) break;
+    cache.delete(oldestKey);
+  }
+}
 
 export async function fetchTokenDataCached(tokenId: bigint): Promise<TokenData | null> {
   const key = tokenId.toString();
@@ -112,12 +129,12 @@ export async function fetchTokenDataCached(tokenId: bigint): Promise<TokenData |
       mintedAt: tuple[4],
       artworkHash: tuple[5],
     };
-    tokenDataCache.set(key, { data: result, timestamp: Date.now() });
+    setBoundedCache(tokenDataCache, key, { data: result, timestamp: Date.now() }, TOKEN_DATA_CACHE_MAX);
     return result;
   } catch (err) {
     console.error(`[Contract] tokenData(${tokenId}) error:`, err);
     if (!cached) {
-      tokenDataCache.set(key, { data: null, timestamp: Date.now(), isError: true });
+      setBoundedCache(tokenDataCache, key, { data: null, timestamp: Date.now(), isError: true }, TOKEN_DATA_CACHE_MAX);
     }
     return cached?.data ?? null;
   }
@@ -127,7 +144,7 @@ export async function getUserTokenIds(address: string): Promise<bigint[]> {
   if (!address || typeof address !== "string" || !address.match(/^0x[0-9a-fA-F]{40}$/)) {
     return [];
   }
-  const addr = address as `0x${string}`;
+  const addr = address.toLowerCase() as `0x${string}`;
 
   const cached = userNftCache.get(addr);
   if (cached && !cached.isError && Date.now() - cached.timestamp < CACHE_TTL_SUCCESS) {
@@ -143,60 +160,62 @@ export async function getUserTokenIds(address: string): Promise<bigint[]> {
         args: [addr],
       })
     )) as bigint;
+    if (balance > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error("NFT balance is too large to enumerate safely");
+    }
     const n = Number(balance);
 
     if (n === 0) {
-      userNftCache.set(addr, { data: [], timestamp: Date.now() });
+      setBoundedCache(userNftCache, addr, { data: [], timestamp: Date.now() }, USER_NFT_CACHE_MAX);
       return [];
     }
 
-    const BATCH = 5;
+    const BATCH = 100;
     const allIds: bigint[] = [];
 
-    // Process all batches in parallel for maximum speed
-    const batchCount = Math.ceil(n / BATCH);
-    const batchResults = await Promise.allSettled(
-      Array.from({ length: batchCount }, async (_, batchIdx) => {
-        const start = batchIdx * BATCH;
-        const batchSize = Math.min(BATCH, n - start);
-        const batch = Array.from({ length: batchSize }, (_, j) => start + j);
-        
-        const results = await Promise.allSettled(
-          batch.map((idx) =>
-            withRetry(() =>
-              publicClient.readContract({
-                address: PIXEL_NFT_CONTRACT_ADDRESS,
-                abi: PixelNFTABI,
-                functionName: "userTokens",
-                args: [addr, BigInt(idx)],
-              })
-            )
-          )
-        );
-        
-        return results
-          .filter((r): r is PromiseFulfilledResult<bigint> => 
-            r.status === "fulfilled" && r.value !== 0n
-          )
-          .map(r => r.value);
-      })
-    );
+    for (let start = 0; start < n; start += BATCH) {
+      const indexes = Array.from(
+        { length: Math.min(BATCH, n - start) },
+        (_, offset) => start + offset
+      );
+      const results = await publicClient.multicall({
+        allowFailure: true,
+        contracts: indexes.map((index) => ({
+          address: PIXEL_NFT_CONTRACT_ADDRESS,
+          abi: PixelNFTABI,
+          functionName: "userTokens" as const,
+          args: [addr, BigInt(index)] as const,
+        })),
+      });
 
-    for (const result of batchResults) {
-      if (result.status === "fulfilled") {
-        allIds.push(...result.value);
-      }
+      const ids = await Promise.all(results.map((result, resultIndex) => {
+        if (result.status === "success") return Promise.resolve(result.result as bigint);
+        const index = indexes[resultIndex];
+        return withRetry(() =>
+          publicClient.readContract({
+            address: PIXEL_NFT_CONTRACT_ADDRESS,
+            abi: PixelNFTABI,
+            functionName: "userTokens",
+            args: [addr, BigInt(index)],
+          }) as Promise<bigint>
+        );
+      }));
+      allIds.push(...ids);
     }
 
-    const ids = allIds.filter((id, idx) => allIds.indexOf(id) === idx);
-    userNftCache.set(addr, { data: ids, timestamp: Date.now() });
-    return ids.sort((a, b) => Number(a - b));
+    const ids = Array.from(
+      new Map(allIds.map((id) => [id.toString(), id] as const)).values()
+    );
+    if (ids.length !== n) {
+      throw new Error(`Incomplete NFT enumeration: expected ${n}, received ${ids.length}`);
+    }
+    setBoundedCache(userNftCache, addr, { data: ids, timestamp: Date.now() }, USER_NFT_CACHE_MAX);
+    return ids.sort((a, b) => (a === b ? 0 : a < b ? -1 : 1));
   } catch (err) {
     console.error("[Contract] getUserTokenIds error:", err);
-    if (!cached) {
-      userNftCache.set(addr, { data: [], timestamp: Date.now(), isError: true });
-    }
-    return cached?.data ?? [];
+    if (cached && !cached.isError) return cached.data;
+    setBoundedCache(userNftCache, addr, { data: [], timestamp: Date.now(), isError: true }, USER_NFT_CACHE_MAX);
+    throw err;
   }
 }
 

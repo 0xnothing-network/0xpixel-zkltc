@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useReadContract } from "wagmi";
 import {
   ZEROXN_ABI,
@@ -16,7 +16,7 @@ export type SocialTxRequest = {
   args?: readonly unknown[];
 };
 
-export type SocialTxRunner = (label: string, request: SocialTxRequest) => Promise<void>;
+export type SocialTxRunner = (label: string, request: SocialTxRequest) => Promise<boolean>;
 
 export type OwnedPixelOption = {
   tokenId: string;
@@ -36,6 +36,7 @@ const pixelMetadataResolvers = new Map<string, Array<(value: PixelMetadata | nul
 const pixelMetadataQueue = new Set<string>();
 let pixelMetadataQueueTimer: ReturnType<typeof setTimeout> | null = null;
 const SOCIAL_ROW_REFRESH_MS = 8_000;
+const PIXEL_METADATA_CACHE_MAX = 512;
 
 function requestPixelMetadata(id: string): Promise<PixelMetadata | null> {
   const cached = pixelMetadataCache.get(id);
@@ -62,7 +63,18 @@ function requestPixelMetadata(id: string): Promise<PixelMetadata | null> {
 }
 
 function resolveQueuedPixelMetadata(id: string, value: PixelMetadata | null) {
-  pixelMetadataCache.set(id, value);
+  if (value) {
+    pixelMetadataCache.delete(id);
+    pixelMetadataCache.set(id, value);
+    while (pixelMetadataCache.size > PIXEL_METADATA_CACHE_MAX) {
+      const oldestKey = pixelMetadataCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      pixelMetadataCache.delete(oldestKey);
+    }
+  } else {
+    // Missing/error results stay retryable instead of poisoning the session.
+    pixelMetadataCache.delete(id);
+  }
   const resolvers = pixelMetadataResolvers.get(id) ?? [];
   pixelMetadataResolvers.delete(id);
   for (const resolve of resolvers) resolve(value);
@@ -507,11 +519,11 @@ export function FollowButton({
 
   const toggleFollow = async () => {
     const following = Boolean(isFollowing);
-    await runTx(following ? "Unfollow" : "Follow", {
+    const succeeded = await runTx(following ? "Unfollow" : "Follow", {
       functionName: following ? "unfollow" : "follow",
       args: [target],
     });
-    void refetch();
+    if (succeeded) void refetch();
   };
 
   return (
@@ -650,6 +662,11 @@ export function PostCard({
   const [comment, setComment] = useState("");
   const [shareCopied, setShareCopied] = useState(false);
   const [pixelToken, setPixelToken] = useState("");
+  const shareTimerRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (shareTimerRef.current) clearTimeout(shareTimerRef.current);
+  }, []);
 
   const { data: liked, refetch: refetchLiked } = useReadContract({
     address: ZEROXN_ADDRESS,
@@ -658,7 +675,8 @@ export function PostCard({
     args: viewer ? [postId, viewer] : undefined,
     query: { enabled: Boolean(viewer), refetchInterval: viewer ? SOCIAL_ROW_REFRESH_MS : false },
   });
-  const commentOffset = detailed ? 0n : BigInt(Math.max(Number(post[6] ?? 0) - 3, 0));
+  const commentCount = post[6] ?? 0;
+  const commentOffset = detailed ? 0n : BigInt(Math.max(commentCount - 3, 0));
   const commentLimit = detailed ? 80n : 3n;
   const { data: commentIds, refetch: refetchComments } = useReadContract({
     address: ZEROXN_ADDRESS,
@@ -666,7 +684,7 @@ export function PostCard({
     functionName: "getPostComments",
     args: [postId, commentOffset, commentLimit],
     query: {
-      enabled: !post[8] && (detailed || Number(post[6] ?? 0) > 0),
+      enabled: !post[8] && (detailed || commentCount > 0),
       refetchInterval: !post[8] ? SOCIAL_ROW_REFRESH_MS : false,
     },
   });
@@ -680,16 +698,17 @@ export function PostCard({
   const hasPixelComment = pixelToken.trim().length > 0;
 
   const handleLike = async () => {
-    await runTx("Like", { functionName: "likePost", args: [postId] });
-    void refetchLiked();
+    const succeeded = await runTx("Like", { functionName: "likePost", args: [postId] });
+    if (succeeded) void refetchLiked();
   };
 
   const handleComment = async () => {
     if (!canComment) return;
-    await runTx("Comment", {
+    const succeeded = await runTx("Comment", {
       functionName: "commentOnPost",
       args: [postId, comment.trim(), hasPixelComment, hasPixelComment ? BigInt(pixelToken) : 0n],
     });
+    if (!succeeded) return;
     setComment("");
     setPixelToken("");
     void refetchComments();
@@ -709,7 +728,11 @@ export function PostCard({
         await navigator.clipboard.writeText(url);
       }
       setShareCopied(true);
-      window.setTimeout(() => setShareCopied(false), 1400);
+      if (shareTimerRef.current) clearTimeout(shareTimerRef.current);
+      shareTimerRef.current = window.setTimeout(() => {
+        shareTimerRef.current = null;
+        setShareCopied(false);
+      }, 1400);
     } catch {
       setShareCopied(false);
     }

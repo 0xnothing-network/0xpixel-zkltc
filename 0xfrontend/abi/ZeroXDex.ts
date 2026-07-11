@@ -10,8 +10,8 @@ export const ZeroXDexAbi = [
     anonymous: false,
     inputs: [
       { indexed: true, name: 'user', type: 'address' },
-      { indexed: false, name: 'tokenIn', type: 'address' },
-      { indexed: false, name: 'tokenOut', type: 'address' },
+      { indexed: true, name: 'tokenIn', type: 'address' },
+      { indexed: true, name: 'tokenOut', type: 'address' },
       { indexed: false, name: 'amountIn', type: 'uint256' },
       { indexed: false, name: 'amountOut', type: 'uint256' },
       { indexed: false, name: 'fee', type: 'uint256' },
@@ -80,4 +80,4 @@ export const ZEROXDEX_ADDRESS =
 
 // Subgraph URL — version pinned to match the deployed subgraph
 export const SUBGRAPH_URL =
-  'https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.0/gn' as const;
+  'https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.6/gn' as const;

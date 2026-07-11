@@ -3,17 +3,18 @@ import {
   PIXEL_NFT_CONTRACT_ADDRESS,
   PIXEL_MARKETPLACE_ADDRESS,
   getUserTokenIds,
-  fetchTokenDataCached,
   publicClient,
 } from "@/lib/contract";
 import { pixelDataToSVG } from "@/lib/gridParser";
 import { MarketplaceAbi } from "@/lib/marketplaceAbi";
+import { PixelNFTABI } from "@/lib/abi";
 import {
   fetchUserNftsFromSubgraph,
   hasMarketplaceSubgraph,
 } from "@/lib/marketplaceSubgraph";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const revalidate = 30;
 
 interface CacheEntry<T> {
@@ -22,6 +23,18 @@ interface CacheEntry<T> {
 }
 const CACHE = new Map<string, CacheEntry<NativeNft[]>>();
 const CACHE_TTL = 30_000;
+const CACHE_MAX_ENTRIES = 1024;
+const MAX_SUBGRAPH_BLOCK_LAG = 20_000n;
+
+function writeCache(address: string, value: NativeNft[]) {
+  CACHE.delete(address);
+  CACHE.set(address, { value, ts: Date.now() });
+  while (CACHE.size > CACHE_MAX_ENTRIES) {
+    const oldestKey = CACHE.keys().next().value;
+    if (oldestKey === undefined) break;
+    CACHE.delete(oldestKey);
+  }
+}
 
 export interface NativeNft {
   tokenId: string;
@@ -30,17 +43,22 @@ export interface NativeNft {
   listing: { listingId: string; price: string } | null;
 }
 
-async function fetchNativeNfts(address: string): Promise<NativeNft[]> {
+async function fetchNativeNfts(address: string, force = false): Promise<NativeNft[]> {
   const cached = CACHE.get(address);
-  if (cached && Date.now() - cached.ts < CACHE_TTL) {
+  if (!force && cached && Date.now() - cached.ts < CACHE_TTL) {
     return cached.value;
   }
 
   if (hasMarketplaceSubgraph()) {
     try {
-      const tokens = await fetchUserNftsFromSubgraph(address);
-      CACHE.set(address, { value: tokens, ts: Date.now() });
-      return tokens;
+      const payload = await fetchUserNftsFromSubgraph(address);
+      if (await isSubgraphFresh(payload)) {
+        writeCache(address, payload.tokens);
+        return payload.tokens;
+      }
+      console.warn(
+        `[user-nfts] subgraph is stale at block ${payload.indexedBlock ?? "unknown"}; using RPC`
+      );
     } catch (err) {
       console.warn("[user-nfts] subgraph fallback to RPC:", err);
     }
@@ -49,14 +67,21 @@ async function fetchNativeNfts(address: string): Promise<NativeNft[]> {
   // Get token IDs first
   const tokenIds = await getUserTokenIds(address);
   if (tokenIds.length === 0) {
-    CACHE.set(address, { value: [], ts: Date.now() });
+    writeCache(address, []);
     return [];
   }
 
   // Fetch token data and listing data in parallel for maximum speed
   const [tokenDataResults, listingResults] = await Promise.all([
-    // All token data in parallel
-    Promise.all(tokenIds.map((id) => fetchTokenDataCached(id))),
+    publicClient.multicall({
+      allowFailure: true,
+      contracts: tokenIds.map((tokenId) => ({
+        address: PIXEL_NFT_CONTRACT_ADDRESS,
+        abi: PixelNFTABI,
+        functionName: "tokenData" as const,
+        args: [tokenId] as const,
+      })),
+    }),
     // All listing data in single multicall
     publicClient.multicall({
       allowFailure: true,
@@ -70,7 +95,10 @@ async function fetchNativeNfts(address: string): Promise<NativeNft[]> {
   ]);
 
   const tokens: NativeNft[] = tokenIds.map((tokenId, i) => {
-    const data = tokenDataResults[i];
+    const tokenResult = tokenDataResults[i];
+    const data = tokenResult?.status === "success"
+      ? tokenResult.result as readonly [string, bigint, string, string, bigint, string]
+      : null;
     let listing: NativeNft["listing"] = null;
 
     const r = listingResults[i];
@@ -92,31 +120,65 @@ async function fetchNativeNfts(address: string): Promise<NativeNft[]> {
 
     return {
       tokenId: tokenId.toString(),
-      name: data?.name ?? "Untitled",
-      imageUrl: data?.pixelData && data?.gridSize
-        ? pixelDataToSVG(data.pixelData, Number(data.gridSize))
+      name: data?.[0] ?? "Untitled",
+      imageUrl: data?.[2] && data?.[1]
+        ? pixelDataToSVG(data[2], Number(data[1]))
         : "",
       listing,
     };
   });
 
-  CACHE.set(address, { value: tokens, ts: Date.now() });
+  writeCache(address, tokens);
   return tokens;
 }
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const address = searchParams.get("address");
+  const force = searchParams.get("force") === "1";
   if (!address || !/^0x[0-9a-fA-F]{40}$/.test(address)) {
     return NextResponse.json({ error: "Invalid address" }, { status: 400 });
   }
   try {
-    const tokens = await fetchNativeNfts(address);
+    const tokens = await fetchNativeNfts(address.toLowerCase(), force);
     return NextResponse.json({ tokens, count: tokens.length });
   } catch (err) {
     return NextResponse.json(
       { error: (err as Error).message || "Unknown error" },
       { status: 500 }
     );
+  }
+}
+
+async function isSubgraphFresh(payload: {
+  indexedBlock: number | null;
+  hasIndexingErrors: boolean;
+}): Promise<boolean> {
+  if (payload.hasIndexingErrors || payload.indexedBlock === null) return false;
+  try {
+    const currentBlock = await withTimeout(
+      publicClient.getBlockNumber(),
+      2_500,
+      "RPC head check timed out"
+    );
+    return BigInt(payload.indexedBlock) + MAX_SUBGRAPH_BLOCK_LAG >= currentBlock;
+  } catch {
+    return true;
+  }
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
 }

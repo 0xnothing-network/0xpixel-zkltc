@@ -2,12 +2,13 @@
 
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
-import { useAccount } from "wagmi";
-import { useDexWrite, useSwapQuote, usePoolByTokens, useRealtimePrice, NATIVE_TOKEN, KNOWN_TOKENS, Token, useTokenBalance } from "@/lib/use0xDex";
+import { useAccount, usePublicClient } from "wagmi";
+import { useDexWrite, useSwapQuote, usePoolByTokens, useRealtimePrice, useDexRead, NATIVE_TOKEN, KNOWN_TOKENS, Token, useTokenBalance, useTokenAllowance } from "@/lib/use0xDex";
 import { formatUnits, parseUnits } from "viem";
 import { useToast } from "@/components/Toast";
 import { useChainId, useSwitchChain } from "wagmi";
 import { LITVM_CHAIN_ID } from "@/lib/chainSwitch";
+import { DEX_ADDRESS } from "@/lib/0xDexAbi";
 
 const DEX_NAV = [
   { href: "/0xdex", label: "Dashboard", icon: "◈" },
@@ -86,6 +87,7 @@ export default function SwapPage() {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
   const { switchChain } = useSwitchChain();
+  const publicClient = usePublicClient();
   const toast = useToast();
   
   const [tokenIn, setTokenIn] = useState<Token | null>(NATIVE_TOKEN);
@@ -93,16 +95,23 @@ export default function SwapPage() {
   const [amountIn, setAmountIn] = useState("");
   const [slippage, setSlippage] = useState(0.5);
   const [mounted, setMounted] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
-  const { swap } = useDexWrite();
+  const { swap, approveToken } = useDexWrite();
   const { data: balanceIn } = useTokenBalance(address, tokenIn);
-  const quote = useSwapQuote(tokenIn, tokenOut, amountIn);
+  const { data: allowanceIn, refetch: refetchAllowanceIn } = useTokenAllowance(tokenIn, DEX_ADDRESS);
+  const { data: swapFeeBps } = useDexRead<bigint>("swapFee");
+  const effectiveSwapFeeBps = swapFeeBps ?? 10n;
+  const quote = useSwapQuote(tokenIn, tokenOut, amountIn, effectiveSwapFeeBps);
   const { pool } = usePoolByTokens(tokenIn?.address, tokenOut?.address);
 
   // Realtime price from contract events — instant, no subgraph delay
   const { latestPrice: realtimePrice } = useRealtimePrice(
     tokenIn?.address,
     tokenOut?.address,
+    50,
+    tokenIn?.decimals ?? 18,
+    tokenOut?.decimals ?? 18,
   );
 
   // Spot price from reserves (fallback / initial load)
@@ -111,12 +120,14 @@ export default function SwapPage() {
     const isReversed = tokenIn?.address !== pool.token0;
     const reserveIn = isReversed ? pool.reserve1 : pool.reserve0;
     const reserveOut = isReversed ? pool.reserve0 : pool.reserve1;
-    const scale = 10 ** ((tokenOut?.decimals ?? 18) - (tokenIn?.decimals ?? 18));
-    return (Number(reserveIn) / Number(reserveOut)) * scale;
+    const reserveInAmount = Number(formatUnits(reserveIn, tokenIn?.decimals ?? 18));
+    const reserveOutAmount = Number(formatUnits(reserveOut, tokenOut?.decimals ?? 18));
+    if (!Number.isFinite(reserveInAmount) || !Number.isFinite(reserveOutAmount) || reserveInAmount <= 0) return 0;
+    return reserveOutAmount / reserveInAmount;
   }, [pool, tokenIn, tokenOut]);
 
-  // Use realtime event price when available, otherwise spot price
-  const displayRate = realtimePrice?.price ?? spotRate;
+  // Pool reserves are canonical; the latest event is only a temporary fallback.
+  const displayRate = spotRate || realtimePrice?.price || 0;
   
   useEffect(() => {
     setMounted(true);
@@ -144,9 +155,11 @@ export default function SwapPage() {
   };
   
   const handleMax = () => {
-    if (balanceIn) {
-      const max = formatUnits(balanceIn, tokenIn?.decimals || 18);
-      setAmountIn(String(parseFloat(max) * 0.99)); // Leave some for gas if native
+    if (balanceIn && tokenIn) {
+      const maxBalance = tokenIn.address === NATIVE_TOKEN.address
+        ? (balanceIn * 99n) / 100n
+        : balanceIn;
+      setAmountIn(formatUnits(maxBalance, tokenIn.decimals));
     }
   };
   
@@ -160,25 +173,42 @@ export default function SwapPage() {
       switchChain?.({ chainId: LITVM_CHAIN_ID });
       return;
     }
-    if (!tokenIn || !tokenOut || !amountIn) {
+    if (!tokenIn || !tokenOut || !amountIn || !publicClient || isSubmitting) {
       toast.error("Invalid input", "Please select tokens and enter amount");
       return;
     }
-    
-    const amountInFormatted = parseUnits(amountIn, tokenIn.decimals);
-    const minAmountOut = quote?.amountOut 
-      ? (quote.amountOut * BigInt(Math.floor((100 - slippage) * 100))) / 10000n
-      : 0n;
-    
+
+    setIsSubmitting(true);
     try {
-      swap(tokenIn.address, tokenOut.address, amountInFormatted, minAmountOut);
+      const amountInFormatted = parseUnits(amountIn, tokenIn.decimals);
+      if (amountInFormatted <= 0n || !quote?.amountOut) throw new Error("Invalid swap amount");
+
+      if (tokenIn.address !== NATIVE_TOKEN.address) {
+        const currentAllowance = (allowanceIn ?? (await refetchAllowanceIn()).data ?? 0n) as bigint;
+        if (currentAllowance < amountInFormatted) {
+          const approvalHash = await approveToken(tokenIn.address, DEX_ADDRESS);
+          const approvalReceipt = await publicClient.waitForTransactionReceipt({ hash: approvalHash });
+          if (approvalReceipt.status !== "success") throw new Error("Approval transaction reverted");
+          await refetchAllowanceIn();
+          toast.success("Approved", `${tokenIn.symbol} is ready to swap`);
+          return;
+        }
+      }
+
+      const minAmountOut = (quote.amountOut * BigInt(Math.floor((100 - slippage) * 100))) / 10000n;
+      const hash = await swap(tokenIn.address, tokenOut.address, amountInFormatted, minAmountOut);
       toast.info("Swapping", `Swapping ${amountIn} ${tokenIn.symbol}...`);
-    } catch {
-      toast.error("Swap failed", "Transaction failed");
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") throw new Error("Swap transaction reverted");
+      toast.success("Swap confirmed");
+    } catch (error) {
+      toast.handleError(error, "Swap failed");
+    } finally {
+      setIsSubmitting(false);
     }
   };
   
-  const isValidSwap = tokenIn && tokenOut && amountIn && parseFloat(amountIn) > 0 && quote?.amountOut;
+  const isValidSwap = Boolean(tokenIn && tokenOut && amountIn && parseFloat(amountIn) > 0 && quote?.amountOut && !isSubmitting);
 
   return (
     <div className="min-h-screen bg-[#0F0F23]">
@@ -313,7 +343,7 @@ export default function SwapPage() {
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-[#64748B]">Fee (1%)</span>
+                  <span className="text-[#64748B]">Fee ({Number(effectiveSwapFeeBps) / 100}%)</span>
                   <span className="text-white" style={{ fontFamily: "var(--font-departure)" }}>
                     {formatUnits(quote.fee, tokenIn?.decimals || 18).slice(0, 8)} {tokenIn?.symbol}
                   </span>

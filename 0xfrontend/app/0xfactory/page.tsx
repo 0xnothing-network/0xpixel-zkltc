@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
-import { useWriteContract, useReadContract, useWaitForTransactionReceipt } from "wagmi";
+import { useWriteContract, useReadContract, usePublicClient } from "wagmi";
 import { formatUnits } from "viem";
 import { LITVM_CHAIN_ID } from "@/lib/chainSwitch";
 import { useToast } from "@/components/Toast";
@@ -81,7 +81,9 @@ export default function FactoryPage() {
   const { connectors, connect, isPending: isConnecting } = useConnect();
   const { disconnect } = useDisconnect();
   const { switchChain, isPending: isSwitching } = useSwitchChain();
+  const publicClient = usePublicClient();
   const [mounted, setMounted] = useState(false);
+  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [tokenName, setTokenName] = useState("");
   const [tokenSymbol, setTokenSymbol] = useState("");
@@ -91,7 +93,12 @@ export default function FactoryPage() {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => { setMounted(true); }, []);
+  useEffect(() => {
+    setMounted(true);
+    return () => {
+      if (successTimerRef.current) clearTimeout(successTimerRef.current);
+    };
+  }, []);
 
   // Auto-switch to LitVM when connected to wrong network
   useEffect(() => {
@@ -101,21 +108,21 @@ export default function FactoryPage() {
     }
   }, [mounted, isConnected, chainId, switchChain]);
 
-  const { data: totalTokens } = useReadContract({
+  const { data: totalTokens, refetch: refetchTotalTokens } = useReadContract({
     address: FACTORY_ADDRESS as `0x${string}`,
     abi: FACTORY_ABI,
     functionName: "totalTokensCreated",
     query: { enabled: mounted }
   });
 
-  const { data: allTokens } = useReadContract({
+  const { data: allTokens, refetch: refetchAllTokens } = useReadContract({
     address: FACTORY_ADDRESS as `0x${string}`,
     abi: FACTORY_ABI,
     functionName: "getAllTokens",
     query: { enabled: mounted }
   });
 
-  const { data: myTokens } = useReadContract({
+  const { data: myTokens, refetch: refetchMyTokens } = useReadContract({
     address: FACTORY_ADDRESS as `0x${string}`,
     abi: FACTORY_ABI,
     functionName: "getTokensByCreator",
@@ -123,8 +130,12 @@ export default function FactoryPage() {
     query: { enabled: mounted && !!address }
   });
 
-  const { writeContract, data: txHash } = useWriteContract();
-  const { isLoading: isWaitingTx, isSuccess: txSuccess } = useWaitForTransactionReceipt({ hash: txHash });
+  const { writeContractAsync } = useWriteContract();
+
+  const connectWallet = () => {
+    const connector = connectors[0];
+    if (connector) connect({ connector });
+  };
 
   const handleCreate = async () => {
     if (!tokenName || !tokenSymbol || !totalSupply || !devWallet) {
@@ -139,29 +150,40 @@ export default function FactoryPage() {
     setSuccessMsg(null);
     setIsCreating(true);
     try {
-      writeContract({
+      if (!publicClient) throw new Error("RPC client is not ready");
+      const supply = BigInt(totalSupply);
+      if (supply <= 0n) throw new Error("Total supply must be greater than 0");
+
+      const hash = await writeContractAsync({
         address: FACTORY_ADDRESS as `0x${string}`,
         abi: FACTORY_ABI,
         functionName: "createToken",
-        args: [tokenName, tokenSymbol, BigInt(totalSupply), devWallet as `0x${string}`],
+        args: [tokenName, tokenSymbol, supply, devWallet as `0x${string}`],
       });
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to create token");
-      setIsCreating(false);
-    }
-  };
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") throw new Error("Token creation transaction reverted");
 
-  useEffect(() => {
-    if (txSuccess && !isWaitingTx) {
-      setIsCreating(false);
       setSuccessMsg("Token created successfully!");
       setTokenName("");
       setTokenSymbol("");
       setTotalSupply("");
       setDevWallet("");
-      setTimeout(() => setSuccessMsg(null), 8000);
+      await Promise.allSettled([
+        refetchTotalTokens(),
+        refetchAllTokens(),
+        refetchMyTokens(),
+      ]);
+      if (successTimerRef.current) clearTimeout(successTimerRef.current);
+      successTimerRef.current = setTimeout(() => {
+        successTimerRef.current = null;
+        setSuccessMsg(null);
+      }, 8000);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to create token");
+    } finally {
+      setIsCreating(false);
     }
-  }, [txSuccess, isWaitingTx]);
+  };
 
   if (!mounted) return (
     <div className="min-h-screen bg-[#0F0F23] flex flex-col items-center justify-center gap-5">
@@ -220,8 +242,8 @@ export default function FactoryPage() {
             )}
             {!isConnected ? (
               <button
-                onClick={() => connect({ connector: connectors[0] })}
-                disabled={isConnecting}
+                onClick={connectWallet}
+                disabled={isConnecting || connectors.length === 0}
                 className="pixel-btn pixel-btn-indigo px-2.5 sm:px-4 py-2 text-[10px] sm:text-xs"
                 style={{ fontFamily: "var(--font-departure)" }}
               >
@@ -252,8 +274,8 @@ export default function FactoryPage() {
           </button>
         ) : !isConnected ? (
           <button
-            onClick={() => connect({ connector: connectors[0] })}
-            disabled={isConnecting}
+            onClick={connectWallet}
+            disabled={isConnecting || connectors.length === 0}
             className="pixel-btn pixel-btn-indigo w-full py-2 text-[10px]"
             style={{ fontFamily: "var(--font-departure)" }}
           >
@@ -370,11 +392,11 @@ export default function FactoryPage() {
           <div className="mt-5">
             <button
               onClick={handleCreate}
-              disabled={!isConnected || isCreating || isWaitingTx}
+              disabled={!isConnected || isCreating}
               className="pixel-btn pixel-btn-amber w-full py-3 text-sm"
               style={{ fontFamily: "var(--font-departure)" }}
             >
-              {!isConnected ? "Connect Wallet to Create" : isCreating || isWaitingTx ? "◈ Creating Token..." : "◈ Deploy Token"}
+              {!isConnected ? "Connect Wallet to Create" : isCreating ? "◈ Creating Token..." : "◈ Deploy Token"}
             </button>
           </div>
 
@@ -428,6 +450,11 @@ export default function FactoryPage() {
 function TokenRow({ token, index }: { token: string; index: number }) {
   const [copied, setCopied] = useState(false);
   const toast = useToast();
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+  }, []);
 
   const { data: name } = useReadContract({
     address: token as `0x${string}`,
@@ -455,7 +482,11 @@ function TokenRow({ token, index }: { token: string; index: number }) {
       await navigator.clipboard.writeText(token);
       setCopied(true);
       toast.success("Copied", token.slice(0, 10) + "..." + token.slice(-8));
-      setTimeout(() => setCopied(false), 2000);
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = setTimeout(() => {
+        copiedTimerRef.current = null;
+        setCopied(false);
+      }, 2000);
     } catch {
       toast.error("Failed", "Could not copy to clipboard");
     }

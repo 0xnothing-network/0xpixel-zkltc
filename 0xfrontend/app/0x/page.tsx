@@ -207,12 +207,20 @@ function parseGroupKeyEnvelope(payload?: `0x${string}`) {
 
 function loadStoredGroupKey(address?: string, groupId?: string) {
   if (!address || !groupId || typeof window === "undefined") return "";
-  return window.localStorage.getItem(groupStorageKey(address, groupId)) || "";
+  try {
+    return window.localStorage.getItem(groupStorageKey(address, groupId)) || "";
+  } catch {
+    return "";
+  }
 }
 
 function storeGroupKey(address: string, groupId: string, rawKey: string) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(groupStorageKey(address, groupId), rawKey);
+  try {
+    window.localStorage.setItem(groupStorageKey(address, groupId), rawKey);
+  } catch {
+    // The on-chain key envelope remains authoritative when storage is blocked.
+  }
 }
 
 function createGroupRawKey() {
@@ -239,9 +247,9 @@ async function importDmPublicKey(encoded: string) {
 
 async function loadStoredDmKeyPair(address?: string) {
   if (!address || typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(dmStorageKey(address));
-  if (!raw) return null;
   try {
+    const raw = window.localStorage.getItem(dmStorageKey(address));
+    if (!raw) return null;
     return JSON.parse(raw) as StoredDmKeyPair;
   } catch {
     return null;
@@ -261,7 +269,11 @@ async function createStoredDmKeyPair(address: string) {
     privateJwk,
     publicKey: encodeJson(publicJwk),
   };
-  window.localStorage.setItem(dmStorageKey(address), JSON.stringify(stored));
+  try {
+    window.localStorage.setItem(dmStorageKey(address), JSON.stringify(stored));
+  } catch {
+    throw new Error("Encrypted DM keys cannot be saved in this browser");
+  }
   return stored;
 }
 
@@ -420,7 +432,6 @@ async function decryptDmEnvelope(envelope: DmEnvelope, currentAddress: string, l
 export default function ZeroxSocialPage() {
   const [mounted, setMounted] = useState(false);
   const [tab, setTab] = useState<Tab>("feed");
-  const [refreshKey, setRefreshKey] = useState(0);
   const [profileForm, setProfileForm] = useState({
     username: "",
     displayName: "",
@@ -474,7 +485,7 @@ export default function ZeroxSocialPage() {
     return () => {
       cancelled = true;
     };
-  }, [address, refreshKey]);
+  }, [address]);
 
   useEffect(() => {
     if (!address) {
@@ -503,7 +514,7 @@ export default function ZeroxSocialPage() {
       });
 
     return () => controller.abort();
-  }, [address, refreshKey]);
+  }, [address]);
 
   const { data: profileData, refetch: refetchProfile } = useReadContract({
     address: ZEROXN_ADDRESS,
@@ -544,25 +555,25 @@ export default function ZeroxSocialPage() {
     address: ZEROXN_ADDRESS,
     abi: ZEROXN_ABI,
     functionName: "postCount",
-    query: { refetchInterval: LIVE_NORMAL_MS },
+    query: { enabled: tab === "feed", refetchInterval: tab === "feed" ? LIVE_NORMAL_MS : false },
   });
   const { data: channelCount, refetch: refetchChannelCount } = useReadContract({
     address: ZEROXN_ADDRESS,
     abi: ZEROXN_ABI,
     functionName: "channelCount",
-    query: { refetchInterval: LIVE_SLOW_MS },
+    query: { enabled: tab === "channels", refetchInterval: tab === "channels" ? LIVE_SLOW_MS : false },
   });
   const { data: groupCount, refetch: refetchGroupCount } = useReadContract({
     address: ZEROXN_ADDRESS,
     abi: ZEROXN_ABI,
     functionName: "groupCount",
-    query: { refetchInterval: LIVE_SLOW_MS },
+    query: { enabled: tab === "groups", refetchInterval: tab === "groups" ? LIVE_SLOW_MS : false },
   });
   const { data: messageCount, refetch: refetchMessageCount } = useReadContract({
     address: ZEROXN_ADDRESS,
     abi: ZEROXN_ABI,
     functionName: "messageCount",
-    query: { refetchInterval: LIVE_FAST_MS },
+    query: { enabled: tab === "chat" || tab === "dm", refetchInterval: tab === "chat" || tab === "dm" ? LIVE_FAST_MS : false },
   });
 
   const profile = profileData as ZeroxNProfile | undefined;
@@ -591,11 +602,11 @@ export default function ZeroxSocialPage() {
   }, [address, profile]);
 
   const recentPostIds = useMemo(() => {
-    const count = Number(postCount ?? 0n);
-    if (!Number.isFinite(count) || count <= 0) return [];
+    const count = (postCount as bigint | undefined) ?? 0n;
+    if (count <= 0n) return [];
     const ids: bigint[] = [];
-    for (let id = count; id >= 1 && ids.length < POST_SCAN_LIMIT; id -= 1) {
-      ids.push(BigInt(id));
+    for (let id = count; id >= 1n && ids.length < POST_SCAN_LIMIT; id -= 1n) {
+      ids.push(id);
     }
     return ids;
   }, [postCount]);
@@ -614,7 +625,7 @@ export default function ZeroxSocialPage() {
   const { data: feedData, refetch: refetchFeed } = useReadContracts({
     contracts: feedContracts,
     allowFailure: true,
-    query: { enabled: feedContracts.length > 0, refetchInterval: canUseSocial ? LIVE_NORMAL_MS : false },
+    query: { enabled: tab === "feed" && feedContracts.length > 0, refetchInterval: tab === "feed" && canUseSocial ? LIVE_NORMAL_MS : false },
   });
 
   const globalPosts = useMemo(() => {
@@ -639,8 +650,8 @@ export default function ZeroxSocialPage() {
     })),
     allowFailure: true,
     query: {
-      enabled: feedMode === "following" && Boolean(address) && globalPosts.length > 0,
-      refetchInterval: feedMode === "following" ? LIVE_NORMAL_MS : false,
+      enabled: tab === "feed" && feedMode === "following" && Boolean(address) && globalPosts.length > 0,
+      refetchInterval: tab === "feed" && feedMode === "following" ? LIVE_NORMAL_MS : false,
     },
   });
 
@@ -658,11 +669,11 @@ export default function ZeroxSocialPage() {
   }, [feedMode, followingFeedData, globalPosts]);
 
   const recentMessageIds = useMemo(() => {
-    const count = Number(messageCount ?? 0n);
-    if (!Number.isFinite(count) || count <= 0) return [];
+    const count = (messageCount as bigint | undefined) ?? 0n;
+    if (count <= 0n) return [];
     const ids: bigint[] = [];
-    for (let id = count; id >= 1 && ids.length < MESSAGE_SCAN_LIMIT; id -= 1) {
-      ids.push(BigInt(id));
+    for (let id = count; id >= 1n && ids.length < MESSAGE_SCAN_LIMIT; id -= 1n) {
+      ids.push(id);
     }
     return ids;
   }, [messageCount]);
@@ -675,7 +686,7 @@ export default function ZeroxSocialPage() {
       args: [messageId],
     })),
     allowFailure: true,
-    query: { enabled: recentMessageIds.length > 0, refetchInterval: canUseSocial ? LIVE_FAST_MS : false },
+    query: { enabled: (tab === "chat" || tab === "dm") && recentMessageIds.length > 0, refetchInterval: (tab === "chat" || tab === "dm") && canUseSocial ? LIVE_FAST_MS : false },
   });
 
   const publicMessages = useMemo(() => {
@@ -706,11 +717,11 @@ export default function ZeroxSocialPage() {
   }, [messageData, recentMessageIds]);
 
   const recentChannelIds = useMemo(() => {
-    const count = Number(channelCount ?? 0n);
-    if (!Number.isFinite(count) || count <= 0) return [];
+    const count = (channelCount as bigint | undefined) ?? 0n;
+    if (count <= 0n) return [];
     const ids: bigint[] = [];
-    for (let id = count; id >= 1 && ids.length < CHANNEL_LIMIT; id -= 1) {
-      ids.push(BigInt(id));
+    for (let id = count; id >= 1n && ids.length < CHANNEL_LIMIT; id -= 1n) {
+      ids.push(id);
     }
     return ids;
   }, [channelCount]);
@@ -723,7 +734,7 @@ export default function ZeroxSocialPage() {
       args: [channelId],
     })),
     allowFailure: true,
-    query: { enabled: recentChannelIds.length > 0, refetchInterval: canUseSocial ? LIVE_SLOW_MS : false },
+    query: { enabled: tab === "channels" && recentChannelIds.length > 0, refetchInterval: tab === "channels" && canUseSocial ? LIVE_SLOW_MS : false },
   });
 
   const channels = useMemo(() => {
@@ -748,7 +759,7 @@ export default function ZeroxSocialPage() {
     abi: ZEROXN_ABI,
     functionName: "channelMember",
     args: selectedChannel && address ? [selectedChannel.channelId, address] : undefined,
-    query: { enabled: Boolean(selectedChannel && address), refetchInterval: selectedChannel ? LIVE_NORMAL_MS : false },
+    query: { enabled: tab === "channels" && Boolean(selectedChannel && address), refetchInterval: tab === "channels" && selectedChannel ? LIVE_NORMAL_MS : false },
   });
 
   const { data: selectedChannelPostIdsData, refetch: refetchSelectedChannelPosts } = useReadContract({
@@ -756,7 +767,7 @@ export default function ZeroxSocialPage() {
     abi: ZEROXN_ABI,
     functionName: "getChannelPosts",
     args: [selectedChannel?.channelId ?? 0n, 0n, 24n],
-    query: { enabled: Boolean(selectedChannel), refetchInterval: selectedChannel ? LIVE_NORMAL_MS : false },
+    query: { enabled: tab === "channels" && Boolean(selectedChannel), refetchInterval: tab === "channels" && selectedChannel ? LIVE_NORMAL_MS : false },
   });
 
   const selectedChannelPostIds = useMemo(() => {
@@ -772,7 +783,7 @@ export default function ZeroxSocialPage() {
       args: [postId],
     })),
     allowFailure: true,
-    query: { enabled: selectedChannelPostIds.length > 0, refetchInterval: selectedChannelPostIds.length > 0 ? LIVE_NORMAL_MS : false },
+    query: { enabled: tab === "channels" && selectedChannelPostIds.length > 0, refetchInterval: tab === "channels" && selectedChannelPostIds.length > 0 ? LIVE_NORMAL_MS : false },
   });
 
   const selectedChannelPosts = useMemo(() => {
@@ -788,11 +799,11 @@ export default function ZeroxSocialPage() {
   }, [selectedChannelPostData, selectedChannelPostIds]);
 
   const recentGroupIds = useMemo(() => {
-    const count = Number(groupCount ?? 0n);
-    if (!Number.isFinite(count) || count <= 0) return [];
+    const count = (groupCount as bigint | undefined) ?? 0n;
+    if (count <= 0n) return [];
     const ids: bigint[] = [];
-    for (let id = count; id >= 1 && ids.length < GROUP_LIMIT; id -= 1) {
-      ids.push(BigInt(id));
+    for (let id = count; id >= 1n && ids.length < GROUP_LIMIT; id -= 1n) {
+      ids.push(id);
     }
     return ids;
   }, [groupCount]);
@@ -805,7 +816,7 @@ export default function ZeroxSocialPage() {
       args: [groupId],
     })),
     allowFailure: true,
-    query: { enabled: recentGroupIds.length > 0, refetchInterval: canUseSocial ? LIVE_NORMAL_MS : false },
+    query: { enabled: tab === "groups" && recentGroupIds.length > 0, refetchInterval: tab === "groups" && canUseSocial ? LIVE_NORMAL_MS : false },
   });
 
   const { data: groupMembershipData, refetch: refetchGroupMembership } = useReadContracts({
@@ -817,8 +828,8 @@ export default function ZeroxSocialPage() {
     })),
     allowFailure: true,
     query: {
-      enabled: Boolean(address) && recentGroupIds.length > 0,
-      refetchInterval: canUseSocial ? LIVE_NORMAL_MS : false,
+      enabled: tab === "groups" && Boolean(address) && recentGroupIds.length > 0,
+      refetchInterval: tab === "groups" && canUseSocial ? LIVE_NORMAL_MS : false,
     },
   });
 
@@ -863,7 +874,7 @@ export default function ZeroxSocialPage() {
     abi: ZEROXN_ABI,
     functionName: "groupMember",
     args: selectedGroup && address ? [selectedGroup.groupId, address] : undefined,
-    query: { enabled: Boolean(selectedGroup && address), refetchInterval: selectedGroup ? LIVE_FAST_MS : false },
+    query: { enabled: tab === "groups" && Boolean(selectedGroup && address), refetchInterval: tab === "groups" && selectedGroup ? LIVE_FAST_MS : false },
   });
 
   const { data: selectedGroupAdmin, refetch: refetchSelectedGroupAdmin } = useReadContract({
@@ -871,7 +882,7 @@ export default function ZeroxSocialPage() {
     abi: ZEROXN_ABI,
     functionName: "groupAdmin",
     args: selectedGroup && address ? [selectedGroup.groupId, address] : undefined,
-    query: { enabled: Boolean(selectedGroup && address), refetchInterval: selectedGroup ? LIVE_NORMAL_MS : false },
+    query: { enabled: tab === "groups" && Boolean(selectedGroup && address), refetchInterval: tab === "groups" && selectedGroup ? LIVE_NORMAL_MS : false },
   });
 
   const { data: managedGroupMember } = useReadContract({
@@ -879,7 +890,7 @@ export default function ZeroxSocialPage() {
     abi: ZEROXN_ABI,
     functionName: "groupMember",
     args: selectedGroup && isAddress(groupManage.member) ? [selectedGroup.groupId, groupManage.member] : undefined,
-    query: { enabled: Boolean(selectedGroup && isAddress(groupManage.member)), refetchInterval: selectedGroup ? LIVE_NORMAL_MS : false },
+    query: { enabled: tab === "groups" && Boolean(selectedGroup && isAddress(groupManage.member)), refetchInterval: tab === "groups" && selectedGroup ? LIVE_NORMAL_MS : false },
   });
 
   const { data: selectedGroupKeyEnvelope, refetch: refetchSelectedGroupKeyEnvelope } = useReadContract({
@@ -887,7 +898,7 @@ export default function ZeroxSocialPage() {
     abi: ZEROXN_ABI,
     functionName: "groupKeyEnvelope",
     args: selectedGroup && address ? [selectedGroup.groupId, address] : undefined,
-    query: { enabled: Boolean(selectedGroup && address), refetchInterval: selectedGroup ? LIVE_NORMAL_MS : false },
+    query: { enabled: tab === "groups" && Boolean(selectedGroup && address), refetchInterval: tab === "groups" && selectedGroup ? LIVE_NORMAL_MS : false },
   });
 
   const selectedGroupIdText = selectedGroup?.groupId.toString() ?? "";
@@ -906,8 +917,8 @@ export default function ZeroxSocialPage() {
     args: selectedGroup && address ? [selectedGroup.groupId, selectedGroupMessageOffset, 24n] : undefined,
     account: address,
     query: {
-      enabled: Boolean(selectedGroup && selectedGroupMember && address),
-      refetchInterval: selectedGroup && selectedGroupMember ? LIVE_FAST_MS : false,
+      enabled: tab === "groups" && Boolean(selectedGroup && selectedGroupMember && address),
+      refetchInterval: tab === "groups" && selectedGroup && selectedGroupMember ? LIVE_FAST_MS : false,
     },
   });
 
@@ -924,7 +935,7 @@ export default function ZeroxSocialPage() {
       args: [messageId],
     })),
     allowFailure: true,
-    query: { enabled: selectedGroupMessageIds.length > 0, refetchInterval: selectedGroupMessageIds.length > 0 ? LIVE_FAST_MS : false },
+    query: { enabled: tab === "groups" && selectedGroupMessageIds.length > 0, refetchInterval: tab === "groups" && selectedGroupMessageIds.length > 0 ? LIVE_FAST_MS : false },
   });
 
   const selectedGroupMessages = useMemo(() => {
@@ -1015,7 +1026,7 @@ export default function ZeroxSocialPage() {
     abi: ZEROXN_ABI,
     functionName: "getInbox",
     args: address ? [address, 0n, BigInt(DM_SCAN_LIMIT)] : undefined,
-    query: { enabled: Boolean(address), refetchInterval: address ? LIVE_FAST_MS : false },
+    query: { enabled: tab === "dm" && Boolean(address), refetchInterval: tab === "dm" && address ? LIVE_FAST_MS : false },
   });
 
   const { data: sentIdsData, refetch: refetchSent } = useReadContract({
@@ -1023,7 +1034,7 @@ export default function ZeroxSocialPage() {
     abi: ZEROXN_ABI,
     functionName: "getSent",
     args: address ? [address, 0n, BigInt(DM_SCAN_LIMIT)] : undefined,
-    query: { enabled: Boolean(address), refetchInterval: address ? LIVE_FAST_MS : false },
+    query: { enabled: tab === "dm" && Boolean(address), refetchInterval: tab === "dm" && address ? LIVE_FAST_MS : false },
   });
 
   const inboxIds = useMemo(() => {
@@ -1046,7 +1057,7 @@ export default function ZeroxSocialPage() {
       args: [messageId],
     })),
     allowFailure: true,
-    query: { enabled: activeDmIds.length > 0, refetchInterval: activeDmIds.length > 0 ? LIVE_FAST_MS : false },
+    query: { enabled: tab === "dm" && activeDmIds.length > 0, refetchInterval: tab === "dm" && activeDmIds.length > 0 ? LIVE_FAST_MS : false },
   });
 
   const dmMessages = useMemo(() => {
@@ -1132,28 +1143,35 @@ export default function ZeroxSocialPage() {
   }, [address, dmMessages, localDmPublicKey]);
 
   const refetchLiveSocial = useCallback(() => {
-    setRefreshKey((value) => value + 1);
     void refetchProfile();
-    void refetchPostCount();
-    void refetchFeed();
-    void refetchChannelCount();
-    void refetchChannels();
-    void refetchSelectedChannelPosts();
-    void refetchSelectedChannelPostData();
-    void refetchSelectedChannelMember();
-    void refetchGroupCount();
-    void refetchGroups();
-    void refetchGroupMembership();
-    void refetchSelectedGroupMember();
-    void refetchSelectedGroupAdmin();
-    void refetchSelectedGroupKeyEnvelope();
-    void refetchSelectedGroupMessages();
-    void refetchSelectedGroupMessageData();
-    void refetchMessageCount();
-    void refetchMessages();
-    void refetchInbox();
-    void refetchSent();
-    void refetchDmMessages();
+    if (tab === "feed") {
+      void refetchPostCount();
+      void refetchFeed();
+    } else if (tab === "channels") {
+      void refetchChannelCount();
+      void refetchChannels();
+      void refetchSelectedChannelPosts();
+      void refetchSelectedChannelPostData();
+      void refetchSelectedChannelMember();
+    } else if (tab === "groups") {
+      void refetchGroupCount();
+      void refetchGroups();
+      void refetchGroupMembership();
+      void refetchSelectedGroupMember();
+      void refetchSelectedGroupAdmin();
+      void refetchSelectedGroupKeyEnvelope();
+      void refetchSelectedGroupMessages();
+      void refetchSelectedGroupMessageData();
+    } else if (tab === "chat") {
+      void refetchMessageCount();
+      void refetchMessages();
+    } else if (tab === "dm") {
+      void refetchMessageCount();
+      void refetchMessages();
+      void refetchInbox();
+      void refetchSent();
+      void refetchDmMessages();
+    }
   }, [
     refetchChannelCount,
     refetchChannels,
@@ -1176,6 +1194,7 @@ export default function ZeroxSocialPage() {
     refetchSelectedGroupMessageData,
     refetchSelectedGroupMessages,
     refetchSent,
+    tab,
   ]);
 
   const scheduleLiveSocialRefetch = useCallback(() => {
@@ -1207,21 +1226,22 @@ export default function ZeroxSocialPage() {
     address: ZEROXN_ADDRESS,
     abi: ZEROXN_ABI,
     onLogs: scheduleLiveSocialRefetch,
+    enabled: canUseSocial,
   });
 
   async function runTx(label: string, request: SocialTxRequest) {
     if (!mounted || !isConnected) {
       toast.warning("Connect wallet", "Connect your wallet to use 0x.");
-      return;
+      return false;
     }
     if (!publicClient) {
       toast.error("RPC unavailable", "Please refresh and try again.");
-      return;
-    }
-    if (chainId !== litvm.id) {
-      await switchChainAsync({ chainId: litvm.id });
+      return false;
     }
     try {
+      if (chainId !== litvm.id) {
+        await switchChainAsync({ chainId: litvm.id });
+      }
       const hash = await writeContractAsync({
         address: ZEROXN_ADDRESS,
         abi: ZEROXN_ABI,
@@ -1229,11 +1249,14 @@ export default function ZeroxSocialPage() {
         args: (request.args ?? []) as never,
       });
       toast.info(`${label} sent`, shortAddress(hash));
-      await publicClient.waitForTransactionReceipt({ hash });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== "success") throw new Error(`${label} transaction reverted`);
       toast.success(`${label} confirmed`);
       refetchLiveSocial();
+      return true;
     } catch (error) {
       toast.handleError(error, `${label} failed`);
+      return false;
     }
   }
 
@@ -1272,10 +1295,11 @@ export default function ZeroxSocialPage() {
     const content = postContent.trim();
     if (!content) return;
     const hasPixel = postPixelToken.trim().length > 0;
-    await runTx("Post", {
+    const succeeded = await runTx("Post", {
       functionName: "createPost",
       args: [content, hasPixel, hasPixel ? BigInt(postPixelToken) : 0n],
     });
+    if (!succeeded) return;
     setPostContent("");
     setPostPixelToken("");
     setComposerOpen(false);
@@ -1286,10 +1310,11 @@ export default function ZeroxSocialPage() {
     const content = channelPostContent.trim();
     if (channelId <= 0n || !content) return;
     const hasPixel = channelPostPixelToken.trim().length > 0;
-    await runTx("Channel post", {
+    const succeeded = await runTx("Channel post", {
       functionName: "postToChannel",
       args: [channelId, content, hasPixel, hasPixel ? BigInt(channelPostPixelToken) : 0n],
     });
+    if (!succeeded) return;
     setChannelPostContent("");
     setChannelPostPixelToken("");
   };
@@ -1297,10 +1322,11 @@ export default function ZeroxSocialPage() {
   const submitChannel = async () => {
     const slug = channelForm.slug.trim().toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 32);
     if (!slug || !channelForm.name.trim()) return;
-    await runTx("Create channel", {
+    const succeeded = await runTx("Create channel", {
       functionName: "createChannel",
       args: [slug, channelForm.name.trim(), channelForm.description.trim()],
     });
+    if (!succeeded) return;
     setChannelForm({ slug: "", name: "", description: "" });
   };
 
@@ -1341,10 +1367,7 @@ export default function ZeroxSocialPage() {
       return;
     }
 
-    storeGroupKey(address, nextGroupId, rawKey);
-    setGroupKeys((value) => ({ ...value, [nextGroupId]: rawKey }));
-
-    await runTx("Create group", {
+    const succeeded = await runTx("Create group", {
       functionName: "createGroup",
       args: [
         groupForm.name.trim(),
@@ -1352,6 +1375,9 @@ export default function ZeroxSocialPage() {
         creatorKeyEnvelope,
       ],
     });
+    if (!succeeded) return;
+    storeGroupKey(address, nextGroupId, rawKey);
+    setGroupKeys((value) => ({ ...value, [nextGroupId]: rawKey }));
     setGroupForm({ name: "", description: "" });
     setGroupComposerOpen(false);
   };
@@ -1378,21 +1404,23 @@ export default function ZeroxSocialPage() {
       return;
     }
 
-    storeGroupKey(address, selectedGroup.groupId.toString(), rawKey);
-    setGroupKeys((value) => ({ ...value, [selectedGroup.groupId.toString()]: rawKey }));
-    await runTx(selectedGroupKey ? "Repair room key" : "Create room key", {
+    const succeeded = await runTx(selectedGroupKey ? "Repair room key" : "Create room key", {
       functionName: "setGroupKeyEnvelope",
       args: [selectedGroup.groupId, address, keyEnvelope],
     });
+    if (!succeeded) return;
+    storeGroupKey(address, selectedGroup.groupId.toString(), rawKey);
+    setGroupKeys((value) => ({ ...value, [selectedGroup.groupId.toString()]: rawKey }));
   };
 
   const submitPublicMessage = async () => {
     const content = publicMessage.trim();
     if (!content) return;
-    await runTx("Public message", {
+    const succeeded = await runTx("Public message", {
       functionName: "sendPublicMessage",
       args: [content],
     });
+    if (!succeeded) return;
     setPublicMessage("");
   };
 
@@ -1406,15 +1434,20 @@ export default function ZeroxSocialPage() {
       return null;
     }
 
-    const stored = await loadStoredDmKeyPair(address);
-    if (stored) {
-      setLocalDmPublicKey(stored.publicKey);
-      return stored;
-    }
+    try {
+      const stored = await loadStoredDmKeyPair(address);
+      if (stored) {
+        setLocalDmPublicKey(stored.publicKey);
+        return stored;
+      }
 
-    const created = await createStoredDmKeyPair(address);
-    setLocalDmPublicKey(created.publicKey);
-    return created;
+      const created = await createStoredDmKeyPair(address);
+      setLocalDmPublicKey(created.publicKey);
+      return created;
+    } catch (error) {
+      toast.handleError(error, "Could not save encrypted DM keys");
+      return null;
+    }
   };
 
   const setupEncryptedDm = async () => {
@@ -1453,10 +1486,11 @@ export default function ZeroxSocialPage() {
       return;
     }
 
-    await runTx("Group message", {
+    const succeeded = await runTx("Group message", {
       functionName: "sendGroupMessage",
       args: [groupId, encryptedPayload],
     });
+    if (!succeeded) return;
     setGroupMessage({ groupId: groupMessage.groupId, content: "" });
   };
 
@@ -1497,7 +1531,7 @@ export default function ZeroxSocialPage() {
     }
 
     const alreadyMember = Boolean(managedGroupMember);
-    await runTx(alreadyMember ? "Share room key" : "Add member", {
+    const succeeded = await runTx(alreadyMember ? "Share room key" : "Add member", {
       functionName: alreadyMember ? "setGroupKeyEnvelope" : "addGroupMember",
       args: [
         selectedGroup.groupId,
@@ -1505,6 +1539,7 @@ export default function ZeroxSocialPage() {
         keyEnvelope,
       ],
     });
+    if (!succeeded) return;
     setGroupManage((value) => ({ ...value, member: "" }));
   };
 
@@ -1513,11 +1548,11 @@ export default function ZeroxSocialPage() {
       toast.warning("Bad officer", "Use a valid wallet address.");
       return;
     }
-    await runTx(enabled ? "Set role" : "Remove role", {
+    const succeeded = await runTx(enabled ? "Set role" : "Remove role", {
       functionName: "setGroupOfficer",
       args: [selectedGroup.groupId, groupManage.officer, enabled, groupManage.rank.trim() || "mod"],
     });
-    if (!enabled) setGroupManage((value) => ({ ...value, officer: "" }));
+    if (succeeded && !enabled) setGroupManage((value) => ({ ...value, officer: "" }));
   };
 
   const submitEncryptedMessage = async () => {
@@ -1553,10 +1588,11 @@ export default function ZeroxSocialPage() {
       return;
     }
 
-    await runTx("Encrypted DM", {
+    const succeeded = await runTx("Encrypted DM", {
       functionName: "sendEncryptedMessage",
       args: [dmResolvedTo, encodedPayload],
     });
+    if (!succeeded) return;
     setDmForm((value) => ({ ...value, payload: "" }));
   };
 

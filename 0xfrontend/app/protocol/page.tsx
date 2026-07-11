@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import { PREDICTION_ADDRESS } from "@/lib/0xPredictionAbi";
 import { ZEROXN_ADDRESS } from "@/lib/0xNAbi";
@@ -14,9 +15,48 @@ const CONTRACTS = {
   zeroxn: ZEROXN_ADDRESS,
 };
 
+const MEDIA_ASSETS = [
+  {
+    name: "0xNothing",
+    description: "Primary network mark",
+    src: "/0xNothing.jpg",
+    file: "0xNothing.jpg",
+    dimensions: "400 x 400",
+    width: 400,
+    height: 400,
+  },
+  {
+    name: "0x",
+    description: "Social identity mark",
+    src: "/0x.jpg",
+    file: "0x.jpg",
+    dimensions: "1024 x 1024",
+    width: 1024,
+    height: 1024,
+  },
+  {
+    name: "0xFactory",
+    description: "Token factory mark",
+    src: "/0xFactory_logo.jpg",
+    file: "0xFactory_logo.jpg",
+    dimensions: "1024 x 1024",
+    width: 1024,
+    height: 1024,
+  },
+  {
+    name: "NUSD",
+    description: "Stablecoin mark",
+    src: "/NUSD_LOGO.jpg",
+    file: "NUSD_LOGO.jpg",
+    dimensions: "1024 x 1024",
+    width: 1024,
+    height: 1024,
+  },
+] as const;
+
 export const metadata: Metadata = {
   title: "Protocol — 0xNothing",
-  description: "Technical documentation for 0xPixel, 0xDex, 0xFactory, 0xPrediction, and 0x on LitVM Testnet.",
+  description: "Technical documentation and official media assets for the 0xNothing protocol on LitVM Testnet.",
 };
 
 function AddressRow({ label, value }: { label: string; value: string }) {
@@ -46,6 +86,15 @@ export default function DocsPage() {
               0xNothing
             </span>
           </Link>
+
+          <nav aria-label="Protocol sections">
+            <a
+              href="#media-kit"
+              className="inline-flex min-h-10 items-center border border-white/[0.1] bg-white/[0.03] px-4 text-[10px] font-semibold uppercase text-white/60 transition-colors hover:border-white/25 hover:bg-white hover:text-black"
+            >
+              Media kit
+            </a>
+          </nav>
         </div>
       </header>
 
@@ -486,6 +535,65 @@ export default function DocsPage() {
                 <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
                 <span className="text-white/60 text-sm">LitVM LiteForge</span>
               </div>
+            </div>
+          </section>
+
+          <section
+            id="media-kit"
+            aria-labelledby="media-kit-title"
+            className="mt-20 scroll-mt-8 border-y border-white/[0.08] py-10"
+          >
+            <div className="mb-8 grid gap-5 md:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] md:items-end">
+              <div>
+                <p className="mb-3 text-[10px] font-semibold uppercase text-[#ff304b]">
+                  Brand resources
+                </p>
+                <h2
+                  id="media-kit-title"
+                  className="text-3xl font-bold text-white sm:text-4xl"
+                >
+                  Media kit
+                </h2>
+              </div>
+              <p className="max-w-xl text-sm leading-7 text-white/50 md:justify-self-end">
+                Official 0xNothing ecosystem marks for editorial, community, and integration use.
+                Keep the original proportions and colors when publishing.
+              </p>
+            </div>
+
+            <div className="grid gap-px overflow-hidden border border-white/[0.1] bg-white/[0.1] sm:grid-cols-2">
+              {MEDIA_ASSETS.map((asset) => (
+                <article key={asset.file} className="group flex min-w-0 flex-col bg-[#080808]">
+                  <div className="relative aspect-[16/10] overflow-hidden bg-black">
+                    <Image
+                      src={asset.src}
+                      alt={`${asset.name} logo`}
+                      width={asset.width}
+                      height={asset.height}
+                      sizes="(max-width: 640px) 100vw, 448px"
+                      className="h-full w-full object-contain p-8 transition-transform duration-300 group-hover:scale-[1.02] sm:p-10"
+                    />
+                  </div>
+
+                  <div className="flex flex-1 items-end justify-between gap-4 border-t border-white/[0.08] p-5">
+                    <div className="min-w-0">
+                      <h3 className="truncate text-sm font-semibold text-white">{asset.name}</h3>
+                      <p className="mt-1 text-xs text-white/40">{asset.description}</p>
+                      <p className="mt-3 font-mono text-[10px] uppercase text-white/25">
+                        JPG / {asset.dimensions}
+                      </p>
+                    </div>
+                    <a
+                      href={asset.src}
+                      download={asset.file}
+                      aria-label={`Download ${asset.name} logo as JPG`}
+                      className="inline-flex min-h-10 shrink-0 items-center border border-white/[0.12] px-3 text-[10px] font-semibold uppercase text-white/65 transition-colors hover:border-white hover:bg-white hover:text-black"
+                    >
+                      Download
+                    </a>
+                  </div>
+                </article>
+              ))}
             </div>
           </section>
         </div>

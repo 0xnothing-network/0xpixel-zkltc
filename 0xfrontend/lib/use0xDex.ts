@@ -8,7 +8,7 @@ import {
   useBalance,
   useWatchContractEvent,
 } from "wagmi";
-import { erc20Abi, formatUnits, parseUnits } from "viem";
+import { erc20Abi, formatUnits, maxUint256, parseUnits } from "viem";
 import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import {
   DEX_ABI,
@@ -56,12 +56,14 @@ export const KNOWN_TOKENS: Token[] = [
 export function useDexRead<T = unknown>(
   functionName: string,
   args?: readonly unknown[],
+  enabled = true,
 ) {
   const result = useReadContract({
     address: DEX_ADDRESS,
     abi: DEX_ABI,
     functionName: functionName as never,
     args: args as never,
+    query: { enabled },
   });
 
   return {
@@ -73,12 +75,14 @@ export function useDexRead<T = unknown>(
 export function useRewardRead<T = unknown>(
   functionName: string,
   args?: readonly unknown[],
+  enabled = true,
 ) {
   const result = useReadContract({
     address: REWARD_MANAGER_ADDRESS,
     abi: REWARD_MANAGER_ABI,
     functionName: functionName as never,
     args: args as never,
+    query: { enabled },
   });
 
   return {
@@ -92,7 +96,7 @@ export function useRewardRead<T = unknown>(
 // ============================================================
 
 export function useDexWrite() {
-  const { writeContract } = useWriteContract();
+  const { writeContractAsync } = useWriteContract();
 
   const addLiquidity = useCallback(
     (
@@ -101,7 +105,7 @@ export function useDexWrite() {
       amountA: bigint,
       amountB: bigint,
     ) => {
-      return writeContract({
+      return writeContractAsync({
         address: DEX_ADDRESS,
         abi: DEX_ABI,
         functionName: "addLiquidity",
@@ -114,19 +118,19 @@ export function useDexWrite() {
               : undefined,
       });
     },
-    [writeContract],
+    [writeContractAsync],
   );
 
   const removeLiquidity = useCallback(
     (pairId: `0x${string}`, lpAmount: bigint) => {
-      return writeContract({
+      return writeContractAsync({
         address: DEX_ADDRESS,
         abi: DEX_ABI,
         functionName: "removeLiquidity",
         args: [pairId, lpAmount],
       });
     },
-    [writeContract],
+    [writeContractAsync],
   );
 
   const swap = useCallback(
@@ -136,7 +140,7 @@ export function useDexWrite() {
       amountIn: bigint,
       minAmountOut: bigint,
     ) => {
-      return writeContract({
+      return writeContractAsync({
         address: DEX_ADDRESS,
         abi: DEX_ABI,
         functionName: "swap",
@@ -144,31 +148,47 @@ export function useDexWrite() {
         value: tokenIn === NATIVE_ADDRESS ? amountIn : undefined,
       });
     },
-    [writeContract],
+    [writeContractAsync],
   );
 
   const claimReward = useCallback(() => {
-    return writeContract({
+    return writeContractAsync({
       address: REWARD_MANAGER_ADDRESS,
       abi: REWARD_MANAGER_ABI,
       functionName: "claimReward",
       args: [],
     });
-  }, [writeContract]);
+  }, [writeContractAsync]);
+
+  const approveToken = useCallback(
+    (
+      token: `0x${string}`,
+      spender: `0x${string}` = DEX_ADDRESS,
+      amount: bigint = maxUint256,
+    ) => {
+      return writeContractAsync({
+        address: token,
+        abi: erc20Abi,
+        functionName: "approve",
+        args: [spender, amount],
+      });
+    },
+    [writeContractAsync],
+  );
 
   const setSwapFee = useCallback(
     (newFee: bigint) => {
-      return writeContract({
+      return writeContractAsync({
         address: DEX_ADDRESS,
         abi: DEX_ABI,
         functionName: "setSwapFee",
         args: [newFee],
       });
     },
-    [writeContract],
+    [writeContractAsync],
   );
 
-  return { addLiquidity, removeLiquidity, swap, claimReward, setSwapFee };
+  return { addLiquidity, removeLiquidity, swap, claimReward, approveToken, setSwapFee };
 }
 
 // ============================================================
@@ -214,12 +234,25 @@ export function useTokenAllowance(token: Token | null, spender: `0x${string}`) {
 // Pools
 // ============================================================
 
+export type PoolDataTuple = readonly [
+  `0x${string}`,
+  `0x${string}`,
+  bigint,
+  bigint,
+  bigint,
+  bigint,
+  bigint,
+  bigint,
+  bigint,
+];
+
 export function useAllPools() {
-  const { data: pairIds, ...rest } = useDexRead<readonly `0x${string}`[]>(
+  const pairIdsQuery = useDexRead<readonly `0x${string}`[]>(
     "getAllPools",
   );
+  const pairIds = pairIdsQuery.data;
 
-  const { data: poolInfos } = useReadContracts({
+  const poolInfosQuery = useReadContracts({
     contracts:
       pairIds?.map((pairId) => ({
         address: DEX_ADDRESS,
@@ -227,44 +260,50 @@ export function useAllPools() {
         functionName: "pools" as const,
         args: [pairId] as const,
       })) ?? [],
+    allowFailure: true,
     query: { enabled: !!pairIds && pairIds.length > 0 },
   });
 
-  type PoolTuple = readonly [
-    `0x${string}`,
-    `0x${string}`,
-    bigint,
-    bigint,
-    bigint,
-    bigint,
-    bigint,
-    bigint,
-    bigint,
-  ];
-
   const result = useMemo<
-    | { pairId: `0x${string}`; token0: `0x${string}`; token1: `0x${string}` }[]
+    | {
+        pairId: `0x${string}`;
+        token0: `0x${string}`;
+        token1: `0x${string}`;
+        poolData: PoolDataTuple;
+      }[]
     | undefined
   >(() => {
     if (!pairIds) return undefined;
-    return pairIds.map((pairId, i) => {
-      const info = poolInfos?.[i]?.result as PoolTuple | undefined;
-      return {
+    return pairIds.flatMap((pairId, index) => {
+      const entry = poolInfosQuery.data?.[index];
+      if (entry?.status !== "success") return [];
+      const poolData = entry.result as PoolDataTuple;
+      return [{
         pairId,
-        token0: (info?.[0] ?? NATIVE_ADDRESS) as `0x${string}`,
-        token1: (info?.[1] ?? NATIVE_ADDRESS) as `0x${string}`,
-      };
+        token0: poolData[0],
+        token1: poolData[1],
+        poolData,
+      }];
     });
-  }, [pairIds, poolInfos]);
+  }, [pairIds, poolInfosQuery.data]);
+
+  const refetch = useCallback(async () => {
+    const [pairIdsResult] = await Promise.allSettled([
+      pairIdsQuery.refetch(),
+      poolInfosQuery.refetch(),
+    ]);
+    return pairIdsResult.status === "fulfilled" ? pairIdsResult.value : undefined;
+  }, [pairIdsQuery, poolInfosQuery]);
 
   return {
-    ...rest,
+    ...pairIdsQuery,
     data: result,
+    refetch,
   };
 }
 
 export function usePoolExists(pairId: `0x${string}` | undefined) {
-  return useDexRead<boolean>("poolExists", pairId ? [pairId] : undefined);
+  return useDexRead<boolean>("poolExists", pairId ? [pairId] : undefined, !!pairId);
 }
 
 export function usePoolInfo(pairId: `0x${string}` | undefined) {
@@ -281,7 +320,7 @@ export function usePoolInfo(pairId: `0x${string}` | undefined) {
       bigint,
       bigint,
     ]
-  >("pools", pairId ? [pairId] : undefined);
+  >("pools", pairId ? [pairId] : undefined, !!pairId);
 
   return useMemo<PoolInfo | null>(() => {
     if (!poolData) return null;
@@ -306,6 +345,7 @@ export function usePoolByTokens(
   const { data: pairId } = useDexRead<`0x${string}`>(
     "getPairId",
     token0 && token1 ? [token0, token1] : undefined,
+    !!token0 && !!token1,
   );
   const pool = usePoolInfo(pairId);
   return { pairId, pool };
@@ -315,6 +355,7 @@ export function usePoolPriceInfo(pairId: `0x${string}` | undefined) {
   return useDexRead<readonly [bigint, bigint, bigint, bigint]>(
     "getPoolPriceInfo",
     pairId ? [pairId] : undefined,
+    !!pairId,
   );
 }
 
@@ -322,6 +363,7 @@ export function useSpotPrice(tokenIn: `0x${string}` | undefined, tokenOut: `0x${
   const { data: pairId, isLoading: loadingPair, error: pairError } = useDexRead<`0x${string}`>(
     "getPairId",
     tokenIn && tokenOut ? [tokenIn, tokenOut] : undefined,
+    !!tokenIn && !!tokenOut,
   );
   const { data: poolData, isLoading: loadingPool, error: poolError } = useDexRead<
     readonly [
@@ -335,7 +377,7 @@ export function useSpotPrice(tokenIn: `0x${string}` | undefined, tokenOut: `0x${
       bigint,
       bigint,
     ]
-  >("pools", pairId ? [pairId] : undefined);
+  >("pools", pairId ? [pairId] : undefined, !!pairId);
 
   const data = useMemo(() => {
     if (!poolData || !tokenIn || poolData[2] === 0n || poolData[3] === 0n) return undefined;
@@ -360,6 +402,7 @@ export function useUserPendingReward() {
   return useRewardRead<bigint>(
     "getUserPendingReward",
     address ? [address] : undefined,
+    !!address,
   );
 }
 
@@ -368,6 +411,7 @@ export function useUserNUSDLocked() {
   return useRewardRead<bigint>(
     "userNUSDLocked",
     address ? [address] : undefined,
+    !!address,
   );
 }
 
@@ -484,6 +528,70 @@ export interface SwappedEvent {
   blockNumber: bigint;
 }
 
+type CachedSwappedEvent = {
+  args?: {
+    user: `0x${string}`;
+    tokenIn: `0x${string}`;
+    tokenOut: `0x${string}`;
+    amountIn: string;
+    amountOut: string;
+    fee: string;
+  };
+  blockNumber: string;
+};
+
+function realtimePriceCacheKey(token0?: string, token1?: string) {
+  if (!token0 || !token1) return "";
+  return `rtprice:${token0.toLowerCase()}:${token1.toLowerCase()}`;
+}
+
+function readRealtimeEvents(cacheKey: string, lookback: number): SwappedEvent[] {
+  if (!cacheKey || typeof window === "undefined") return [];
+  try {
+    const cached = sessionStorage.getItem(cacheKey);
+    if (!cached) return [];
+    const parsed = JSON.parse(cached) as CachedSwappedEvent[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.slice(0, lookback).flatMap((event) => {
+      try {
+        return [{
+          args: event.args
+            ? {
+                ...event.args,
+                amountIn: BigInt(event.args.amountIn),
+                amountOut: BigInt(event.args.amountOut),
+                fee: BigInt(event.args.fee),
+              }
+            : undefined,
+          blockNumber: BigInt(event.blockNumber),
+        } satisfies SwappedEvent];
+      } catch {
+        return [];
+      }
+    });
+  } catch {
+    return [];
+  }
+}
+
+function writeRealtimeEvents(cacheKey: string, events: SwappedEvent[]) {
+  if (!cacheKey || typeof window === "undefined") return;
+  const serialized: CachedSwappedEvent[] = events.slice(0, 20).map((event) => ({
+    args: event.args
+      ? {
+          ...event.args,
+          amountIn: event.args.amountIn.toString(),
+          amountOut: event.args.amountOut.toString(),
+          fee: event.args.fee.toString(),
+        }
+      : undefined,
+    blockNumber: event.blockNumber.toString(),
+  }));
+  try {
+    sessionStorage.setItem(cacheKey, JSON.stringify(serialized));
+  } catch {}
+}
+
 /**
  * Watch live Swapped events on the DEX contract and derive the realtime price.
  * Updates instantly when any swap occurs — no subgraph delay.
@@ -498,25 +606,18 @@ export function useRealtimePrice(
   token0: `0x${string}` | undefined,
   token1: `0x${string}` | undefined,
   lookback = 50,
+  token0Decimals = 18,
+  token1Decimals = 18,
 ) {
-  const [events, setEvents] = useState<SwappedEvent[]>(() => {
-    // Restore from sessionStorage cache immediately (instant on mount)
-    if (typeof window !== 'undefined' && token0 && token1) {
-      const t0 = token0.toLowerCase();
-      const t1 = token1.toLowerCase();
-      const ck = `rtprice:${t0}:${t1}`;
-      try {
-        const cached = sessionStorage.getItem(ck);
-        if (cached) {
-          const parsed = JSON.parse(cached) as SwappedEvent[];
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            return parsed;
-          }
-        }
-      } catch {}
-    }
-    return [];
-  });
+  const cacheKey = realtimePriceCacheKey(token0, token1);
+  const loadedCacheKeyRef = useRef(cacheKey);
+  const [events, setEvents] = useState<SwappedEvent[]>(() => readRealtimeEvents(cacheKey, lookback));
+
+  useEffect(() => {
+    if (loadedCacheKeyRef.current === cacheKey) return;
+    loadedCacheKeyRef.current = cacheKey;
+    setEvents(readRealtimeEvents(cacheKey, lookback));
+  }, [cacheKey, lookback]);
 
   useWatchContractEvent({
     address: DEX_ADDRESS,
@@ -533,14 +634,7 @@ export function useRealtimePrice(
         ].slice(0, lookback);
 
         // Persist to sessionStorage for instant restore on next mount
-        if (token0 && token1 && updated.length > 0) {
-          const t0 = token0.toLowerCase();
-          const t1 = token1.toLowerCase();
-          const ck = `rtprice:${t0}:${t1}`;
-          try {
-            sessionStorage.setItem(ck, JSON.stringify(updated.slice(0, 20)));
-          } catch {}
-        }
+        if (updated.length > 0) writeRealtimeEvents(cacheKey, updated);
 
         return updated;
       });
@@ -560,19 +654,21 @@ export function useRealtimePrice(
     );
     if (!event?.args) return null;
     const { tokenIn, amountIn, amountOut } = event.args;
-    const ai = Number(amountIn);
-    const ao = Number(amountOut);
-    if (ai <= 0 || ao <= 0) return null;
+    if (amountIn <= 0n || amountOut <= 0n) return null;
 
     // Price always = token1_per_token0 regardless of swap direction
     // Forward (token0→token1): price = ao/ai
     // Reverse (token1→token0): price = ai/ao
-    let price: number;
+    let quoteAmount: number;
+    let baseAmount: number;
     if (tokenIn.toLowerCase() === t0) {
-      price = ai > 0 ? ao / ai : 0; // forward: token0 in, token1 out
+      quoteAmount = Number(formatUnits(amountOut, token1Decimals));
+      baseAmount = Number(formatUnits(amountIn, token0Decimals));
     } else {
-      price = ao > 0 ? ai / ao : 0; // reverse: token1 in, token0 out
+      quoteAmount = Number(formatUnits(amountIn, token1Decimals));
+      baseAmount = Number(formatUnits(amountOut, token0Decimals));
     }
+    const price = quoteAmount / baseAmount;
     if (!isFinite(price) || price <= 0) return null;
     return {
       price,
@@ -580,7 +676,7 @@ export function useRealtimePrice(
       rawAmountOut: amountOut.toString(),
       timestamp: Number(event.blockNumber),
     };
-  }, [events, token0, token1]);
+  }, [events, token0, token1, token0Decimals, token1Decimals]);
 
   return { latestPrice: latest, recentEvents: events };
 }
