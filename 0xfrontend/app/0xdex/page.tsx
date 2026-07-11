@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import dynamic from "next/dynamic";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 const loadChartWindow = () => import("@/app/components/ChartWindow");
 const ChartWindow = dynamic(loadChartWindow, {
@@ -99,6 +99,19 @@ interface PoolData {
   totalVolume: bigint;
 }
 
+interface InitialLiquidityEntry {
+  amount0: string;
+  amount1: string;
+  blockNumber: number;
+  transactionHash: `0x${string}`;
+}
+
+interface DexInitialLiquidityResponse {
+  source: "onchain";
+  asOfBlock: number;
+  pairs: Record<string, InitialLiquidityEntry>;
+}
+
 // Helper to cast pool data
 function castPoolData(data: unknown): PoolData | null {
   if (!data || !Array.isArray(data) || data.length < 7) return null;
@@ -111,6 +124,75 @@ function castPoolData(data: unknown): PoolData | null {
     volume24h: data[5] as bigint,
     totalVolume: data[6] as bigint,
   };
+}
+
+async function fetchInitialLiquidity(): Promise<DexInitialLiquidityResponse> {
+  const response = await fetch("/api/dex/initial-liquidity", {
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) {
+    throw new Error(`Initial liquidity request failed: ${response.status}`);
+  }
+  return response.json() as Promise<DexInitialLiquidityResponse>;
+}
+
+function calculatePriceChangeBps({
+  token0,
+  token1,
+  reserve0,
+  reserve1,
+  initialLiquidity,
+}: {
+  token0: string;
+  token1: string;
+  reserve0: bigint;
+  reserve1: bigint;
+  initialLiquidity: InitialLiquidityEntry | undefined;
+}): bigint | null {
+  if (!initialLiquidity || reserve0 <= 0n || reserve1 <= 0n) return null;
+  const token0IsNusd = token0.toLowerCase() === NUSD_ADDRESS.toLowerCase();
+  const token1IsNusd = token1.toLowerCase() === NUSD_ADDRESS.toLowerCase();
+  if (token0IsNusd === token1IsNusd) return null;
+
+  try {
+    const initial0 = BigInt(initialLiquidity.amount0);
+    const initial1 = BigInt(initialLiquidity.amount1);
+    const currentNusd = token0IsNusd ? reserve0 : reserve1;
+    const currentOther = token0IsNusd ? reserve1 : reserve0;
+    const initialNusd = token0IsNusd ? initial0 : initial1;
+    const initialOther = token0IsNusd ? initial1 : initial0;
+    if (initialNusd <= 0n || initialOther <= 0n || currentOther <= 0n) return null;
+
+    const currentRatio = currentNusd * initialOther;
+    const initialRatio = initialNusd * currentOther;
+    return ((currentRatio - initialRatio) * 10_000n) / initialRatio;
+  } catch {
+    return null;
+  }
+}
+
+function formatFullPriceChange(changeBps: bigint): string {
+  const sign = changeBps > 0n ? "+" : changeBps < 0n ? "-" : "";
+  const absolute = changeBps < 0n ? -changeBps : changeBps;
+  return `${sign}${absolute / 100n}.${(absolute % 100n).toString().padStart(2, "0")}%`;
+}
+
+function formatCompactPriceChange(changeBps: bigint): string {
+  const sign = changeBps > 0n ? "+" : changeBps < 0n ? "-" : "";
+  const absolute = changeBps < 0n ? -changeBps : changeBps;
+  if (absolute >= 100_000_000n) {
+    return `${sign}${formatScaledChange(absolute, 100_000_000n)}M%`;
+  }
+  if (absolute >= 100_000n) {
+    return `${sign}${formatScaledChange(absolute, 100_000n)}K%`;
+  }
+  return formatFullPriceChange(changeBps);
+}
+
+function formatScaledChange(value: bigint, divisor: bigint): string {
+  const scaledHundredths = (value * 100n + divisor / 2n) / divisor;
+  return `${scaledHundredths / 100n}.${(scaledHundredths % 100n).toString().padStart(2, "0")}`;
 }
 
 // ============================================================
@@ -489,9 +571,10 @@ function PoolCard({
   volume24h,
   totalVolume,
   lpTotal,
+  initialLiquidity,
+  isInitialPriceLoading,
   rank,
   pairId,
-  swapHref,
   chartHref,
   onSelect,
   onViewChart,
@@ -499,9 +582,8 @@ function PoolCard({
   tokenSymbol,
   tokenDecimals = 18,
 }: {
-  token0: `0x${string}`; token1: `0x${string}`; reserve0: bigint; reserve1: bigint; volume24h: bigint; totalVolume: bigint; lpTotal: bigint; rank: number;
+  token0: `0x${string}`; token1: `0x${string}`; reserve0: bigint; reserve1: bigint; volume24h: bigint; totalVolume: bigint; lpTotal: bigint; initialLiquidity: InitialLiquidityEntry | undefined; isInitialPriceLoading: boolean; rank: number;
   pairId: `0x${string}`;
-  swapHref: string;
   chartHref: string;
   onSelect?: (data: { token: `0x${string}`, nusd: `0x${string}`, reserve0: bigint, reserve1: bigint }) => void;
   onViewChart?: (data: { price: number | null; tokenDecimals: number }) => void;
@@ -543,6 +625,24 @@ function PoolCard({
   const explorerLabel = isOtherNative
     ? `${displaySymbol}/NUSD pool contract`
     : `${displaySymbol} token`;
+  const priceChangeBps = calculatePriceChangeBps({
+    token0,
+    token1,
+    reserve0,
+    reserve1,
+    initialLiquidity,
+  });
+  const priceChangeLabel = priceChangeBps === null
+    ? isInitialPriceLoading ? "..." : "--"
+    : formatCompactPriceChange(priceChangeBps);
+  const priceChangeClass = priceChangeBps === null || priceChangeBps === 0n
+    ? "border-[#2D2D44] bg-[#2D2D44]/30 text-[#94A3B8]"
+    : priceChangeBps > 0n
+      ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-400"
+      : "border-rose-400/30 bg-rose-400/10 text-rose-400";
+  const priceChangeTitle = priceChangeBps === null
+    ? isInitialPriceLoading ? "Loading initial pool price" : "Initial pool price unavailable"
+    : `Price change since initial liquidity: ${formatFullPriceChange(priceChangeBps)}`;
 
   return (
     <div
@@ -574,17 +674,14 @@ function PoolCard({
           >
             <ExternalLinkIcon />
           </a>
-          <Link
-            href={swapHref}
-            onClick={(e) => {
-              e.stopPropagation();
-              handleClick();
-            }}
-            className="pixel-btn-soft pixel-btn-soft-secondary pixel-btn-soft-sm"
-            title={`Swap ${displaySymbol}/NUSD`}
+          <span
+            className={`inline-flex h-7 shrink-0 items-center border px-2 text-[10px] font-bold ${priceChangeClass}`}
+            title={priceChangeTitle}
+            aria-label={priceChangeTitle}
+            style={{ fontFamily: "var(--font-departure)" }}
           >
-            SWAP
-          </Link>
+            {priceChangeLabel}
+          </span>
           {onViewChart && (
             <Link
               href={chartHref}
@@ -960,6 +1057,20 @@ export default function DexAllInOne() {
     () => poolOptions.map((pool) => pool.poolData),
     [poolOptions]
   );
+
+  const initialLiquidityPoolKey = useMemo(
+    () => poolOptions.map((pool) => pool.pairId.toLowerCase()).join(","),
+    [poolOptions],
+  );
+  const {
+    data: initialLiquidityData,
+    isPending: isInitialLiquidityPending,
+  } = useQuery({
+    queryKey: ["dex-initial-liquidity", initialLiquidityPoolKey],
+    queryFn: fetchInitialLiquidity,
+    enabled: poolOptions.length > 0,
+    staleTime: 5 * 60 * 1_000,
+  });
 
   // Calculate total volume from all pools
   const totalVolume = useMemo(
@@ -1505,9 +1616,10 @@ export default function DexAllInOne() {
   // Farm LP queries - use selectedFarmPool index
   const farmPairId = poolOptions.length > selectedFarmPool ? poolOptions[selectedFarmPool]?.pairId : undefined;
   const farmPoolToken = poolOptions.length > selectedFarmPool ? poolOptions[selectedFarmPool]?.token : undefined;
-  const { data: farmLPData, refetch: refetchFarmLP } = useDexRead<bigint>("userLP",
-    farmPairId && address ? [farmPairId, address as `0x${string}`] : undefined,
-    !!farmPairId && !!address
+  const { data: farmLPData, refetch: refetchFarmLP } = useDexRead<bigint>(
+    "userLP",
+    farmPairId && address ? [farmPairId, address] : undefined,
+    !!farmPairId && !!address,
   );
   const { data: farmPendingReward, refetch: refetchPendingReward } = useRewardRead<bigint>("getUserPendingReward",
     address ? [address as `0x${string}`] : undefined,
@@ -2548,8 +2660,9 @@ export default function DexAllInOne() {
                       volume24h={(pData[5] as bigint) || 0n}
                       totalVolume={(pData[6] as bigint) || 0n}
                       lpTotal={(pData[4] as bigint) || 0n}
+                      initialLiquidity={initialLiquidityData?.pairs[pool.pairId.toLowerCase()]}
+                      isInitialPriceLoading={isInitialLiquidityPending}
                       pairId={pool.pairId}
-                      swapHref="/0xdex"
                       chartHref="/0xdex"
                       tokenSymbol={getPoolTokenSymbol(poolIndex)}
                       tokenDecimals={getPoolTokenDecimals(poolIndex)}

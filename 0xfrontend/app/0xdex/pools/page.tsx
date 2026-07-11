@@ -49,78 +49,6 @@ function safeParseAmount(value: string, decimals: number) {
   }
 }
 
-const LP_SHARE_BPS = 10_000n;
-
-function getLpRisk(
-  walletLP: bigint | undefined,
-  totalLP: bigint,
-  isConnected: boolean,
-  isLoading = false,
-) {
-  if (!isConnected) {
-    return {
-      label: "N/A",
-      share: "Connect wallet",
-      className: "border-[#2D2D44] bg-[#2D2D44]/30 text-[#64748B]",
-    };
-  }
-  if (walletLP === undefined) {
-    return {
-      label: isLoading ? "..." : "N/A",
-      share: isLoading ? "Loading" : "Unavailable",
-      className: "border-[#2D2D44] bg-[#2D2D44]/30 text-[#64748B]",
-    };
-  }
-  if (totalLP === 0n) {
-    return {
-      label: "NO LP",
-      share: "No liquidity",
-      className: "border-[#2D2D44] bg-[#2D2D44]/30 text-[#64748B]",
-    };
-  }
-  if (walletLP === 0n) {
-    return {
-      label: "NO LP",
-      share: "0% share",
-      className: "border-[#2D2D44] bg-[#2D2D44]/30 text-[#64748B]",
-    };
-  }
-
-  const shareBps = walletLP >= totalLP
-    ? LP_SHARE_BPS
-    : (walletLP * LP_SHARE_BPS) / totalLP;
-  const share = shareBps === 0n
-    ? "<0.01% share"
-    : `${shareBps / 100n}.${(shareBps % 100n).toString().padStart(2, "0")}% share`;
-
-  if (shareBps === LP_SHARE_BPS) {
-    return {
-      label: "SAFE",
-      share,
-      className: "border-emerald-400/30 bg-emerald-400/10 text-emerald-400",
-    };
-  }
-  if (shareBps >= 9_000n) {
-    return {
-      label: "LOW",
-      share,
-      className: "border-[#8888ff]/30 bg-[#8888ff]/10 text-[#8888ff]",
-    };
-  }
-  if (shareBps >= 5_000n) {
-    return {
-      label: "MEDIUM",
-      share,
-      className: "border-amber-400/30 bg-amber-400/10 text-amber-400",
-    };
-  }
-  return {
-    label: "HIGH",
-    share,
-    className: "border-rose-400/30 bg-rose-400/10 text-rose-400",
-  };
-}
-
 export default function PoolsPage() {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
@@ -273,53 +201,20 @@ export default function PoolsPage() {
     [poolOptions],
   );
 
-  const userLpContracts = useMemo(
-    () => address
-      ? (allPools ?? []).map((pool) => ({
-          address: DEX_ADDRESS,
-          abi: DEX_ABI,
-          functionName: "userLP" as const,
-          args: [pool.pairId, address] as const,
-        }))
-      : [],
-    [address, allPools],
-  );
-  const {
-    data: userLpResults,
-    isPending: isUserLpPending,
-    refetch: refetchUserLp,
-  } = useReadContracts({
-    contracts: userLpContracts,
-    allowFailure: true,
-    query: { enabled: userLpContracts.length > 0 },
-  });
-  const userLpByPairId = useMemo(() => {
-    const balances = new Map<string, bigint>();
-    allPools?.forEach((pool, index) => {
-      const result = userLpResults?.[index];
-      if (result?.status === "success") {
-        balances.set(pool.pairId.toLowerCase(), result.result as bigint);
-      }
-    });
-    return balances;
-  }, [allPools, userLpResults]);
-
   const selectedPool = poolOptions[selectedPoolIndex];
   const tokenA = selectedPool?.token0Metadata ?? null;
   const tokenB = selectedPool?.token1Metadata ?? null;
   
   const removePairId = poolOptions[selectedRemovePool]?.pairId;
-  const userLP = removePairId
-    ? userLpByPairId.get(removePairId.toLowerCase())
-    : undefined;
+  const { data: userLpData, refetch: refetchUserLp } = useReadContract({
+    address: DEX_ADDRESS,
+    abi: DEX_ABI,
+    functionName: "userLP",
+    args: removePairId && address ? [removePairId, address] : undefined,
+    query: { enabled: !!removePairId && !!address },
+  });
+  const userLP = userLpData as bigint | undefined;
   const poolData = selectedPool?.poolData;
-  const removePool = poolOptions[selectedRemovePool];
-  const removeLpRisk = getLpRisk(
-    userLP,
-    removePool?.poolData[4] ?? 0n,
-    isConnected,
-    isUserLpPending,
-  );
   
   // Balances
   const { data: balanceA } = useTokenBalance(address, tokenA);
@@ -577,9 +472,6 @@ export default function PoolsPage() {
                   displayTokenAddress={pool.displayTokenMetadata.address}
                   displayTokenSymbol={pool.displayTokenMetadata.symbol}
                   poolData={pool.poolData}
-                  userLP={userLpByPairId.get(pool.pairId.toLowerCase())}
-                  isConnected={isConnected}
-                  isUserLpLoading={isUserLpPending}
                 />
               ))}
             </div>
@@ -792,17 +684,6 @@ export default function PoolsPage() {
                     <option value="">No pools</option>
                   )}
                 </select>
-                {removePool && (
-                  <div className="mt-2 flex items-center justify-between gap-3 border-t border-[#2D2D44] pt-2 text-xs">
-                    <div>
-                      <div className="text-[#64748B]">LP Risk</div>
-                      <div className="text-[10px] text-[#64748B]">{removeLpRisk.share}</div>
-                    </div>
-                    <span className={`border px-2 py-1 text-[10px] font-bold ${removeLpRisk.className}`}>
-                      {removeLpRisk.label}
-                    </span>
-                  </div>
-                )}
               </div>
               
               {/* LP Amount */}
@@ -881,9 +762,6 @@ function PoolTopCard({
   displayTokenAddress,
   displayTokenSymbol,
   poolData,
-  userLP,
-  isConnected,
-  isUserLpLoading,
 }: {
   index: number;
   token0Symbol: string;
@@ -891,11 +769,7 @@ function PoolTopCard({
   displayTokenAddress: `0x${string}`;
   displayTokenSymbol: string;
   poolData: readonly [`0x${string}`, `0x${string}`, bigint, bigint, bigint, bigint, bigint, bigint, bigint];
-  userLP: bigint | undefined;
-  isConnected: boolean;
-  isUserLpLoading: boolean;
 }) {
-  const lpRisk = getLpRisk(userLP, poolData[4], isConnected, isUserLpLoading);
   const isDisplayTokenNative = displayTokenAddress.toLowerCase() === NATIVE_ADDRESS.toLowerCase();
   const explorerUrl = isDisplayTokenNative
     ? getAddressExplorerUrl(DEX_ADDRESS)
@@ -937,20 +811,6 @@ function PoolTopCard({
             <div className="text-white font-medium" style={{ fontFamily: "var(--font-departure)" }}>
               {formatUSD(poolData[6] as bigint)}
             </div>
-          </div>
-          <div
-            className="col-span-2 mt-1 flex items-center justify-between gap-3 border-t border-[#2D2D44] pt-2"
-            title={isConnected
-              ? `Wallet owns ${lpRisk.share.replace(" share", "")} of total LP supply`
-              : "Connect wallet to calculate your LP share"}
-          >
-            <div>
-              <div className="text-[#64748B]">LP Risk</div>
-              <div className="text-[10px] text-[#64748B]">{lpRisk.share}</div>
-            </div>
-            <span className={`border px-2 py-1 text-[10px] font-bold ${lpRisk.className}`}>
-              {lpRisk.label}
-            </span>
           </div>
         </div>
     </div>
