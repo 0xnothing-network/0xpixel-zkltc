@@ -80,4 +80,4 @@ export const ZEROXDEX_ADDRESS =
 
 // Subgraph URL — version pinned to match the deployed subgraph
 export const SUBGRAPH_URL =
-  'https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.6/gn' as const;
+  'https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.7/gn' as const;

@@ -10,7 +10,7 @@ dataSources:
     source:
       address: "0x873cb0402F0e74Db66663255e6B3535ca134C818"
       abi: ZeroXDex
-      startBlock: 24937136
+      startBlock: 24869425
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7
@@ -28,13 +28,13 @@ dataSources:
         - name: ZeroXDex
           file: ./abis/ZeroXDex.json
       eventHandlers:
-        - event: Swapped(indexed address,address,address,uint256,uint256,uint256)
+        - event: Swapped(indexed address,indexed address,indexed address,uint256,uint256,uint256)
           handler: handleSwapped
         - event: LiquidityAdded(indexed address,indexed bytes32,uint256,uint256,uint256)
           handler: handleLiquidityAdded
         - event: LiquidityRemoved(indexed address,indexed bytes32,uint256,uint256,uint256)
           handler: handleLiquidityRemoved
-        - event: PoolCreated(indexed bytes32,address,address)
+        - event: PoolCreated(indexed bytes32,address,address,address)
           handler: handlePoolCreated
         - event: RewardClaimed(indexed address,uint256)
           handler: handleRewardClaimed

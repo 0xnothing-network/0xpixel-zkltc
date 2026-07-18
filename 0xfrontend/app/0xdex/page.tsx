@@ -237,11 +237,12 @@ function formatNum(value: bigint, decimals = 18) {
 
 const SWAP_HISTORY_PAGE_SIZE = 80;
 const SWAP_HISTORY_DISPLAY_LIMIT = 80;
+const SWAP_HISTORY_REFRESH_MS = 10_000;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 
 const SWAP_HISTORY_QUERY = `
-  query GetSwapHistory($limit: Int!, $skip: Int!) {
-    swaps(first: $limit, skip: $skip, orderBy: timestamp, orderDirection: desc) {
+  query GetSwapHistory($limit: Int!) {
+    swaps(first: $limit, orderBy: timestamp, orderDirection: desc) {
       id
       user
       tokenIn
@@ -250,21 +251,7 @@ const SWAP_HISTORY_QUERY = `
       amountOut
       fee
       timestamp
-    }
-  }
-`;
-
-const SWAP_HISTORY_RAW_QUERY = `
-  query GetSwapHistoryRaw($limit: Int!, $skip: Int!) {
-    swaps: swappeds(first: $limit, skip: $skip, orderBy: timestamp_, orderDirection: desc) {
-      id
-      user
-      tokenIn
-      tokenOut
-      amountIn
-      amountOut
-      fee
-      timestamp: timestamp_
+      blockNumber
     }
   }
 `;
@@ -315,6 +302,7 @@ type SubgraphSwap = {
   amountOut?: string;
   fee?: string;
   timestamp?: string | number | { seconds?: string | number };
+  blockNumber?: string | number;
 };
 
 function hasSwapArgs(log: SwapLogLike): log is SwapLogLike & { args: SwappedLogArgs } {
@@ -332,10 +320,6 @@ function tokenKey(value: string) {
 
 function normalizeSwapHistoryId(value: string) {
   return value.toLowerCase();
-}
-
-function makeSwapHistoryId(log: SwapLogLike) {
-  return normalizeSwapHistoryId(`${log.transactionHash ?? log.blockHash ?? log.blockNumber}-${Number(log.logIndex ?? 0)}`);
 }
 
 function asAddress(value: unknown): `0x${string}` {
@@ -406,7 +390,7 @@ function parseSubgraphSwap(item: SubgraphSwap, index: number): SwapHistoryItem |
     return {
       id,
       txHash: asTxHash(item.id),
-      blockNumber: BigInt(timestamp || 0),
+      blockNumber: BigInt(item.blockNumber ?? 0),
       logIndex: Number.isFinite(logIndexFromId) ? logIndexFromId : index,
       user: asAddress(item.user),
       tokenIn: asAddress(item.tokenIn),
@@ -667,7 +651,7 @@ function SwapHistoryPanel({
             {loading ? "Loading onchain swaps..." : "No swaps found yet"}
           </div>
         ) : (
-          swaps.slice(0, 80).map((item) => {
+          swaps.slice(0, SWAP_HISTORY_DISPLAY_LIMIT).map((item) => {
             const tokenInMeta = getTokenMeta(tokenMetaByAddress, item.tokenIn);
             const tokenOutMeta = getTokenMeta(tokenMetaByAddress, item.tokenOut);
             const side = getSwapSide(item);
@@ -794,8 +778,6 @@ export default function DexAllInOne() {
   const [swapHistory, setSwapHistory] = useState<SwapHistoryItem[]>([]);
   const [swapHistoryLoading, setSwapHistoryLoading] = useState(false);
   const [swapHistoryTotalCount, setSwapHistoryTotalCount] = useState<number | null>(null);
-  const lastSwapHistoryBlockRef = useRef<bigint>(0n);
-  const swapHistorySeenIdsRef = useRef<Set<string>>(new Set());
 
   // Pixel-style stagger entry for pool cards
   useGSAP(
@@ -1048,43 +1030,17 @@ export default function DexAllInOne() {
     return map;
   }, [poolOptions, tokenDecimalsList, tokenSymbols]);
 
-  const addSwapHistoryItems = useCallback((items: SwapHistoryItem[]) => {
-    if (!items.length) return 0;
-
-    let newItemCount = 0;
-    for (const item of items) {
-      if (swapHistorySeenIdsRef.current.has(item.id)) continue;
-      swapHistorySeenIdsRef.current.add(item.id);
-      newItemCount += 1;
-    }
-
-    setSwapHistory((current) => {
-      const byId = new Map<string, SwapHistoryItem>();
-      for (const item of current) byId.set(item.id, item);
-      for (const item of items) byId.set(item.id, item);
-      return Array.from(byId.values())
-        .sort((a, b) => {
-          if (a.timestamp !== b.timestamp) return b.timestamp - a.timestamp;
-          if (a.blockNumber === b.blockNumber) return b.logIndex - a.logIndex;
-          return a.blockNumber > b.blockNumber ? -1 : 1;
-        })
-        .slice(0, SWAP_HISTORY_DISPLAY_LIMIT);
-    });
-
-    return newItemCount;
-  }, []);
-
-  const fetchSubgraphSwapPage = useCallback(async (skip: number, rawSchema: boolean) => {
+  const fetchSwapHistoryFromSubgraph = useCallback(async () => {
     const response = await fetch("/api/subgraph", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        query: rawSchema ? SWAP_HISTORY_RAW_QUERY : SWAP_HISTORY_QUERY,
+        query: SWAP_HISTORY_QUERY,
         variables: {
           limit: SWAP_HISTORY_PAGE_SIZE,
-          skip,
         },
       }),
+      cache: "no-store",
     });
 
     if (!response.ok) {
@@ -1097,83 +1053,50 @@ export default function DexAllInOne() {
     }
 
     const swaps = json.data?.swaps;
-    return Array.isArray(swaps) ? swaps as SubgraphSwap[] : [];
-  }, []);
-
-  const loadSwapHistoryFromSubgraph = useCallback(async () => {
-    let firstPage: SubgraphSwap[];
-
-    try {
-      firstPage = await fetchSubgraphSwapPage(0, false);
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("429")) {
-        setSwapHistoryTotalCount((current) => current ?? 0);
-        return true;
-      }
-      firstPage = await fetchSubgraphSwapPage(0, true);
-    }
-
-    if (firstPage.length === 0) {
-      setSwapHistoryTotalCount(0);
-      return true;
-    }
-
-    const firstItems = firstPage
+    const rows = Array.isArray(swaps) ? swaps as SubgraphSwap[] : [];
+    return rows
       .map((swap, index) => parseSubgraphSwap(swap, index))
       .filter((item): item is SwapHistoryItem => !!item);
-    addSwapHistoryItems(firstItems);
-
-    setSwapHistoryTotalCount(firstPage.length);
-
-    return true;
-  }, [addSwapHistoryItems, fetchSubgraphSwapPage]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
+    let requestInFlight = false;
 
-    async function loadSwapHistory() {
-      setSwapHistoryLoading(true);
+    async function loadSwapHistory(initialLoad = false) {
+      if (requestInFlight) return;
+      requestInFlight = true;
+      if (initialLoad) setSwapHistoryLoading(true);
       try {
-        await loadSwapHistoryFromSubgraph();
-        if (cancelled) return;
+        const rows = await fetchSwapHistoryFromSubgraph();
+        if (!cancelled) {
+          setSwapHistory(rows);
+          setSwapHistoryTotalCount(rows.length);
+        }
       } catch (error) {
         console.warn("Failed to load swap history", error);
       } finally {
-        if (!cancelled) setSwapHistoryLoading(false);
+        requestInFlight = false;
+        if (initialLoad && !cancelled) setSwapHistoryLoading(false);
       }
     }
 
-    loadSwapHistory();
+    void loadSwapHistory(true);
+    const refreshId = window.setInterval(() => {
+      void loadSwapHistory();
+    }, SWAP_HISTORY_REFRESH_MS);
+
     return () => {
       cancelled = true;
+      window.clearInterval(refreshId);
     };
-  }, [loadSwapHistoryFromSubgraph]);
+  }, [fetchSwapHistoryFromSubgraph]);
 
   useWatchContractEvent({
     address: DEX_ADDRESS as `0x${string}`,
     abi: DEX_ABI,
     eventName: "Swapped",
     onLogs(logs) {
-      const now = Math.floor(Date.now() / 1000);
-      const newItemCount = addSwapHistoryItems((logs as SwapLogLike[])
-        .filter(hasSwapArgs)
-        .map((log) => ({
-          id: makeSwapHistoryId(log),
-          txHash: log.transactionHash,
-          blockNumber: log.blockNumber ?? 0n,
-          logIndex: Number(log.logIndex ?? 0),
-          user: log.args.user,
-          tokenIn: log.args.tokenIn,
-          tokenOut: log.args.tokenOut,
-          amountIn: log.args.amountIn,
-          amountOut: log.args.amountOut,
-          fee: log.args.fee,
-          timestamp: now,
-          live: true,
-        })));
-      if (newItemCount > 0) {
-        setSwapHistoryTotalCount((current) => current === null ? newItemCount : current + newItemCount);
-      }
       const hasSelectedPairSwap = (logs as SwapLogLike[]).some((log) => {
         if (!hasSwapArgs(log) || !swapTokenOut) return false;
         const tokenIn = log.args.tokenIn.toLowerCase();
@@ -1187,11 +1110,6 @@ export default function DexAllInOne() {
       });
       if (hasSelectedPairSwap) {
         void refetchPool?.();
-      }
-      for (const log of logs as SwapLogLike[]) {
-        if (log.blockNumber && log.blockNumber > lastSwapHistoryBlockRef.current) {
-          lastSwapHistoryBlockRef.current = log.blockNumber;
-        }
       }
     },
   });

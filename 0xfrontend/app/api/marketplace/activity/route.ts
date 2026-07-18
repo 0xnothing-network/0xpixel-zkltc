@@ -6,7 +6,6 @@ import {
   type SubgraphMarketEventType,
 } from "@/lib/marketplaceSubgraph";
 import { fetchMarketplaceActivityFromOnchain } from "@/lib/onchainMarketplace";
-import { publicClient } from "@/lib/contract";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,7 +17,6 @@ interface CacheEntry {
 }
 
 const ACTIVITY_TTL = 15_000;
-const MAX_SUBGRAPH_BLOCK_LAG = 20_000n;
 const ACTIVITY_CACHE_MAX_ENTRIES = 256;
 const activityCache = new Map<string, CacheEntry>();
 
@@ -35,8 +33,6 @@ export async function GET(request: Request) {
     return NextResponse.json(cached.value);
   }
 
-  let staleSubgraphPayload: { events: SubgraphMarketEventDTO[] } | null = null;
-
   if (hasMarketplaceSubgraph()) {
     try {
       const payload = await fetchMarketplaceActivityFromSubgraph({
@@ -45,14 +41,8 @@ export async function GET(request: Request) {
         eventTypes: eventTypes.length ? eventTypes : undefined,
       });
       const value = { events: payload.events };
-      if (await isSubgraphFresh(payload)) {
-        writeActivityCache(cacheKey, value);
-        return NextResponse.json(value);
-      }
-      staleSubgraphPayload = value;
-      console.warn(
-        `[marketplace] subgraph is stale at block ${payload.indexedBlock ?? "unknown"}; using on-chain activity`
-      );
+      writeActivityCache(cacheKey, value);
+      return NextResponse.json(value);
     } catch (err) {
       console.warn("[marketplace] activity subgraph failed; using on-chain data:", err);
     }
@@ -68,7 +58,6 @@ export async function GET(request: Request) {
     return NextResponse.json(payload);
   } catch (err) {
     console.error("[marketplace] on-chain activity fallback failed:", err);
-    if (staleSubgraphPayload) return NextResponse.json(staleSubgraphPayload);
     if (cached) return NextResponse.json(cached.value);
     return NextResponse.json(
       { error: "Marketplace activity is unavailable" },
@@ -84,36 +73,6 @@ function writeActivityCache(key: string, value: CacheEntry["value"]) {
     const oldestKey = activityCache.keys().next().value;
     if (oldestKey === undefined) break;
     activityCache.delete(oldestKey);
-  }
-}
-
-async function isSubgraphFresh(payload: {
-  indexedBlock: number | null;
-  hasIndexingErrors: boolean;
-}): Promise<boolean> {
-  if (payload.hasIndexingErrors || payload.indexedBlock === null) return false;
-
-  try {
-    const currentBlock = await withTimeout(publicClient.getBlockNumber(), 2_500);
-    return BigInt(payload.indexedBlock) + MAX_SUBGRAPH_BLOCK_LAG >= currentBlock;
-  } catch {
-    // An RPC outage should not discard otherwise valid indexed data.
-    return true;
-  }
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(
-      () => reject(new Error("RPC head check timed out")),
-      timeoutMs
-    );
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
   }
 }
 

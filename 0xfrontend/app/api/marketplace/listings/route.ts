@@ -67,6 +67,21 @@ export async function GET(request: Request) {
   const force = searchParams.get("force") === "1";
   const cacheKey = "listings:all";
 
+  if (hasMarketplaceSubgraph()) {
+    const cachedPayload = subgraphPayloadCache.get(cacheKey);
+    if (!force && cachedPayload && Date.now() - cachedPayload.ts < LISTING_TTL) {
+      return NextResponse.json(cachedPayload.value);
+    }
+
+    try {
+      const payload = await fetchMarketplaceListingsFromSubgraph();
+      subgraphPayloadCache.set(cacheKey, { value: payload, ts: Date.now() });
+      return NextResponse.json(payload);
+    } catch (error) {
+      console.warn("[marketplace] subgraph listing fetch failed; using RPC:", error);
+    }
+  }
+
   const cached = listingCache.get(cacheKey);
   let listings: ListingDTO[];
 
@@ -82,21 +97,6 @@ export async function GET(request: Request) {
       listingCache.set(cacheKey, { value: listings, ts: Date.now() });
     } catch (err) {
       console.error("[marketplace] RPC listing fetch failed:", err);
-      if (hasMarketplaceSubgraph()) {
-        const cachedPayload = subgraphPayloadCache.get(cacheKey);
-        if (!force && cachedPayload && Date.now() - cachedPayload.ts < LISTING_TTL) {
-          return NextResponse.json(cachedPayload.value);
-        }
-
-        try {
-          const subgraph = await fetchMarketplaceListingsFromSubgraph();
-          subgraphPayloadCache.set(cacheKey, { value: subgraph, ts: Date.now() });
-          return NextResponse.json(subgraph);
-        } catch (subgraphErr) {
-          console.error("[marketplace] subgraph fallback failed:", subgraphErr);
-        }
-      }
-
       // Return stale if available, otherwise propagate.
       if (cached) listings = cached.value;
       else {

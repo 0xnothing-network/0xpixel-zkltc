@@ -124,6 +124,10 @@ export class PoolCreated__Params {
   get token1(): Address {
     return this._event.parameters[2].value.toAddress();
   }
+
+  get creator(): Address {
+    return this._event.parameters[3].value.toAddress();
+  }
 }
 
 export class RewardClaimed extends ethereum.Event {

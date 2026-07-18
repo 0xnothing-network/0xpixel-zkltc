@@ -22,7 +22,7 @@ import { NextRequest, NextResponse } from 'next/server';
 export const runtime = 'edge';
 
 const DEFAULT_DEX_SUBGRAPH_URL =
-  'https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.6/gn';
+  'https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.7/gn';
 const SUBGRAPH_URL_RAW = process.env.NEXT_PUBLIC_SUBGRAPH_URL || DEFAULT_DEX_SUBGRAPH_URL;
 const SUBGRAPH_URL = SUBGRAPH_URL_RAW === 'disabled' ? '' : SUBGRAPH_URL_RAW;
 
@@ -50,6 +50,9 @@ const cache = new Map<string, CacheEntry>();
 const inFlight = new Map<string, Promise<UpstreamResult>>();
 
 function isDeltaQuery(query: string, variables: Record<string, unknown>): boolean {
+  // The swap-history panel polls the newest indexed page. Keep it on the
+  // short cache path so new subgraph rows are visible without a two-minute lag.
+  if (query.includes('GetSwapHistory')) return true;
   if (!query.includes('GetDeltaSwaps')) return false;
   const gt = Number(variables.timestampGt);
   if (!gt) return false;
