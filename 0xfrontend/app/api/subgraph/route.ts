@@ -52,7 +52,9 @@ const inFlight = new Map<string, Promise<UpstreamResult>>();
 function isDeltaQuery(query: string, variables: Record<string, unknown>): boolean {
   // The swap-history panel polls the newest indexed page. Keep it on the
   // short cache path so new subgraph rows are visible without a two-minute lag.
-  if (query.includes('GetSwapHistory')) return true;
+  if (query.includes('GetSwapHistory')) {
+    return Number(variables.skip ?? 0) === 0;
+  }
   if (!query.includes('GetDeltaSwaps')) return false;
   const gt = Number(variables.timestampGt);
   if (!gt) return false;

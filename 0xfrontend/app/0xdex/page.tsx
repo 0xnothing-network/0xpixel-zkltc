@@ -44,9 +44,9 @@ function PixelSkeleton({ className = "" }: { className?: string }) {
 
 function PoolCardSkeleton() {
   return (
-    <div className="p-4 xl:p-5 bg-[#13131F] border border-[#2D2D44]">
-      <div className="flex justify-between items-center mb-3">
-        <div className="flex items-center gap-2">
+    <div className="pool-card-skeleton bg-[#13131F] border border-[#2D2D44]">
+      <div className="pool-card-head">
+        <div className="pool-card-head-main">
           <PixelSkeleton className="w-8 h-4" />
           <PixelSkeleton className="w-7 h-7 rounded-full" />
           <PixelSkeleton className="w-20 h-5" />
@@ -54,20 +54,20 @@ function PoolCardSkeleton() {
         </div>
         <PixelSkeleton className="w-14 h-6" />
       </div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 lg:gap-3 mt-2">
-        <div className="bg-[#1A1A2E]/50 p-2">
+      <div className="pool-card-stats">
+        <div className="pool-card-stat bg-[#1A1A2E]/50">
           <PixelSkeleton className="w-8 h-3 mb-1" />
           <PixelSkeleton className="w-16 h-4" />
         </div>
-        <div className="bg-[#1A1A2E]/50 p-2">
+        <div className="pool-card-stat bg-[#1A1A2E]/50">
           <PixelSkeleton className="w-12 h-3 mb-1" />
           <PixelSkeleton className="w-14 h-4" />
         </div>
-        <div className="bg-[#1A1A2E]/50 p-2">
+        <div className="pool-card-stat bg-[#1A1A2E]/50">
           <PixelSkeleton className="w-14 h-3 mb-1" />
           <PixelSkeleton className="w-12 h-4" />
         </div>
-        <div className="bg-[#1A1A2E]/50 p-2">
+        <div className="pool-card-stat bg-[#1A1A2E]/50">
           <PixelSkeleton className="w-16 h-3 mb-1" />
           <PixelSkeleton className="w-14 h-4" />
         </div>
@@ -235,14 +235,60 @@ function formatNum(value: bigint, decimals = 18) {
   return num.toFixed(2);
 }
 
-const SWAP_HISTORY_PAGE_SIZE = 80;
-const SWAP_HISTORY_DISPLAY_LIMIT = 80;
+function formatIntegerCount(value: string | number) {
+  try {
+    return BigInt(value).toLocaleString("en-US");
+  } catch {
+    return String(value);
+  }
+}
+
+function countAtLeast(value: string | null, minimum: number) {
+  if (value === null) return null;
+  try {
+    return BigInt(value) >= BigInt(minimum) ? value : String(minimum);
+  } catch {
+    return String(minimum);
+  }
+}
+
+const SWAP_HISTORY_PAGE_SIZE = 100;
 const SWAP_HISTORY_REFRESH_MS = 10_000;
+const SWAP_HISTORY_COUNTS_REFRESH_MS = 15_000;
+const SWAP_HISTORY_MAX_TIMESTAMP = "9999999999";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 
 const SWAP_HISTORY_QUERY = `
-  query GetSwapHistory($limit: Int!) {
-    swaps(first: $limit, orderBy: timestamp, orderDirection: desc) {
+  query GetSwapHistory($limit: Int!, $skip: Int!, $anchor: BigInt!) {
+    swaps(
+      first: $limit
+      skip: $skip
+      where: { timestamp_lte: $anchor }
+      orderBy: timestamp
+      orderDirection: desc
+    ) {
+      id
+      user
+      tokenIn
+      tokenOut
+      amountIn
+      amountOut
+      fee
+      timestamp
+      blockNumber
+    }
+  }
+`;
+
+const SWAP_HISTORY_PAIR_QUERY = `
+  query GetSwapHistory($limit: Int!, $skip: Int!, $anchor: BigInt!, $pairId: Bytes!) {
+    swaps(
+      first: $limit
+      skip: $skip
+      where: { timestamp_lte: $anchor, pairId: $pairId }
+      orderBy: timestamp
+      orderDirection: desc
+    ) {
       id
       user
       tokenIn
@@ -274,6 +320,11 @@ type SwapHistoryItem = {
   fee: bigint;
   timestamp: number;
   live: boolean;
+};
+
+type SwapHistoryCountsResponse = {
+  total?: string;
+  pairs?: Record<string, string>;
 };
 
 type SwappedLogArgs = {
@@ -406,6 +457,23 @@ function parseSubgraphSwap(item: SubgraphSwap, index: number): SwapHistoryItem |
   }
 }
 
+function mergeSwapHistory(
+  current: SwapHistoryItem[],
+  incoming: SwapHistoryItem[],
+) {
+  const byId = new Map<string, SwapHistoryItem>();
+  for (const item of current) byId.set(item.id, item);
+  for (const item of incoming) byId.set(item.id, item);
+
+  return [...byId.values()].sort((left, right) => {
+    if (left.timestamp !== right.timestamp) return right.timestamp - left.timestamp;
+    if (left.blockNumber !== right.blockNumber) {
+      return left.blockNumber > right.blockNumber ? -1 : 1;
+    }
+    return right.logIndex - left.logIndex;
+  });
+}
+
 function normalizeDecimalInput(value: string) {
   return value.replace(/,/g, ".").replace(/[^0-9.]/g, "").replace(/(\..*)\./g, "$1");
 }
@@ -479,6 +547,9 @@ function PoolCard({
   onSelect,
   onViewChart,
   onWarmChart,
+  swapSelected = false,
+  historyFiltered = false,
+  onFilterHistory,
   tokenSymbol,
   tokenDecimals = 18,
 }: {
@@ -488,6 +559,9 @@ function PoolCard({
   onSelect?: (data: { token: `0x${string}`, nusd: `0x${string}`, reserve0: bigint, reserve1: bigint }) => void;
   onViewChart?: (data: { price: number | null; tokenDecimals: number }) => void;
   onWarmChart?: (data: { price: number | null; tokenDecimals: number }) => void;
+  swapSelected?: boolean;
+  historyFiltered?: boolean;
+  onFilterHistory?: () => void;
   tokenSymbol?: string;
   tokenDecimals?: number;
 }) {
@@ -529,12 +603,17 @@ function PoolCard({
   return (
     <div
       data-pair-id={pairId}
-      className="pool-card-item p-4 xl:p-5 rounded-xl bg-[#13131F] border border-[#2D2D44] hover:border-[#8888ff]/50 transition-all cursor-pointer"
+      data-swap-selected={swapSelected ? "true" : undefined}
+      className={`pool-card-item rounded-xl bg-[#13131F] border border-[#2D2D44] hover:border-[#8888ff]/50 transition-all cursor-pointer ${
+        swapSelected ? "pool-card-swap-selected" : ""
+      } ${
+        historyFiltered ? "pool-card-history-filtered" : ""
+      }`}
       onClick={handleClick}
     >
       {/* Top Row: Rank, Symbol, Price */}
-      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
+      <div className="pool-card-head">
+        <div className="pool-card-head-main">
           <span className="text-xs text-[#64748B] bg-[#2D2D44] px-2 py-0.5 rounded">#{rank}</span>
           <div className="w-7 h-7 rounded-full bg-[#8888ff]/20 border border-[#8888ff]/40 flex items-center justify-center text-[#8888ff] text-xs font-bold">L$</div>
           <span className="font-bold text-white text-sm" style={{ fontFamily: "var(--font-departure)" }}>
@@ -544,13 +623,32 @@ function PoolCard({
             ${pricePerToken > 0 ? pricePerToken.toFixed(6) : "0"}
           </span>
         </div>
-        <div className="flex shrink-0 items-center gap-1 self-end sm:self-auto">
+        <div className="pool-card-actions">
+          {onFilterHistory && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onFilterHistory();
+              }}
+              className={`pool-card-tx-filter ${historyFiltered ? "is-active" : ""}`}
+              aria-pressed={historyFiltered}
+              title={historyFiltered
+                ? "Show all swap transactions"
+                : `Filter swap history for ${displaySymbol}/NUSD`}
+              aria-label={historyFiltered
+                ? `Clear ${displaySymbol}/NUSD transaction filter`
+                : `Filter transactions for ${displaySymbol}/NUSD`}
+            >
+              TX
+            </button>
+          )}
           <a
             href={explorerUrl}
             target="_blank"
             rel="noopener noreferrer"
             onClick={(event) => event.stopPropagation()}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-[#2D2D44] bg-[#1A1A2E] text-[#94A3B8] transition-colors hover:border-[#8888ff]/50 hover:text-white"
+            className="pool-card-action inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-[#2D2D44] bg-[#1A1A2E] text-[#94A3B8] transition-colors hover:border-[#8888ff]/50 hover:text-white"
             title={`View ${explorerLabel} on explorer`}
             aria-label={`View ${explorerLabel} on explorer`}
           >
@@ -566,7 +664,7 @@ function PoolCard({
                 e.stopPropagation();
                 onViewChart({ price: pricePerToken > 0 ? pricePerToken : null, tokenDecimals });
               }}
-              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-[#2D2D44] bg-[#1A1A2E] text-[#94A3B8] transition-colors hover:border-[#8888ff]/50 hover:text-white"
+              className="pool-card-action inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-[#2D2D44] bg-[#1A1A2E] text-[#94A3B8] transition-colors hover:border-[#8888ff]/50 hover:text-white"
               title={`Chart ${displaySymbol}/NUSD`}
               aria-label={`Open ${displaySymbol}/NUSD chart`}
             >
@@ -577,26 +675,26 @@ function PoolCard({
       </div>
       
       {/* Stats Row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 lg:gap-3 mt-2">
-        <div className="bg-[#1A1A2E]/50 rounded-lg p-2">
+      <div className="pool-card-stats">
+        <div className="pool-card-stat bg-[#1A1A2E]/50 rounded-lg">
           <div className="text-[10px] text-[#64748B] uppercase">TVL</div>
           <div className="pixel-metric-value pixel-metric-tvl text-xs font-bold text-white truncate" style={{ fontFamily: "var(--font-departure)" }}>
             {formatUSDFloat(tvlUSD)}
           </div>
         </div>
-        <div className="bg-[#1A1A2E]/50 rounded-lg p-2">
+        <div className="pool-card-stat bg-[#1A1A2E]/50 rounded-lg">
           <div className="text-[10px] text-[#64748B] uppercase">LP Shares</div>
           <div className="pixel-metric-value pixel-metric-lp text-xs font-bold text-amber-400 truncate" style={{ fontFamily: "var(--font-departure)" }}>
             {formatNum(lpTotal)}
           </div>
         </div>
-        <div className="bg-[#1A1A2E]/50 rounded-lg p-2">
+        <div className="pool-card-stat bg-[#1A1A2E]/50 rounded-lg">
           <div className="text-[10px] text-[#64748B] uppercase">24h Volume</div>
           <div className="pixel-metric-value pixel-metric-volume text-xs font-bold text-[#8888ff] truncate" style={{ fontFamily: "var(--font-departure)" }}>
             {formatUSD(volume24h)}
           </div>
         </div>
-        <div className="bg-[#1A1A2E]/50 rounded-lg p-2">
+        <div className="pool-card-stat bg-[#1A1A2E]/50 rounded-lg">
           <div className="text-[10px] text-[#64748B] uppercase">Total Volume</div>
           <div className="pixel-metric-value pixel-metric-total text-xs font-bold text-[#8888ff] truncate" style={{ fontFamily: "var(--font-departure)" }}>
             {formatUSD(totalVolume)}
@@ -611,16 +709,24 @@ function SwapHistoryPanel({
   swaps,
   loading,
   totalCount,
+  hasMore,
+  loadingMore,
+  onLoadMore,
   tokenMetaByAddress,
 }: {
   swaps: SwapHistoryItem[];
   loading: boolean;
-  totalCount: number | null;
+  totalCount: string | null;
+  hasMore: boolean;
+  loadingMore: boolean;
+  onLoadMore: () => void;
   tokenMetaByAddress: Map<string, TokenMeta>;
 }) {
-  const txCountLabel = totalCount === null
-    ? swaps.length.toLocaleString()
-    : totalCount.toLocaleString();
+  const loadedCountLabel = swaps.length.toLocaleString();
+  const resolvedTotalCount = countAtLeast(totalCount, swaps.length);
+  const txCountLabel = resolvedTotalCount === null
+    ? loadedCountLabel
+    : formatIntegerCount(resolvedTotalCount);
 
   return (
     <section className="dex-swap-history pixel-panel">
@@ -630,7 +736,14 @@ function SwapHistoryPanel({
           <h2>Swap History</h2>
         </div>
         <div className="dex-history-meta">
-          <div className="dex-tx-count">TX {txCountLabel}</div>
+          <div
+            className="dex-tx-count"
+            title={resolvedTotalCount === null
+              ? `${loadedCountLabel} indexed swaps loaded`
+              : `${loadedCountLabel} of ${txCountLabel} indexed swaps loaded`}
+          >
+            TX {txCountLabel}{resolvedTotalCount === null && hasMore ? "+" : ""}
+          </div>
           <div className="dex-live-badge">
             <span className="dex-live-dot" />
             {loading ? "SYNCING" : "LIVE"}
@@ -638,7 +751,17 @@ function SwapHistoryPanel({
         </div>
       </div>
 
-      <div className="dex-history-table">
+      <div
+        className="dex-history-table"
+        role="region"
+        aria-label="Indexed swap history"
+        tabIndex={0}
+        onScroll={(event) => {
+          const viewport = event.currentTarget;
+          const remaining = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+          if (hasMore && !loadingMore && remaining < 240) onLoadMore();
+        }}
+      >
         <div className="dex-history-row dex-history-row-head">
           <span>Pair</span>
           <span>Trade</span>
@@ -648,10 +771,10 @@ function SwapHistoryPanel({
 
         {swaps.length === 0 ? (
           <div className="dex-history-empty">
-            {loading ? "Loading onchain swaps..." : "No swaps found yet"}
+            {loading ? "Loading indexed swaps..." : "No swaps found yet"}
           </div>
         ) : (
-          swaps.slice(0, SWAP_HISTORY_DISPLAY_LIMIT).map((item) => {
+          swaps.map((item) => {
             const tokenInMeta = getTokenMeta(tokenMetaByAddress, item.tokenIn);
             const tokenOutMeta = getTokenMeta(tokenMetaByAddress, item.tokenOut);
             const side = getSwapSide(item);
@@ -709,6 +832,19 @@ function SwapHistoryPanel({
           })
         )}
       </div>
+
+      {hasMore ? (
+        <div className="dex-history-footer">
+          <button
+            type="button"
+            className="dex-history-load-more pixel-btn-soft pixel-btn-soft-secondary"
+            disabled={loadingMore}
+            onClick={onLoadMore}
+          >
+            {loadingMore ? "LOADING..." : "LOAD OLDER SWAPS"}
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -777,7 +913,14 @@ export default function DexAllInOne() {
   const publicClient = usePublicClient();
   const [swapHistory, setSwapHistory] = useState<SwapHistoryItem[]>([]);
   const [swapHistoryLoading, setSwapHistoryLoading] = useState(false);
-  const [swapHistoryTotalCount, setSwapHistoryTotalCount] = useState<number | null>(null);
+  const [swapHistoryPairId, setSwapHistoryPairId] = useState("");
+  const [swapHistoryCounts, setSwapHistoryCounts] = useState<SwapHistoryCountsResponse | null>(null);
+  const [swapHistoryHasMore, setSwapHistoryHasMore] = useState(false);
+  const [swapHistoryLoadingMore, setSwapHistoryLoadingMore] = useState(false);
+  const swapHistoryPairIdRef = useRef("");
+  const swapHistoryAnchorRef = useRef(SWAP_HISTORY_MAX_TIMESTAMP);
+  const swapHistorySkipRef = useRef(0);
+  const swapHistoryLoadMoreInFlightRef = useRef(false);
 
   // Pixel-style stagger entry for pool cards
   useGSAP(
@@ -1030,17 +1173,31 @@ export default function DexAllInOne() {
     return map;
   }, [poolOptions, tokenDecimalsList, tokenSymbols]);
 
-  const fetchSwapHistoryFromSubgraph = useCallback(async () => {
+  const fetchSwapHistoryFromSubgraph = useCallback(async ({
+    anchor = SWAP_HISTORY_MAX_TIMESTAMP,
+    skip = 0,
+    pairId,
+    signal,
+  }: {
+    anchor?: string;
+    skip?: number;
+    pairId?: string;
+    signal?: AbortSignal;
+  } = {}) => {
     const response = await fetch("/api/subgraph", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        query: SWAP_HISTORY_QUERY,
+        query: pairId ? SWAP_HISTORY_PAIR_QUERY : SWAP_HISTORY_QUERY,
         variables: {
           limit: SWAP_HISTORY_PAGE_SIZE,
+          skip,
+          anchor,
+          ...(pairId ? { pairId } : {}),
         },
       }),
       cache: "no-store",
+      signal,
     });
 
     if (!response.ok) {
@@ -1053,28 +1210,90 @@ export default function DexAllInOne() {
     }
 
     const swaps = json.data?.swaps;
-    const rows = Array.isArray(swaps) ? swaps as SubgraphSwap[] : [];
-    return rows
+    const rawRows = Array.isArray(swaps) ? swaps as SubgraphSwap[] : [];
+    const rows = rawRows
       .map((swap, index) => parseSubgraphSwap(swap, index))
       .filter((item): item is SwapHistoryItem => !!item);
+    return {
+      rows,
+      rawCount: rawRows.length,
+      newestTimestamp: parseSubgraphTimestamp(rawRows[0]?.timestamp),
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+
+    async function loadSwapHistoryCounts() {
+      try {
+        const response = await fetch("/api/dex/swap-counts", {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Swap count request failed: ${response.status}`);
+        }
+        const payload = await response.json() as SwapHistoryCountsResponse;
+        if (!cancelled && typeof payload.total === "string" && payload.pairs) {
+          setSwapHistoryCounts(payload);
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.warn("Failed to load exact swap counts", error);
+        }
+      }
+    }
+
+    void loadSwapHistoryCounts();
+    const refreshId = window.setInterval(() => {
+      void loadSwapHistoryCounts();
+    }, SWAP_HISTORY_COUNTS_REFRESH_MS);
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      window.clearInterval(refreshId);
+    };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
     let requestInFlight = false;
+    const controller = new AbortController();
+    const activePairId = swapHistoryPairId;
+
+    swapHistoryPairIdRef.current = activePairId;
+    swapHistoryAnchorRef.current = SWAP_HISTORY_MAX_TIMESTAMP;
+    swapHistorySkipRef.current = 0;
+    setSwapHistory([]);
+    setSwapHistoryHasMore(false);
 
     async function loadSwapHistory(initialLoad = false) {
       if (requestInFlight) return;
       requestInFlight = true;
       if (initialLoad) setSwapHistoryLoading(true);
       try {
-        const rows = await fetchSwapHistoryFromSubgraph();
+        const page = await fetchSwapHistoryFromSubgraph({
+          pairId: activePairId || undefined,
+          signal: controller.signal,
+        });
         if (!cancelled) {
-          setSwapHistory(rows);
-          setSwapHistoryTotalCount(rows.length);
+          if (initialLoad || swapHistorySkipRef.current === 0) {
+            swapHistoryAnchorRef.current = page.newestTimestamp > 0
+              ? page.newestTimestamp.toString()
+              : SWAP_HISTORY_MAX_TIMESTAMP;
+            swapHistorySkipRef.current = page.rawCount;
+            setSwapHistory(page.rows);
+            setSwapHistoryHasMore(page.rawCount === SWAP_HISTORY_PAGE_SIZE);
+          } else {
+            setSwapHistory((current) => mergeSwapHistory(current, page.rows));
+          }
         }
       } catch (error) {
-        console.warn("Failed to load swap history", error);
+        if (!controller.signal.aborted) {
+          console.warn("Failed to load swap history", error);
+        }
       } finally {
         requestInFlight = false;
         if (initialLoad && !cancelled) setSwapHistoryLoading(false);
@@ -1088,9 +1307,49 @@ export default function DexAllInOne() {
 
     return () => {
       cancelled = true;
+      controller.abort();
       window.clearInterval(refreshId);
     };
-  }, [fetchSwapHistoryFromSubgraph]);
+  }, [fetchSwapHistoryFromSubgraph, swapHistoryPairId]);
+
+  const loadOlderSwapHistory = useCallback(async () => {
+    if (
+      swapHistoryLoadMoreInFlightRef.current ||
+      swapHistoryLoadingMore ||
+      !swapHistoryHasMore
+    ) {
+      return;
+    }
+
+    swapHistoryLoadMoreInFlightRef.current = true;
+    setSwapHistoryLoadingMore(true);
+    try {
+      const requestedPairId = swapHistoryPairId;
+      const page = await fetchSwapHistoryFromSubgraph({
+        anchor: swapHistoryAnchorRef.current,
+        skip: swapHistorySkipRef.current,
+        pairId: requestedPairId || undefined,
+      });
+      if (swapHistoryPairIdRef.current !== requestedPairId) return;
+      swapHistorySkipRef.current += page.rawCount;
+      setSwapHistory((current) => mergeSwapHistory(current, page.rows));
+      setSwapHistoryHasMore(page.rawCount === SWAP_HISTORY_PAGE_SIZE);
+    } catch (error) {
+      toast.handleError(error, "Swap history failed");
+    } finally {
+      swapHistoryLoadMoreInFlightRef.current = false;
+      setSwapHistoryLoadingMore(false);
+    }
+  }, [fetchSwapHistoryFromSubgraph, swapHistoryHasMore, swapHistoryLoadingMore, swapHistoryPairId, toast]);
+
+  const handleSwapHistoryPairChange = useCallback((pairId: string) => {
+    swapHistoryPairIdRef.current = pairId;
+    swapHistoryAnchorRef.current = SWAP_HISTORY_MAX_TIMESTAMP;
+    swapHistorySkipRef.current = 0;
+    setSwapHistory([]);
+    setSwapHistoryHasMore(false);
+    setSwapHistoryPairId(pairId);
+  }, []);
 
   useWatchContractEvent({
     address: DEX_ADDRESS as `0x${string}`,
@@ -1129,6 +1388,30 @@ export default function DexAllInOne() {
       ? "zkLTC"
       : (tokenSymbols[poolIndex] as string) || "TOKEN";
   }, [poolOptions, tokenSymbols]);
+
+  const swapHistoryExactTotal = useMemo(() => {
+    if (!swapHistoryCounts?.total) return null;
+    if (!swapHistoryPairId) return swapHistoryCounts.total;
+    return swapHistoryCounts.pairs?.[swapHistoryPairId.toLowerCase()] ?? "0";
+  }, [swapHistoryCounts, swapHistoryPairId]);
+
+  const activeSwapPairId = useMemo(() => {
+    if (!swapTokenOut) return "";
+
+    const tokenInAddress = swapTokenIn.address.toLowerCase();
+    const tokenOutAddress = swapTokenOut.address.toLowerCase();
+    const poolIndex = allPoolData.findIndex((poolData) => {
+      if (!poolData) return false;
+      const token0Address = poolData[0].toLowerCase();
+      const token1Address = poolData[1].toLowerCase();
+      return (
+        (token0Address === tokenInAddress && token1Address === tokenOutAddress) ||
+        (token0Address === tokenOutAddress && token1Address === tokenInAddress)
+      );
+    });
+
+    return poolIndex >= 0 ? poolOptions[poolIndex]?.pairId.toLowerCase() ?? "" : "";
+  }, [allPoolData, poolOptions, swapTokenIn.address, swapTokenOut]);
 
   const clearDexPairUrl = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -2010,7 +2293,7 @@ export default function DexAllInOne() {
           </Link>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
+        <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-3 lg:gap-6">
           {/* Left Panel - Swap */}
           <div className="bg-[#1A1A2E]/90 border border-[#2D2D44] rounded-2xl p-5 xl:p-6">
             {activeTab === "swap" && (
@@ -2431,12 +2714,24 @@ export default function DexAllInOne() {
           </div>
 
           {/* Middle Panel - Top Pairs */}
-          <div>
+          <div className="dex-top-pairs min-w-0">
             <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 mb-4">
               <h2 className="text-base sm:text-lg font-bold text-white shrink-0" style={{ fontFamily: "var(--font-departure)" }}>
                 Top Pairs ({poolOptions.length})
               </h2>
               <div className="flex gap-1 bg-[#13131F] p-1 rounded-lg ml-auto">
+                <button
+                  type="button"
+                  onClick={() => handleSwapHistoryPairChange("")}
+                  className={`dex-all-tx-filter px-2 py-1 text-xs font-bold transition-all pixel-btn-soft ${
+                    !swapHistoryPairId
+                      ? "pixel-btn-soft-indigo pixel-btn-soft-sm"
+                      : "pixel-btn-soft-secondary pixel-btn-soft-sm"
+                  }`}
+                  aria-pressed={!swapHistoryPairId}
+                >
+                  ALL TX
+                </button>
                 {(["tvl", "vol24h", "volAll", "new"] as const).map((filter) => (
                   <button
                     key={filter}
@@ -2452,13 +2747,20 @@ export default function DexAllInOne() {
                 ))}
               </div>
             </div>
-            <div className="space-y-3" ref={poolListRef}>
+            <div
+              className="dex-top-pairs-list space-y-2"
+              ref={poolListRef}
+              role="region"
+              aria-label="All top pairs"
+              tabIndex={0}
+            >
               {poolOptions.length > 0 ? (
                 sortedPoolIndices.map((poolIndex, rankIndex) => {
                   const pool = poolOptions[poolIndex];
                   const pData = allPoolData[poolIndex];
                   const token0 = pData?.[0] as `0x${string}` | undefined;
                   const token1 = pData?.[1] as `0x${string}` | undefined;
+                  const normalizedPairId = pool.pairId.toLowerCase();
 
                   if (!pData) return (
                     <PoolCardSkeleton key={pool.pairId} />
@@ -2479,6 +2781,13 @@ export default function DexAllInOne() {
                       chartHref="/0xdex"
                       tokenSymbol={getPoolTokenSymbol(poolIndex)}
                       tokenDecimals={getPoolTokenDecimals(poolIndex)}
+                      swapSelected={activeSwapPairId === normalizedPairId}
+                      historyFiltered={swapHistoryPairId === normalizedPairId}
+                      onFilterHistory={() => {
+                        handleSwapHistoryPairChange(
+                          swapHistoryPairId === normalizedPairId ? "" : normalizedPairId,
+                        );
+                      }}
                       onSelect={() => {
                         selectPoolForSwap(poolIndex);
                       }}
@@ -2672,7 +2981,10 @@ export default function DexAllInOne() {
           <SwapHistoryPanel
             swaps={swapHistory}
             loading={swapHistoryLoading}
-            totalCount={swapHistoryTotalCount}
+            totalCount={swapHistoryExactTotal}
+            hasMore={swapHistoryHasMore}
+            loadingMore={swapHistoryLoadingMore}
+            onLoadMore={() => void loadOlderSwapHistory()}
             tokenMetaByAddress={tokenMetaByAddress}
           />
         </div>

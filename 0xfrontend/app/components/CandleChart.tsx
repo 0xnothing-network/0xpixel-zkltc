@@ -138,6 +138,14 @@ function resolveCandlesEndpoint(subgraphUrl?: string) {
   return subgraphUrl;
 }
 
+function fitCompleteHistory(chart: IChartApi, candleCount: number) {
+  const scale = chart.timeScale();
+  const width = Math.max(1, scale.width());
+  const minBarSpacing = Math.min(1, width / Math.max(candleCount + 6, 1));
+  scale.applyOptions({ minBarSpacing });
+  scale.fitContent();
+}
+
 const TimeframeButton = memo(function TimeframeButton({
   label,
   active,
@@ -235,6 +243,7 @@ export default function CandleChart({
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const renderedSeriesKeyRef = useRef('');
+  const renderedFirstTimeRef = useRef<number | null>(null);
   const renderedLastTimeRef = useRef<number | null>(null);
   const renderedCountRef = useRef(0);
   const resizeFrameRef = useRef<number | null>(null);
@@ -243,6 +252,7 @@ export default function CandleChart({
   const [isClient, setIsClient] = useState(false);
   const [chartReady, setChartReady] = useState(false);
   const [timeframe, setTimeframe] = useState<TfValue>(() => normalizeTimeframe(initialTimeframe));
+  const timeframeRef = useRef(timeframe);
   const [viewportHeight, setViewportHeight] = useState(height);
 
   const candlesEndpoint = useMemo(() => resolveCandlesEndpoint(subgraphUrl), [subgraphUrl]);
@@ -271,7 +281,15 @@ export default function CandleChart({
     () => toChartData(candles, invertPrice),
     [candles, invertPrice],
   );
-  const seriesKey = `${pairId.toLowerCase()}:${timeframe}:${invertPrice ? 1 : 0}`;
+  const seriesKey = `${pairId.toLowerCase()}:${token0.toLowerCase()}:${token1.toLowerCase()}:${token0Decimals}:${token1Decimals}:${timeframe}:${invertPrice ? 1 : 0}`;
+
+  const resetRenderedSeries = useCallback(() => {
+    seriesRef.current?.setData([]);
+    renderedSeriesKeyRef.current = '';
+    renderedFirstTimeRef.current = null;
+    renderedLastTimeRef.current = null;
+    renderedCountRef.current = 0;
+  }, []);
 
   const priceStats = useMemo(() => {
     const first = chartData[0];
@@ -293,8 +311,11 @@ export default function CandleChart({
 
   useEffect(() => {
     const next = normalizeTimeframe(initialTimeframe);
+    if (timeframeRef.current === next) return;
+    resetRenderedSeries();
+    timeframeRef.current = next;
     setTimeframe(current => (current === next ? current : next));
-  }, [initialTimeframe]);
+  }, [initialTimeframe, resetRenderedSeries]);
 
   useEffect(() => {
     if (!fullscreen) return;
@@ -339,9 +360,10 @@ export default function CandleChart({
         secondsVisible: false,
         rightOffset: 3,
         barSpacing: 6,
-        minBarSpacing: 1,
+        minBarSpacing: 0.1,
         fixLeftEdge: false,
         fixRightEdge: false,
+        lockVisibleTimeRangeOnResize: true,
         shiftVisibleRangeOnNewBar: true,
       },
       handleScale: {
@@ -411,6 +433,7 @@ export default function CandleChart({
       chartRef.current = null;
       seriesRef.current = null;
       renderedSeriesKeyRef.current = '';
+      renderedFirstTimeRef.current = null;
       renderedLastTimeRef.current = null;
       renderedCountRef.current = 0;
       setChartReady(false);
@@ -422,12 +445,21 @@ export default function CandleChart({
     const chart = chartRef.current;
     const series = seriesRef.current;
     const isNewSeries = renderedSeriesKeyRef.current !== seriesKey;
+    const previousFirstTime = renderedFirstTimeRef.current;
     const previousLastTime = renderedLastTimeRef.current;
     const previousCount = renderedCountRef.current;
+    const first = chartData[0];
     const last = chartData[chartData.length - 1];
+    const nextFirstTime = first ? Number(first.time) : null;
+    const historyExtendedLeft =
+      !isNewSeries &&
+      previousFirstTime !== null &&
+      nextFirstTime !== null &&
+      nextFirstTime < previousFirstTime;
 
     series.setData(chartData);
     renderedSeriesKeyRef.current = seriesKey;
+    renderedFirstTimeRef.current = nextFirstTime;
     renderedLastTimeRef.current = last ? Number(last.time) : null;
     renderedCountRef.current = chartData.length;
 
@@ -452,9 +484,9 @@ export default function CandleChart({
       fitFrameRef.current = null;
       if (!chartData.length) return;
 
-      if (isNewSeries || previousCount === 0) {
+      if (isNewSeries || previousCount === 0 || historyExtendedLeft) {
         chart.priceScale('right').applyOptions({ autoScale: true });
-        chart.timeScale().fitContent();
+        fitCompleteHistory(chart, chartData.length);
         return;
       }
 
@@ -480,13 +512,11 @@ export default function CandleChart({
 
   const changeTimeframe = useCallback((next: TfValue) => {
     if (next === timeframe) return;
-    seriesRef.current?.setData([]);
-    renderedSeriesKeyRef.current = '';
-    renderedLastTimeRef.current = null;
-    renderedCountRef.current = 0;
+    resetRenderedSeries();
+    timeframeRef.current = next;
     setTimeframe(next);
     onTimeframeChange?.(next);
-  }, [onTimeframeChange, timeframe]);
+  }, [onTimeframeChange, resetRenderedSeries, timeframe]);
 
   const noDataLabel = hasIndexingErrors
     ? 'INDEX ERROR'

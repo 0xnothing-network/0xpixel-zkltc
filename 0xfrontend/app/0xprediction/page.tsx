@@ -15,7 +15,6 @@ import {
   formatUnits,
   keccak256,
   maxUint256,
-  parseAbiItem,
   parseUnits,
   toBytes,
 } from "viem";
@@ -75,9 +74,21 @@ type HistoryItem = {
   txHash?: `0x${string}`;
 };
 
-const BET_PLACED_EVENT = parseAbiItem(
-  "event BetPlaced(uint256 indexed roundId, address indexed user, uint8 indexed side, uint256 amount, uint256 upPool, uint256 downPool)"
-);
+type HistoryApiItem = {
+  roundId: string;
+  symbol: string;
+  upAmount: string;
+  downAmount: string;
+  claimable: string;
+  claimed: boolean;
+  outcome: number;
+  txHash?: `0x${string}`;
+};
+
+type HistoryApiResponse = {
+  history?: HistoryApiItem[];
+  error?: string;
+};
 
 const DEFAULT_AMOUNT = "100";
 const PRICE_DECIMALS = 18;
@@ -86,18 +97,6 @@ const OUTCOME_LABELS = ["Pending", "UP", "DOWN", "DRAW", "Cancelled"] as const;
 
 function assetIdOf(symbol: string): `0x${string}` {
   return keccak256(toBytes(symbol));
-}
-
-function startBlock() {
-  const raw =
-    process.env.NEXT_PUBLIC_PREDICTION_START_BLOCK ||
-    process.env.NEXT_PUBLIC_DEX_START_BLOCK ||
-    "0";
-  try {
-    return BigInt(raw);
-  } catch {
-    return 0n;
-  }
 }
 
 function shortAddress(address?: string) {
@@ -200,7 +199,7 @@ function StatusBadge({
           : "border-white/20 bg-white/5 text-white";
 
   return (
-    <span className={`inline-flex items-center border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${tone}`}>
+    <span className={`inline-flex shrink-0 items-center whitespace-nowrap border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${tone}`}>
       {children}
     </span>
   );
@@ -343,7 +342,8 @@ function PairStatusButton({
     <button
       type="button"
       onClick={() => onSelect(symbol)}
-      className={`group border p-3 text-left transition duration-200 active:translate-y-px ${
+      aria-pressed={selected}
+      className={`group min-h-[96px] min-w-0 border p-2.5 text-left transition duration-200 active:translate-y-px sm:p-3 ${
         selected
           ? "border-white bg-white text-black"
           : open
@@ -351,17 +351,17 @@ function PairStatusButton({
             : "border-[var(--pixel-red)] bg-[rgba(255,52,93,0.06)] text-white hover:bg-[rgba(255,52,93,0.12)]"
       }`}
     >
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-bold">{symbol}</span>
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <span className="min-w-0 truncate text-sm font-bold">{symbol}</span>
         <span
-          className={`h-2 w-2 ${open ? "bg-[var(--pixel-green)]" : "bg-[var(--pixel-red)]"}`}
+          className={`h-2 w-2 shrink-0 ${open ? "bg-[var(--pixel-green)]" : "bg-[var(--pixel-red)]"}`}
           aria-hidden
         />
       </div>
-      <div className={`mt-3 text-[10px] uppercase tracking-[0.16em] ${selected ? "text-black/70" : "text-white/60"}`}>
+      <div className={`mt-3 min-h-[2.5em] break-words text-[10px] leading-relaxed uppercase tracking-[0.12em] ${selected ? "text-black/70" : "text-white/60"}`}>
         {countdownLabel}
       </div>
-      <div className={`mt-1 text-xs ${selected ? "text-black" : open ? "text-[var(--pixel-green)]" : "text-[var(--pixel-red)]"}`}>
+      <div className={`mt-1 min-w-0 break-words text-xs tabular-nums ${selected ? "text-black" : open ? "text-[var(--pixel-green)]" : "text-[var(--pixel-red)]"}`}>
         Live ${formatPrice(cardLivePrice, 6)}
       </div>
     </button>
@@ -615,150 +615,79 @@ export default function PredictionPage() {
     balance < amountWei;
 
   useEffect(() => {
-    if (!publicClient || !walletAddress) {
+    if (!walletAddress) {
       setHistory([]);
       setHistoryError("");
+      setHistoryLoading(false);
       return;
     }
 
-    let cancelled = false;
+    const controller = new AbortController();
     let loading = false;
-    let nextLogBlock = startBlock();
-    let logScanEnabled = true;
-    let lastFallbackScanAt = 0;
-    const byRound = new Map<
-      bigint,
-      { roundId: bigint; txHash?: `0x${string}` }
-    >();
     const userAddress = walletAddress;
 
-    async function loadHistory() {
-      if (cancelled || loading) return;
+    async function loadHistory(force = false) {
+      if (controller.signal.aborted || loading) return;
       loading = true;
       try {
         setHistoryLoading(true);
         setHistoryError("");
 
-        if (logScanEnabled) {
-          try {
-            const latestBlock = await publicClient.getBlockNumber();
-            const logs = nextLogBlock <= latestBlock
-              ? await publicClient.getLogs({
-                  address: PREDICTION_ADDRESS,
-                  event: BET_PLACED_EVENT,
-                  args: { user: userAddress },
-                  fromBlock: nextLogBlock,
-                  toBlock: latestBlock,
-                })
-              : [];
+        const params = new URLSearchParams({ address: userAddress });
+        if (force) params.set("force", "1");
 
-            for (const log of logs) {
-              const roundId = log.args.roundId;
-              if (roundId === undefined) continue;
-              byRound.set(roundId, {
-                roundId,
-                txHash: log.transactionHash,
-              });
-            }
-            nextLogBlock = latestBlock + 1n;
-          } catch {
-            // Some RPC nodes are flaky with indexed event filters. Fall back to recent rounds.
-            logScanEnabled = false;
-          }
+        const response = await fetch(`/api/prediction/history?${params.toString()}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const payload = (await response.json().catch(() => null)) as HistoryApiResponse | null;
+        if (!response.ok) {
+          throw new Error(payload?.error || `History request failed (${response.status})`);
+        }
+        if (!payload || !Array.isArray(payload.history)) {
+          throw new Error("History response is invalid");
         }
 
-        let recentRounds = Array.from(byRound.values())
-          .sort((a, b) => (a.roundId === b.roundId ? 0 : a.roundId > b.roundId ? -1 : 1))
-          .slice(0, 16);
+        const rows = payload.history.map((item): HistoryItem => {
+          const roundId = BigInt(item.roundId);
+          const upAmount = BigInt(item.upAmount);
+          const downAmount = BigInt(item.downAmount);
+          const claimable = BigInt(item.claimable);
+          const itemOutcome = Number(item.outcome);
 
-        if (recentRounds.length === 0) {
-          const nowMs = Date.now();
-          if (lastFallbackScanAt > 0 && nowMs - lastFallbackScanAt < 60_000) return;
-          lastFallbackScanAt = nowMs;
+          return {
+            roundId,
+            symbol: item.symbol,
+            upAmount,
+            downAmount,
+            claimed: item.claimed,
+            claimable,
+            outcome: outcomeLabel(itemOutcome),
+            result: historyResult(itemOutcome, upAmount, downAmount),
+            txHash: item.txHash,
+          };
+        });
 
-          const totalRounds = (await publicClient.readContract({
-            address: PREDICTION_ADDRESS,
-            abi: PREDICTION_ABI,
-            functionName: "roundCount",
-          })) as bigint;
-
-          const minRound = totalRounds > 80n ? totalRounds - 79n : 1n;
-          const fallbackRounds: { roundId: bigint; txHash?: `0x${string}` }[] = [];
-
-          if (totalRounds > 0n) {
-            for (let roundId = totalRounds; roundId >= minRound; roundId -= 1n) {
-              fallbackRounds.push({ roundId });
-              if (roundId === minRound) break;
-            }
-          }
-
-          recentRounds = fallbackRounds;
-        }
-
-        const rows = (
-          await Promise.all(
-            recentRounds.map(async ({ roundId, txHash }): Promise<HistoryItem | null> => {
-              try {
-                const [core, pos, due] = await Promise.all([
-                  publicClient.readContract({
-                    address: PREDICTION_ADDRESS,
-                    abi: PREDICTION_ABI,
-                    functionName: "getRoundCore",
-                    args: [roundId],
-                  }) as Promise<RoundCoreTuple>,
-                  publicClient.readContract({
-                    address: PREDICTION_ADDRESS,
-                    abi: PREDICTION_ABI,
-                    functionName: "getPosition",
-                    args: [roundId, userAddress],
-                  }) as Promise<PositionTuple>,
-                  publicClient.readContract({
-                    address: PREDICTION_ADDRESS,
-                    abi: PREDICTION_ABI,
-                    functionName: "getClaimable",
-                    args: [roundId, userAddress],
-                  }) as Promise<bigint>,
-                ]);
-
-                const itemOutcome = Number(core[7]);
-                return {
-                  roundId,
-                  symbol: core[1],
-                  upAmount: pos[0],
-                  downAmount: pos[1],
-                  claimed: pos[2],
-                  claimable: due,
-                  outcome: outcomeLabel(itemOutcome),
-                  result: historyResult(itemOutcome, pos[0], pos[1]),
-                  txHash,
-                };
-              } catch {
-                return null;
-              }
-            })
-          )
-        ).filter((item): item is HistoryItem => !!item && (item.upAmount > 0n || item.downAmount > 0n));
-
-        if (!cancelled) setHistory(rows);
+        if (!controller.signal.aborted) setHistory(rows);
       } catch (error) {
-        if (!cancelled) {
+        if (!controller.signal.aborted) {
           setHistoryError(
             error instanceof Error ? error.message : "Could not load history"
           );
         }
       } finally {
         loading = false;
-        if (!cancelled) setHistoryLoading(false);
+        if (!controller.signal.aborted) setHistoryLoading(false);
       }
     }
 
-    void loadHistory();
-    const id = window.setInterval(loadHistory, 15_000);
+    void loadHistory(historyNonce > 0);
+    const id = window.setInterval(() => void loadHistory(), 15_000);
     return () => {
-      cancelled = true;
+      controller.abort();
       window.clearInterval(id);
     };
-  }, [historyNonce, publicClient, walletAddress]);
+  }, [historyNonce, walletAddress]);
 
   const refetchAll = async () => {
     await Promise.allSettled([
@@ -814,26 +743,26 @@ export default function PredictionPage() {
 
   return (
     <div
-      className="pixel-shell pixel-app-shell min-h-screen bg-black text-white"
+      className="prediction-page pixel-shell pixel-app-shell min-h-screen bg-black text-white"
       style={{ fontFamily: "var(--font-departure), var(--font-pixel), monospace" }}
     >
       <div className="pixel-grid-bg" />
       <div className="pixel-noise" />
 
-      <header className="pixel-app-header sticky top-0 z-30 border-b border-white/10 bg-black/95 px-4 py-4 backdrop-blur sm:px-6">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
-          <Link href="/" className="flex items-center gap-3">
-            <span className="grid h-8 w-8 place-items-center border border-white/25 bg-black text-sm text-white">N</span>
-            <span className="text-sm font-bold tracking-wide text-white">0xPrediction</span>
+      <header className="pixel-app-header sticky top-0 z-30 border-b border-white/10 bg-black/95 px-3 py-3 backdrop-blur sm:px-6 sm:py-4">
+        <div className="mx-auto flex max-w-7xl min-w-0 items-center justify-between gap-2 sm:gap-3">
+          <Link href="/" className="prediction-touch flex min-w-0 shrink items-center gap-2 sm:gap-3">
+            <span className="grid h-8 w-8 shrink-0 place-items-center border border-white/25 bg-black text-sm text-white">N</span>
+            <span className="whitespace-nowrap text-xs font-bold tracking-wide text-white sm:text-sm">0xPrediction</span>
           </Link>
-          <div className="flex items-center gap-2">
-            <Link href="/0xdex" className="pixel-btn-soft pixel-btn-soft-secondary pixel-btn-soft-sm">
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+            <Link href="/0xdex" className="prediction-touch pixel-btn-soft pixel-btn-soft-secondary pixel-btn-soft-sm whitespace-nowrap">
               0xDex
             </Link>
             {!mounted ? (
               <button
                 type="button"
-                className="pixel-btn-soft pixel-btn-soft-indigo pixel-btn-soft-sm"
+                className="prediction-touch pixel-btn-soft pixel-btn-soft-indigo pixel-btn-soft-sm whitespace-nowrap"
                 disabled
               >
                 Connect
@@ -841,15 +770,16 @@ export default function PredictionPage() {
             ) : walletConnected ? (
               <button
                 type="button"
-                className="pixel-btn-soft pixel-btn-soft-sm"
+                className="prediction-touch pixel-btn-soft pixel-btn-soft-sm whitespace-nowrap"
                 onClick={() => disconnect()}
+                title="Disconnect wallet"
               >
                 {shortAddress(walletAddress)}
               </button>
             ) : (
               <button
                 type="button"
-                className="pixel-btn-soft pixel-btn-soft-indigo pixel-btn-soft-sm"
+                className="prediction-touch pixel-btn-soft pixel-btn-soft-indigo pixel-btn-soft-sm whitespace-nowrap"
                 disabled={isConnecting}
                 onClick={() => void ensureWallet().catch((error) => toast.handleError(error, "Connect failed"))}
               >
@@ -860,15 +790,15 @@ export default function PredictionPage() {
         </div>
       </header>
 
-      <main className="relative z-10 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:py-10">
-        <section className="mb-6 grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">
-          <div className="pixel-panel p-5 sm:p-6">
-            <div className="flex flex-wrap items-start justify-between gap-4">
+      <main className="relative z-10 mx-auto w-full max-w-7xl px-3 py-4 sm:px-6 sm:py-8 lg:py-10">
+        <section className="mb-4 grid gap-3 sm:mb-6 sm:gap-4 lg:grid-cols-[1.05fr_0.95fr]">
+          <div className="pixel-panel min-w-0 p-4 sm:p-5 lg:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-3 sm:gap-4">
               <div>
                 <p className="text-[10px] uppercase tracking-[0.22em] text-white/55">
                   Oracle market
                 </p>
-                <h1 className="mt-2 text-3xl font-bold leading-none text-white sm:text-4xl">
+                <h1 className="mt-2 text-2xl font-bold leading-none text-white sm:text-4xl">
                   Choose a pair
                 </h1>
               </div>
@@ -877,7 +807,11 @@ export default function PredictionPage() {
               </StatusBadge>
             </div>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <div
+              className="mt-4 grid grid-cols-2 gap-2 sm:mt-5 sm:gap-3 xl:grid-cols-3"
+              role="group"
+              aria-label="Prediction pairs"
+            >
               {PREDICTION_ASSETS.map((symbol) => (
                 <PairStatusButton
                   key={symbol}
@@ -890,33 +824,33 @@ export default function PredictionPage() {
             </div>
           </div>
 
-          <div className="pixel-panel p-5 sm:p-6">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
+          <div className="pixel-panel min-w-0 p-4 sm:p-5 lg:p-6">
+            <div className="flex min-w-0 flex-wrap items-start justify-between gap-3 sm:gap-4">
+              <div className="min-w-0">
                 <p className="text-[10px] uppercase tracking-[0.22em] text-white/55">
                   Selected pair
                 </p>
-                <h2 className="mt-2 text-3xl font-bold leading-none text-white">
+                <h2 className="mt-2 text-2xl font-bold leading-none text-white sm:text-3xl">
                   {selectedSymbol}
                 </h2>
               </div>
-              <div className="grid w-full gap-2 text-left sm:w-auto sm:min-w-[360px] sm:grid-cols-2 sm:text-right">
-                <div className="border border-white/10 bg-black px-3 py-2">
+              <div className="grid w-full min-w-0 gap-2 text-left min-[360px]:grid-cols-2 sm:w-auto sm:min-w-[360px] sm:text-right">
+                <div className="min-w-0 border border-white/10 bg-black px-3 py-2">
                   <p className="text-[10px] uppercase tracking-[0.18em] text-white/55">
                     Entry price
                   </p>
-                  <p className="mt-2 text-xl text-[var(--pixel-yellow)]">
+                  <p className="mt-2 min-w-0 break-words text-base tabular-nums text-[var(--pixel-yellow)] min-[360px]:text-lg sm:text-xl">
                     {entryPrice ? `$${formatPrice(entryPrice, 6)}` : "--"}
                   </p>
                   <p className="mt-1 text-[10px] text-white/40">
                     {entryPriceTime ? `Round ${formatClock(entryPriceTime)}` : "Starts on first prediction"}
                   </p>
                 </div>
-                <div className="border border-white/10 bg-black px-3 py-2">
+                <div className="min-w-0 border border-white/10 bg-black px-3 py-2">
                   <p className="text-[10px] uppercase tracking-[0.18em] text-white/55">
                     Live price
                   </p>
-                  <p className="mt-2 text-xl text-[var(--pixel-green)]">
+                  <p className="mt-2 min-w-0 break-words text-base tabular-nums text-[var(--pixel-green)] min-[360px]:text-lg sm:text-xl">
                     {livePrice ? `$${formatPrice(livePrice, 6)}` : "--"}
                   </p>
                   <p className="mt-1 text-[10px] text-white/40">
@@ -926,14 +860,14 @@ export default function PredictionPage() {
               </div>
             </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-3 text-xs">
-              <div className="border border-white/10 bg-black p-3">
+            <div className="mt-4 grid grid-cols-2 gap-2 text-xs sm:mt-5 sm:gap-3">
+              <div className="min-h-[84px] min-w-0 border border-white/10 bg-black p-3">
                 <p className="text-white/50">Entry window</p>
-                <p className={betOpen ? "mt-2 text-[var(--pixel-green)]" : "mt-2 text-[var(--pixel-yellow)]"}>
+                <p className={betOpen ? "mt-2 break-words text-[var(--pixel-green)]" : "mt-2 break-words text-[var(--pixel-yellow)]"}>
                   {entryWindowLabel}
                 </p>
               </div>
-              <div className="border border-white/10 bg-black p-3">
+              <div className="min-h-[84px] min-w-0 border border-white/10 bg-black p-3">
                 <p className="text-white/50">Settle in</p>
                 <p
                   className={`mt-2 ${
@@ -954,11 +888,11 @@ export default function PredictionPage() {
                     : formatClock(closeTime)}
                 </p>
               </div>
-              <div className="border border-white/10 bg-black p-3">
+              <div className="min-h-[84px] min-w-0 border border-white/10 bg-black p-3">
                 <p className="text-white/50">Round</p>
-                <p className="mt-2 text-white">#{latestRoundId.toString()}</p>
+                <p className="mt-2 break-words text-white tabular-nums">#{latestRoundId.toString()}</p>
               </div>
-              <div className="border border-white/10 bg-black p-3">
+              <div className="min-h-[84px] min-w-0 border border-white/10 bg-black p-3">
                 <p className="text-white/50">Outcome</p>
                 <p
                   className={`mt-2 ${
@@ -976,46 +910,55 @@ export default function PredictionPage() {
           </div>
         </section>
 
-        <section className="grid gap-4 lg:grid-cols-[0.9fr_0.8fr_1fr]">
-          <div className="pixel-panel p-5 sm:p-6">
+        <section className="grid items-start gap-3 sm:gap-4 lg:grid-cols-2 xl:grid-cols-[0.9fr_0.8fr_1fr]">
+          <div className="pixel-panel min-w-0 p-4 sm:p-5 lg:p-6">
             <div className="flex items-center justify-between gap-3">
-              <h2 className="text-2xl font-bold text-white">Predict</h2>
+              <h2 className="text-xl font-bold text-white sm:text-2xl">Predict</h2>
               <StatusBadge status={side === 0 ? "green" : "red"}>
                 {side === 0 ? "UP" : "DOWN"}
               </StatusBadge>
             </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-2">
+            <div
+              className="mt-5 grid grid-cols-2 gap-2"
+              role="group"
+              aria-label="Prediction direction"
+            >
               <button
                 type="button"
-                className={`pixel-btn-soft ${side === 0 ? "pixel-btn-soft-emerald" : "pixel-btn-soft-secondary"}`}
+                className={`prediction-touch pixel-btn-soft ${side === 0 ? "pixel-btn-soft-emerald" : "pixel-btn-soft-secondary"}`}
                 onClick={() => setSide(0)}
+                aria-pressed={side === 0}
               >
                 UP
               </button>
               <button
                 type="button"
-                className={`pixel-btn-soft ${side === 1 ? "pixel-btn-soft-rose" : "pixel-btn-soft-secondary"}`}
+                className={`prediction-touch pixel-btn-soft ${side === 1 ? "pixel-btn-soft-rose" : "pixel-btn-soft-secondary"}`}
                 onClick={() => setSide(1)}
+                aria-pressed={side === 1}
               >
                 DOWN
               </button>
             </div>
 
-            <label className="mt-5 block text-[10px] uppercase tracking-[0.18em] text-white/60">
+            <label htmlFor="prediction-amount" className="mt-5 block text-[10px] uppercase tracking-[0.18em] text-white/60">
               Amount
             </label>
-            <div className="mt-2 border border-white/15 bg-black p-3">
+            <div className="mt-2 min-w-0 border border-white/15 bg-black p-3 focus-within:border-white/40">
               <input
+                id="prediction-amount"
+                name="prediction-amount"
                 value={amount}
                 onChange={(event) => setAmount(event.target.value)}
                 inputMode="decimal"
+                aria-invalid={amountInvalid}
                 placeholder="100"
-                className="w-full bg-transparent text-3xl text-white outline-none placeholder:text-white/25"
+                className="prediction-amount-input w-full min-w-0 bg-transparent text-3xl tabular-nums text-white outline-none placeholder:text-white/25"
               />
-              <div className="mt-2 flex items-center justify-between gap-2 text-xs text-white/60">
+              <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2 text-xs text-white/60">
                 <span>NUSD</span>
-                <span>Balance: {formatNusd(balance)}</span>
+                <span className="min-w-0 break-words text-right tabular-nums">Balance: {formatNusd(balance)}</span>
               </div>
             </div>
 
@@ -1024,21 +967,22 @@ export default function PredictionPage() {
                 <button
                   key={value}
                   type="button"
-                  className="pixel-btn-soft pixel-btn-soft-secondary pixel-btn-soft-sm"
+                  className="prediction-touch pixel-btn-soft pixel-btn-soft-secondary pixel-btn-soft-sm min-w-0"
                   onClick={() => setAmount(value)}
+                  aria-label={`Set amount to ${value} NUSD`}
                 >
                   {value}
                 </button>
               ))}
             </div>
 
-            <div className="mt-5 border border-white/10 bg-black p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
+            <div className="mt-5 min-w-0 border border-white/10 bg-black p-3">
+              <div className="flex min-w-0 items-start justify-between gap-3">
+                <div className="min-w-0">
                   <p className="text-[10px] uppercase tracking-[0.18em] text-white/55">
                     NUSD faucet
                   </p>
-                  <p className="mt-1 text-lg text-white">
+                  <p className="mt-1 break-words text-base text-white sm:text-lg">
                     {formatNusd(faucetClaimAmount)} NUSD / day
                   </p>
                 </div>
@@ -1057,7 +1001,7 @@ export default function PredictionPage() {
               {!walletConnected ? (
                 <button
                   type="button"
-                  className="pixel-btn-soft pixel-btn-soft-indigo mt-3 w-full"
+                  className="prediction-touch pixel-btn-soft pixel-btn-soft-indigo mt-3 w-full"
                   disabled={!!busy || isConnecting}
                   onClick={() => void ensureWallet()}
                 >
@@ -1066,7 +1010,7 @@ export default function PredictionPage() {
               ) : (
                 <button
                   type="button"
-                  className="pixel-btn-soft pixel-btn-soft-emerald mt-3 w-full"
+                  className="prediction-touch pixel-btn-soft pixel-btn-soft-emerald mt-3 w-full"
                   disabled={faucetDisabled}
                   onClick={() =>
                     void runTx("Claim faucet", () =>
@@ -1086,7 +1030,7 @@ export default function PredictionPage() {
             {!walletConnected ? (
               <button
                 type="button"
-                className="pixel-btn-soft pixel-btn-soft-indigo mt-5 w-full"
+                className="prediction-touch pixel-btn-soft pixel-btn-soft-indigo mt-5 w-full"
                 disabled={!!busy || isConnecting}
                 onClick={() => void ensureWallet()}
               >
@@ -1095,7 +1039,7 @@ export default function PredictionPage() {
             ) : needsApproval ? (
               <button
                 type="button"
-                className="pixel-btn-soft pixel-btn-soft-amber mt-5 w-full"
+                className="prediction-touch pixel-btn-soft pixel-btn-soft-amber mt-5 w-full"
                 disabled={!!busy}
                 onClick={() =>
                   void runTx("Approve NUSD", () =>
@@ -1113,7 +1057,7 @@ export default function PredictionPage() {
             ) : (
               <button
                 type="button"
-                className={`pixel-btn-soft mt-5 w-full ${side === 0 ? "pixel-btn-soft-emerald" : "pixel-btn-soft-rose"}`}
+                className={`prediction-touch pixel-btn-soft mt-5 w-full ${side === 0 ? "pixel-btn-soft-emerald" : "pixel-btn-soft-rose"}`}
                 disabled={actionDisabled}
                 onClick={() =>
                   void runTx(`Predict ${side === 0 ? "UP" : "DOWN"}`, () =>
@@ -1133,25 +1077,25 @@ export default function PredictionPage() {
             )}
 
             {!betOpen ? (
-              <p className="mt-4 border border-[var(--pixel-red)]/40 bg-[rgba(255,52,93,0.08)] p-3 text-xs text-[var(--pixel-red)]">
+              <p className="mt-4 border border-[var(--pixel-red)]/40 bg-[rgba(255,52,93,0.08)] p-3 text-xs leading-relaxed text-[var(--pixel-red)]">
                 This pair is not accepting predictions right now.
               </p>
             ) : null}
           </div>
 
-          <div className="pixel-panel p-5 sm:p-6">
-            <div className="flex flex-wrap items-end justify-between gap-2">
-              <h2 className="text-2xl font-bold text-white">Round pool</h2>
-              <p className="text-xs text-white/55">
+          <div className="pixel-panel min-w-0 p-4 sm:p-5 lg:p-6">
+            <div className="flex min-w-0 flex-wrap items-end justify-between gap-2">
+              <h2 className="text-xl font-bold text-white sm:text-2xl">Round pool</h2>
+              <p className="min-w-0 break-words text-right text-xs text-white/55">
                 {roundPoolLabel}
               </p>
             </div>
 
             <div className="mt-5 space-y-4">
               <div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-[var(--pixel-green)]">UP · {formatNusd(displayUpPool)} NUSD</span>
-                  <span>{displayUpShare.toFixed(1)}%</span>
+                <div className="flex min-w-0 justify-between gap-3 text-xs">
+                  <span className="min-w-0 break-words text-[var(--pixel-green)]">UP · {formatNusd(displayUpPool)} NUSD</span>
+                  <span className="shrink-0 tabular-nums">{displayUpShare.toFixed(1)}%</span>
                 </div>
                 <div className="mt-2 h-2 border border-white/10 bg-black">
                   <div
@@ -1162,9 +1106,9 @@ export default function PredictionPage() {
               </div>
 
               <div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-[var(--pixel-red)]">DOWN · {formatNusd(displayDownPool)} NUSD</span>
-                  <span>{displayDownShare.toFixed(1)}%</span>
+                <div className="flex min-w-0 justify-between gap-3 text-xs">
+                  <span className="min-w-0 break-words text-[var(--pixel-red)]">DOWN · {formatNusd(displayDownPool)} NUSD</span>
+                  <span className="shrink-0 tabular-nums">{displayDownShare.toFixed(1)}%</span>
                 </div>
                 <div className="mt-2 h-2 border border-white/10 bg-black">
                   <div
@@ -1176,17 +1120,17 @@ export default function PredictionPage() {
             </div>
 
             <div className="mt-5 grid gap-3 text-xs">
-              <div className="flex justify-between border-b border-white/10 pb-2">
+              <div className="flex min-w-0 justify-between gap-3 border-b border-white/10 pb-2">
                 <span className="text-white/55">Your UP</span>
-                <span className="text-[var(--pixel-green)]">{formatNusd(displayPositionUp)} NUSD</span>
+                <span className="min-w-0 break-words text-right tabular-nums text-[var(--pixel-green)]">{formatNusd(displayPositionUp)} NUSD</span>
               </div>
-              <div className="flex justify-between border-b border-white/10 pb-2">
+              <div className="flex min-w-0 justify-between gap-3 border-b border-white/10 pb-2">
                 <span className="text-white/55">Your DOWN</span>
-                <span className="text-[var(--pixel-red)]">{formatNusd(displayPositionDown)} NUSD</span>
+                <span className="min-w-0 break-words text-right tabular-nums text-[var(--pixel-red)]">{formatNusd(displayPositionDown)} NUSD</span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex min-w-0 justify-between gap-3">
                 <span className="text-white/55">Settle price</span>
-                <span className={settleOracleReady ? "text-white" : "text-[var(--pixel-yellow)]"}>
+                <span className={`${settleOracleReady ? "text-white" : "text-[var(--pixel-yellow)]"} min-w-0 break-words text-right tabular-nums`}>
                   {!activeRound
                     ? "Next round"
                     : settleOracleReady
@@ -1200,7 +1144,7 @@ export default function PredictionPage() {
               {!isSettled && roundClosed ? (
                 <button
                   type="button"
-                  className="pixel-btn-soft pixel-btn-soft-secondary w-full"
+                  className="prediction-touch pixel-btn-soft pixel-btn-soft-secondary w-full"
                   disabled={!!busy || !latestRoundId || !settleOracleReady}
                   onClick={() =>
                     void runTx("Settle round", () =>
@@ -1224,7 +1168,7 @@ export default function PredictionPage() {
               {!isSettled && canCancelStale ? (
                 <button
                   type="button"
-                  className="pixel-btn-soft pixel-btn-soft-rose w-full"
+                  className="prediction-touch pixel-btn-soft pixel-btn-soft-rose w-full"
                   disabled={!!busy || !latestRoundId}
                   onClick={() =>
                     void runTx("Refund round", () =>
@@ -1243,12 +1187,12 @@ export default function PredictionPage() {
             </div>
           </div>
 
-          <div className="pixel-panel p-5 sm:p-6">
+          <div className="pixel-panel min-w-0 p-4 sm:p-5 lg:col-span-2 lg:p-6 xl:col-span-1">
             <div className="flex items-center justify-between gap-3">
-              <h2 className="text-2xl font-bold text-white">Your history</h2>
+              <h2 className="text-xl font-bold text-white sm:text-2xl">Your history</h2>
               <button
                 type="button"
-                className="pixel-btn-soft pixel-btn-soft-secondary pixel-btn-soft-sm"
+                className="prediction-touch pixel-btn-soft pixel-btn-soft-secondary pixel-btn-soft-sm whitespace-nowrap"
                 disabled={!walletAddress || historyLoading}
                 onClick={() => setHistoryNonce((value) => value + 1)}
               >
@@ -1257,23 +1201,23 @@ export default function PredictionPage() {
             </div>
 
             {!walletAddress ? (
-              <div className="mt-5 border border-white/10 bg-black p-5 text-sm text-white/65">
+              <div className="mt-5 border border-white/10 bg-black p-4 text-sm leading-relaxed text-white/65 sm:p-5">
                 Connect wallet to see wins and losses.
               </div>
             ) : historyLoading && history.length === 0 ? (
-              <div className="mt-5 border border-white/10 bg-black p-5 text-sm text-white/65">
+              <div className="mt-5 border border-white/10 bg-black p-4 text-sm leading-relaxed text-white/65 sm:p-5">
                 Loading prediction history...
               </div>
-            ) : historyError ? (
-              <div className="mt-5 border border-[var(--pixel-red)]/40 bg-[rgba(255,52,93,0.08)] p-4 text-xs text-[var(--pixel-red)]">
+            ) : historyError && history.length === 0 ? (
+              <div className="mt-5 border border-[var(--pixel-red)]/40 bg-[rgba(255,52,93,0.08)] p-4 text-xs leading-relaxed text-[var(--pixel-red)]">
                 History failed to load. Try again in a few seconds.
               </div>
             ) : history.length === 0 ? (
-              <div className="mt-5 border border-white/10 bg-black p-5 text-sm text-white/65">
+              <div className="mt-5 border border-white/10 bg-black p-4 text-sm leading-relaxed text-white/65 sm:p-5">
                 No predictions from this wallet yet.
               </div>
             ) : (
-              <div className="mt-5 max-h-[520px] space-y-3 overflow-y-auto pr-1">
+              <div className="prediction-history-scroll mt-5 max-h-none space-y-3 overflow-visible pr-0 xl:max-h-[520px] xl:overflow-y-auto xl:pr-1">
                 {history.map((item) => {
                   const resultTone =
                     item.result === "Win"
@@ -1289,22 +1233,22 @@ export default function PredictionPage() {
                   return (
                     <article
                       key={item.roundId.toString()}
-                      className="border border-white/10 bg-black p-3"
+                      className="min-w-0 border border-white/10 bg-black p-3 sm:p-4"
                     >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-bold text-white">
+                      <div className="flex min-w-0 items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="break-words text-sm font-bold text-white">
                             #{item.roundId.toString()} · {item.symbol}
                           </p>
-                          <p className="mt-1 text-[11px] text-white/55">
+                          <p className="mt-1 break-words text-[11px] tabular-nums text-white/55">
                             UP {formatNusd(item.upAmount)} · DOWN {formatNusd(item.downAmount)}
                           </p>
                         </div>
                         <StatusBadge status={resultTone}>{item.result}</StatusBadge>
                       </div>
-                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-white/60">
+                      <div className="mt-3 flex min-w-0 flex-wrap items-start justify-between gap-2 text-[11px] text-white/60">
                         <span>Outcome: {item.outcome}</span>
-                        <span className="text-[var(--pixel-yellow)]">
+                        <span className="min-w-0 break-words text-right tabular-nums text-[var(--pixel-yellow)]">
                           {item.claimed
                             ? "Claimed"
                             : item.claimable > 0n
@@ -1315,7 +1259,7 @@ export default function PredictionPage() {
                       {canClaimHistory ? (
                         <button
                           type="button"
-                          className="pixel-btn-soft pixel-btn-soft-amber mt-3 w-full"
+                          className="prediction-touch pixel-btn-soft pixel-btn-soft-amber mt-3 w-full"
                           disabled={!!busy}
                           onClick={() =>
                             void runTx(claimHistoryLabel, () =>

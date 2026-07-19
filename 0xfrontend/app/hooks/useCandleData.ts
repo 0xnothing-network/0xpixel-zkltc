@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 export interface CandleData {
   time: number;
@@ -70,15 +70,16 @@ interface FetchCandlesParams {
 }
 
 interface StoredResponse {
-  version: 31;
+  version: 32;
   savedAt: number;
   response: CandlesResponse;
 }
 
-export const CANDLE_QUERY_KEY = 'candles-edge-v31';
-const CANDLE_SESSION_CACHE_PREFIX = 'candles:v31';
+export const CANDLE_QUERY_KEY = 'candles-edge-v32';
+const CANDLE_SESSION_CACHE_PREFIX = 'candles:v32';
 const SUPPORTED_INTERVALS = new Set([15, 60, 240, 1440]);
 const SESSION_CACHE_MAX_AGE_MS = 24 * 60 * 60_000;
+const FULL_HISTORY_REQUEST_TIMEOUT_MS = 60_000;
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
@@ -147,6 +148,40 @@ function sanitizeCandles(input: unknown): CandleData[] {
   return [...byTime.values()].sort((a, b) => a.time - b.time);
 }
 
+function mergeCandleResponses(
+  previous: CandlesResponse | undefined,
+  incoming: CandlesResponse,
+): CandlesResponse {
+  const incomingCandles = sanitizeCandles(incoming.candles);
+  if (!previous) {
+    return { ...incoming, candles: incomingCandles, count: incomingCandles.length };
+  }
+
+  // Candle history is append-only. Keep older rows already present in memory or
+  // session storage when a live refresh returns a shorter partial page.
+  const byTime = new Map<number, CandleData>();
+  for (const candle of sanitizeCandles(previous.candles)) byTime.set(candle.time, candle);
+  for (const candle of incomingCandles) byTime.set(candle.time, candle);
+  const candles = [...byTime.values()].sort((a, b) => a.time - b.time);
+
+  const previousLatest = previous.latestPrice;
+  const incomingLatest = incoming.latestPrice;
+  const latestPrice = !previousLatest
+    ? incomingLatest
+    : !incomingLatest
+      ? previousLatest
+      : normalizePriceTimestamp(incomingLatest.timestamp) >= normalizePriceTimestamp(previousLatest.timestamp)
+        ? incomingLatest
+        : previousLatest;
+
+  return {
+    ...incoming,
+    candles,
+    count: candles.length,
+    latestPrice,
+  };
+}
+
 function staleTimeFor(intervalMinutes: number) {
   if (intervalMinutes <= 15) return 10_000;
   if (intervalMinutes <= 60) return 20_000;
@@ -204,7 +239,7 @@ function readCachedResponse(cacheKey: string): CandlesResponse | undefined {
     if (!raw) return undefined;
     const stored = JSON.parse(raw) as Partial<StoredResponse>;
     if (
-      stored.version !== 31 ||
+      stored.version !== 32 ||
       !isFiniteNumber(stored.savedAt) ||
       Date.now() - stored.savedAt > SESSION_CACHE_MAX_AGE_MS ||
       !stored.response
@@ -213,10 +248,12 @@ function readCachedResponse(cacheKey: string): CandlesResponse | undefined {
     }
 
     const interval = Number(stored.response.interval);
+    const candles = sanitizeCandles(stored.response.candles);
     return {
       ...stored.response,
       interval,
-      candles: sanitizeCandles(stored.response.candles),
+      candles,
+      count: candles.length,
     };
   } catch {
     return undefined;
@@ -226,7 +263,8 @@ function readCachedResponse(cacheKey: string): CandlesResponse | undefined {
 function writeCachedResponse(cacheKey: string, response: CandlesResponse) {
   if (typeof window === 'undefined') return;
   try {
-    const stored: StoredResponse = { version: 31, savedAt: Date.now(), response };
+    const merged = mergeCandleResponses(readCachedResponse(cacheKey), response);
+    const stored: StoredResponse = { version: 32, savedAt: Date.now(), response: merged };
     sessionStorage.setItem(
       `${CANDLE_SESSION_CACHE_PREFIX}:${cacheKey}`,
       JSON.stringify(stored),
@@ -292,7 +330,7 @@ export async function fetchCandlesRequest({
     token1Decimals: String(token1Decimals),
   });
   const separator = subgraphUrl.includes('?') ? '&' : '?';
-  const timeout = createTimeoutSignal(requestSignal, 22_000);
+  const timeout = createTimeoutSignal(requestSignal, FULL_HISTORY_REQUEST_TIMEOUT_MS);
 
   try {
     const response = await fetch(`${subgraphUrl}${separator}${params}`, {
@@ -347,6 +385,7 @@ export function useCandleData({
   token0Decimals = 18,
   token1Decimals = 18,
 }: UseCandleDataParams): UseCandleDataReturn {
+  const queryClient = useQueryClient();
   const normalizedToken0 = token0.toLowerCase();
   const normalizedToken1 = token1.toLowerCase();
   const cacheKey = getCandlesCacheKey(
@@ -379,15 +418,21 @@ export function useCandleData({
 
   const query = useQuery<CandlesResponse>({
     queryKey,
-    queryFn: ({ signal }) => fetchCandlesRequest({
-      token0: normalizedToken0,
-      token1: normalizedToken1,
-      intervalMinutes,
-      subgraphUrl,
-      token0Decimals,
-      token1Decimals,
-      requestSignal: signal,
-    }),
+    queryFn: async ({ signal }) => {
+      const incoming = await fetchCandlesRequest({
+        token0: normalizedToken0,
+        token1: normalizedToken1,
+        intervalMinutes,
+        subgraphUrl,
+        token0Decimals,
+        token1Decimals,
+        requestSignal: signal,
+      });
+      return mergeCandleResponses(
+        queryClient.getQueryData<CandlesResponse>(queryKey),
+        incoming,
+      );
+    },
     enabled: enabled && Boolean(normalizedToken0) && Boolean(normalizedToken1),
     staleTime: staleTimeFor(intervalMinutes),
     gcTime: 30 * 60_000,

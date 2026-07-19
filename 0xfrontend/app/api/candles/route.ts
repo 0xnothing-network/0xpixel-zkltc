@@ -15,9 +15,7 @@ const SUBGRAPH_URL = SUBGRAPH_URL_RAW === 'disabled' ? '' : SUBGRAPH_URL_RAW;
 
 const SUPPORTED_INTERVALS = new Set([15, 60, 240, 1440]);
 const PAGE_SIZE = 1000;
-const MAX_PAGES = 100;
 const UPSTREAM_TIMEOUT_MS = 4_000;
-const REQUEST_BUDGET_MS = 9_000;
 const MAX_SUBGRAPH_BLOCK_LAG = 20_000;
 
 type CandleSource = 'indexed-candles' | 'hybrid' | 'onchain' | 'unavailable';
@@ -235,19 +233,12 @@ function wait(ms: number) {
 
 async function fetchGraphql(
   variables: Record<string, string | number>,
-  deadline: number,
 ): Promise<{ candles: IndexedCandle[]; meta: SubgraphMeta | null }> {
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) throw new Error('Subgraph request budget exceeded');
-
     const controller = new AbortController();
-    const timeoutId = setTimeout(
-      () => controller.abort(),
-      Math.max(250, Math.min(UPSTREAM_TIMEOUT_MS, remaining)),
-    );
+    const timeoutId = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
 
     try {
       const response = await fetch(SUBGRAPH_URL, {
@@ -276,11 +267,11 @@ async function fetchGraphql(
       const delay = Number.isFinite(retryAfter) && retryAfter > 0
         ? retryAfter * 1000
         : 300 * 2 ** attempt;
-      await wait(Math.min(delay, Math.max(0, deadline - Date.now())));
+      await wait(Math.min(delay, UPSTREAM_TIMEOUT_MS));
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       if (attempt >= 1) break;
-      await wait(Math.min(300 * 2 ** attempt, Math.max(0, deadline - Date.now())));
+      await wait(300 * 2 ** attempt);
     } finally {
       clearTimeout(timeoutId);
     }
@@ -297,16 +288,13 @@ async function loadIndexedCandles(
   token0Decimals: number,
   token1Decimals: number,
 ): Promise<CandlesResponseBody> {
-  const deadline = Date.now() + REQUEST_BUDGET_MS;
   const candles: CandleData[] = [];
   let cursor = -1;
   let complete = false;
   let indexedBlock: number | null = null;
   let hasIndexingErrors = false;
 
-  for (let pageIndex = 0; pageIndex < MAX_PAGES; pageIndex += 1) {
-    if (Date.now() >= deadline) break;
-
+  while (!complete) {
     const page = await fetchGraphql(
       {
         pairId,
@@ -314,7 +302,6 @@ async function loadIndexedCandles(
         limit: PAGE_SIZE,
         after: String(cursor),
       },
-      deadline,
     );
 
     const metaBlock = Number(page.meta?.block?.number);
@@ -342,8 +329,7 @@ async function loadIndexedCandles(
     }
 
     if (nextCursor <= cursor) {
-      complete = true;
-      break;
+      throw new Error('Subgraph candle pagination did not advance');
     }
     cursor = nextCursor;
 

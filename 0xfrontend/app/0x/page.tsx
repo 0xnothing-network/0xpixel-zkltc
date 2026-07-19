@@ -444,6 +444,8 @@ export default function ZeroxSocialPage() {
   const [composerOpen, setComposerOpen] = useState(false);
   const [feedMode, setFeedMode] = useState<FeedMode>("newest");
   const [channelTarget, setChannelTarget] = useState("");
+  const [channelSearch, setChannelSearch] = useState("");
+  const [channelCreateOpen, setChannelCreateOpen] = useState(false);
   const [channelPostContent, setChannelPostContent] = useState("");
   const [channelPostPixelToken, setChannelPostPixelToken] = useState("");
   const [channelForm, setChannelForm] = useState({ slug: "", name: "", description: "" });
@@ -749,12 +751,37 @@ export default function ZeroxSocialPage() {
       .filter((item): item is { channelId: bigint; channel: ZeroxNChannel } => Boolean(item));
   }, [channelData, recentChannelIds]);
 
+  const filteredChannels = useMemo(() => {
+    const query = channelSearch.trim().toLowerCase();
+    if (!query) return channels;
+    return channels.filter(({ channel }) => (
+      channel[1].toLowerCase().includes(query) ||
+      channel[2].toLowerCase().includes(query) ||
+      channel[3].toLowerCase().includes(query)
+    ));
+  }, [channelSearch, channels]);
+
+  const channelsLoading = recentChannelIds.length > 0 && channelData === undefined;
+
+  useEffect(() => {
+    if (tab !== "channels" || channels.length === 0) return;
+    setChannelTarget((current) => (
+      channels.some(({ channelId }) => channelId.toString() === current)
+        ? current
+        : channels[0].channelId.toString()
+    ));
+  }, [channels, tab]);
+
   const selectedChannel = useMemo(() => {
     if (!channelTarget) return null;
     return channels.find((item) => item.channelId.toString() === channelTarget) ?? null;
   }, [channelTarget, channels]);
 
-  const { data: selectedChannelMember, refetch: refetchSelectedChannelMember } = useReadContract({
+  const {
+    data: selectedChannelMember,
+    isPending: selectedChannelMemberPending,
+    refetch: refetchSelectedChannelMember,
+  } = useReadContract({
     address: ZEROXN_ADDRESS,
     abi: ZEROXN_ABI,
     functionName: "channelMember",
@@ -762,7 +789,11 @@ export default function ZeroxSocialPage() {
     query: { enabled: tab === "channels" && Boolean(selectedChannel && address), refetchInterval: tab === "channels" && selectedChannel ? LIVE_NORMAL_MS : false },
   });
 
-  const { data: selectedChannelPostIdsData, refetch: refetchSelectedChannelPosts } = useReadContract({
+  const {
+    data: selectedChannelPostIdsData,
+    isPending: selectedChannelPostIdsPending,
+    refetch: refetchSelectedChannelPosts,
+  } = useReadContract({
     address: ZEROXN_ADDRESS,
     abi: ZEROXN_ABI,
     functionName: "getChannelPosts",
@@ -797,6 +828,13 @@ export default function ZeroxSocialPage() {
       })
       .filter((item): item is { postId: bigint; post: ZeroxNPost } => Boolean(item));
   }, [selectedChannelPostData, selectedChannelPostIds]);
+
+  const selectedChannelPostsLoading = Boolean(
+    selectedChannel && (
+      selectedChannelPostIdsPending ||
+      (selectedChannelPostIds.length > 0 && selectedChannelPostData === undefined)
+    ),
+  );
 
   const recentGroupIds = useMemo(() => {
     const count = (groupCount as bigint | undefined) ?? 0n;
@@ -1328,14 +1366,16 @@ export default function ZeroxSocialPage() {
     });
     if (!succeeded) return;
     setChannelForm({ slug: "", name: "", description: "" });
+    setChannelCreateOpen(false);
   };
 
   const joinSelectedChannel = async () => {
     if (!selectedChannel) return;
-    await runTx("Join channel", {
+    const succeeded = await runTx("Join channel", {
       functionName: "joinChannel",
       args: [selectedChannel.channelId],
     });
+    if (succeeded) void refetchSelectedChannelMember();
   };
 
   const submitGroup = async () => {
@@ -2033,61 +2073,88 @@ export default function ZeroxSocialPage() {
         ) : null}
 
         {canUseSocial && tab === "channels" ? (
-          <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
-            <PixelPanel>
+          <section className="zeroxn-channels-layout grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+            <PixelPanel className="zeroxn-channels-panel">
               <PanelTitle
                 title="Channels"
                 right={<span className="text-[10px] uppercase tracking-[0.14em] text-[var(--pixel-amber)]">{formatCount(channelCount)} total</span>}
               />
-              <div className="grid gap-4 p-4">
-                {channels.length > 0 ? (
-                  <div className="grid gap-3">
-                    {channels.map(({ channelId, channel }) => {
-                      const active = channelTarget === channelId.toString();
-                      return (
-                        <button
-                          key={channelId.toString()}
-                          type="button"
-                          className={`zeroxn-group-room-card border p-3 text-left transition-transform active:translate-y-px ${
-                            active
-                              ? "is-active border-[var(--pixel-green)] bg-[rgba(0,255,138,0.07)] shadow-[4px_4px_0_#082d20]"
-                              : "border-white/12 bg-black hover:border-white/30"
-                          }`}
-                          onClick={() => setChannelTarget(channelId.toString())}
-                        >
-                          <span className="flex flex-wrap items-start justify-between gap-3">
-                            <span>
-                              <span className="block text-base font-bold text-white">
-                                #{channelId.toString()} · {channel[2] || channel[1]}
-                              </span>
-                              <span className="mt-1 block text-xs text-[var(--pixel-amber)]">/{channel[1]}</span>
-                              <span className="mt-1 block text-[10px] uppercase tracking-[0.14em] text-white/35">
-                                {formatCount(channel[5])} members
-                              </span>
-                            </span>
-                            <span className={`zeroxn-room-state ${active ? "text-[var(--pixel-green)]" : "text-white/38"}`}>
-                              {active ? "ON" : "OPEN"}
-                            </span>
-                          </span>
-                          {channel[3] ? (
-                            <span className="mt-3 block text-sm leading-6 text-white/58">{channel[3]}</span>
-                          ) : null}
-                          <span className="mt-3 block text-[10px] uppercase tracking-[0.14em] text-white/35">
-                            Creator {shortAddress(channel[0])} · {formatDate(channel[4])}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="zeroxn-empty border border-white/12 bg-black p-6 text-sm text-white/58">
-                    <p className="text-lg font-bold text-white">No channels yet</p>
-                    <p className="mt-2 leading-7">Create the first public topic on 0x.</p>
-                  </div>
-                )}
+              <div className="zeroxn-channels-workspace">
+                <div className="zeroxn-channel-directory">
+                  {channels.length > 0 ? (
+                    <>
+                      <label className="block">
+                        <span className="sr-only">Search channels</span>
+                        <input
+                          type="search"
+                          value={channelSearch}
+                          onChange={(event) => setChannelSearch(event.target.value.slice(0, 64))}
+                          placeholder="Search channels"
+                          className={inputClass("zeroxn-channel-search-input")}
+                        />
+                      </label>
 
-                <div className="zeroxn-group-stream border-t border-white/10 pt-4">
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                      {filteredChannels.length > 0 ? (
+                        <nav className="zeroxn-channel-list" aria-label="Channels">
+                          {filteredChannels.map(({ channelId, channel }) => {
+                            const active = channelTarget === channelId.toString();
+                            return (
+                              <button
+                                key={channelId.toString()}
+                                type="button"
+                                className={`zeroxn-group-room-card zeroxn-channel-room-card border text-left active:translate-y-px ${active ? "is-active" : ""}`}
+                                onClick={() => setChannelTarget(channelId.toString())}
+                                aria-pressed={active}
+                                aria-controls="zeroxn-channel-feed"
+                              >
+                                <span className="zeroxn-channel-room-top">
+                                  <span className="min-w-0">
+                                    <span className="zeroxn-channel-slug">/{channel[1]}</span>
+                                    <span className="zeroxn-channel-name">{channel[2] || channel[1]}</span>
+                                  </span>
+                                  <span className={`zeroxn-room-state ${active ? "is-active" : ""}`}>
+                                    {active ? "ACTIVE" : "OPEN"}
+                                  </span>
+                                </span>
+                                <span className="zeroxn-channel-room-meta">
+                                  <span>#{channelId.toString()}</span>
+                                  <span>{formatCount(channel[5])} members</span>
+                                </span>
+                                {channel[3] ? (
+                                  <span className="zeroxn-channel-description">{channel[3]}</span>
+                                ) : null}
+                                <span className="zeroxn-channel-creator">
+                                  Creator {shortAddress(channel[0])} <span aria-hidden="true">/</span> {formatDate(channel[4])}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </nav>
+                      ) : (
+                        <div className="zeroxn-channel-empty border border-white/12 bg-black p-4 text-sm text-white/50">
+                          No channels match this search.
+                        </div>
+                      )}
+                    </>
+                  ) : channelsLoading ? (
+                    <div className="zeroxn-channel-empty border border-white/12 bg-black p-5 text-sm text-white/50">
+                      Loading channels...
+                    </div>
+                  ) : (
+                    <div className="zeroxn-empty border border-white/12 bg-black p-6 text-sm text-white/58">
+                      <p className="text-lg font-bold text-white">No channels yet</p>
+                      <p className="mt-2 leading-7">Create the first public topic on 0x.</p>
+                    </div>
+                  )}
+                </div>
+
+                <div
+                  id="zeroxn-channel-feed"
+                  className="zeroxn-group-stream zeroxn-channel-feed"
+                  role="region"
+                  aria-label={selectedChannel ? `${selectedChannel.channel[2] || selectedChannel.channel[1]} channel feed` : "Channel feed"}
+                >
+                  <div className="zeroxn-channel-feed-head mb-3 flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <p className="text-[10px] uppercase tracking-[0.18em] text-white/42">Channel feed</p>
                       <h3 className="mt-1 text-xl font-bold text-white">
@@ -2096,7 +2163,9 @@ export default function ZeroxSocialPage() {
                     </div>
                     {selectedChannel ? (
                       <div className="flex flex-wrap items-center gap-2">
-                        {!selectedChannelMember ? (
+                        {selectedChannelMemberPending ? (
+                          <span className="zeroxn-channel-access-state">Checking</span>
+                        ) : !selectedChannelMember ? (
                           <button
                             type="button"
                             className="pixel-btn-soft pixel-btn-soft-emerald pixel-btn-soft-sm"
@@ -2128,6 +2197,10 @@ export default function ZeroxSocialPage() {
                     <div className="zeroxn-empty border border-white/12 bg-black p-5 text-sm text-white/50">
                       Select a channel above to view its posts.
                     </div>
+                  ) : selectedChannelPostsLoading ? (
+                    <div className="zeroxn-channel-empty border border-white/12 bg-black p-5 text-sm text-white/50">
+                      Loading channel posts...
+                    </div>
                   ) : selectedChannelPosts.length > 0 ? (
                     <div className="grid gap-4">
                       {selectedChannelPosts.map(({ postId, post }) => (
@@ -2151,53 +2224,11 @@ export default function ZeroxSocialPage() {
               </div>
             </PixelPanel>
 
-            <aside className="grid gap-6 xl:sticky xl:top-24 xl:self-start">
-              <PixelPanel>
-                <PanelTitle title="Create channel" right={<span className="text-[10px] text-white/45">Topic</span>} />
-                <div className="grid gap-3 p-4">
-                  <label className="grid gap-1">
-                    <span className="text-[10px] uppercase tracking-[0.16em] text-white/48">Slug</span>
-                    <input
-                      value={channelForm.slug}
-                      onChange={(event) => setChannelForm((value) => ({ ...value, slug: event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 32) }))}
-                      placeholder="art-market"
-                      className={inputClass()}
-                    />
-                  </label>
-                  <label className="grid gap-1">
-                    <span className="text-[10px] uppercase tracking-[0.16em] text-white/48">Name</span>
-                    <input
-                      value={channelForm.name}
-                      onChange={(event) => setChannelForm((value) => ({ ...value, name: event.target.value.slice(0, 48) }))}
-                      placeholder="Art Market"
-                      className={inputClass()}
-                    />
-                  </label>
-                  <label className="grid gap-1">
-                    <span className="text-[10px] uppercase tracking-[0.16em] text-white/48">Description</span>
-                    <textarea
-                      value={channelForm.description}
-                      onChange={(event) => setChannelForm((value) => ({ ...value, description: event.target.value.slice(0, 240) }))}
-                      placeholder="What is this channel about?"
-                      rows={3}
-                      className={`${inputClass()} resize-none`}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    className="pixel-btn-soft pixel-btn-soft-amber"
-                    disabled={!hasProfile || !channelForm.slug.trim() || !channelForm.name.trim()}
-                    onClick={submitChannel}
-                  >
-                    Create channel
-                  </button>
-                </div>
-              </PixelPanel>
-
+            <aside className="zeroxn-channel-tools grid gap-6 xl:sticky xl:top-24 xl:self-start">
               <PixelPanel>
                 <PanelTitle
                   title="Post to channel"
-                  right={selectedChannel ? <span className="text-[10px] text-[var(--pixel-green)]">#{selectedChannel.channelId.toString()}</span> : null}
+                  right={selectedChannel ? <span className="text-[10px] text-[var(--pixel-green)]">/{selectedChannel.channel[1]}</span> : null}
                 />
                 <div className="grid gap-3 p-4">
                   <label className="grid gap-1">
@@ -2219,32 +2250,113 @@ export default function ZeroxSocialPage() {
                       <input value="" placeholder="Create a channel first" className={inputClass()} disabled />
                     )}
                   </label>
-                  <textarea
-                    value={channelPostContent}
-                    onChange={(event) => setChannelPostContent(event.target.value.slice(0, 720))}
-                    placeholder={selectedChannel ? (selectedChannelMember ? `Post to /${selectedChannel.channel[1]}` : "Join this channel first") : "Choose a channel first"}
-                    rows={5}
-                    className={`${inputClass()} resize-none`}
-                    disabled={!selectedChannel || !selectedChannelMember}
-                  />
-                  <PixelNftPicker
-                    label="Attach 0xPixel NFT"
-                    value={channelPostPixelToken}
-                    onChange={setChannelPostPixelToken}
-                    ownedPixels={ownedPixels}
-                    loading={ownedPixelsLoading}
-                    compact
-                    collapsible
-                  />
-                  <button
-                    type="button"
-                    className="pixel-btn-soft pixel-btn-soft-indigo"
-                    disabled={!hasProfile || !channelTarget || !selectedChannelMember || !channelPostContent.trim()}
-                    onClick={submitChannelPost}
-                  >
-                    Post to channel
-                  </button>
+
+                  {!selectedChannel ? (
+                    <div className="zeroxn-channel-empty border border-white/12 bg-black p-4 text-sm text-white/50">
+                      Choose a channel to post.
+                    </div>
+                  ) : selectedChannelMemberPending ? (
+                    <div className="zeroxn-channel-empty border border-white/12 bg-black p-4 text-sm text-white/50">
+                      Checking channel access...
+                    </div>
+                  ) : !selectedChannelMember ? (
+                    <div className="zeroxn-channel-join-prompt">
+                      <p className="text-sm leading-6 text-white/65">Join /{selectedChannel.channel[1]} to publish in this channel.</p>
+                      <button
+                        type="button"
+                        className="pixel-btn-soft pixel-btn-soft-emerald"
+                        onClick={joinSelectedChannel}
+                      >
+                        Join channel
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <textarea
+                        value={channelPostContent}
+                        onChange={(event) => setChannelPostContent(event.target.value.slice(0, 720))}
+                        placeholder={`Post to /${selectedChannel.channel[1]}`}
+                        rows={4}
+                        className={`${inputClass()} resize-none`}
+                      />
+                      <PixelNftPicker
+                        label="Attach 0xPixel NFT"
+                        value={channelPostPixelToken}
+                        onChange={setChannelPostPixelToken}
+                        ownedPixels={ownedPixels}
+                        loading={ownedPixelsLoading}
+                        compact
+                        collapsible
+                      />
+                      <button
+                        type="button"
+                        className="pixel-btn-soft pixel-btn-soft-indigo"
+                        disabled={!hasProfile || !channelPostContent.trim()}
+                        onClick={submitChannelPost}
+                      >
+                        Post to channel
+                      </button>
+                    </>
+                  )}
                 </div>
+              </PixelPanel>
+
+              <PixelPanel className="zeroxn-channel-create-panel">
+                <PanelTitle
+                  title="Create channel"
+                  right={(
+                    <button
+                      type="button"
+                      className="zeroxn-channel-create-toggle"
+                      onClick={() => setChannelCreateOpen((open) => !open)}
+                      aria-expanded={channelCreateOpen}
+                      aria-label={channelCreateOpen ? "Close create channel form" : "Open create channel form"}
+                      title={channelCreateOpen ? "Close create channel form" : "Open create channel form"}
+                    >
+                      {channelCreateOpen ? "-" : "+"}
+                    </button>
+                  )}
+                />
+                {channelCreateOpen ? (
+                  <div className="grid gap-3 p-4">
+                    <label className="grid gap-1">
+                      <span className="text-[10px] uppercase tracking-[0.16em] text-white/48">Slug</span>
+                      <input
+                        value={channelForm.slug}
+                        onChange={(event) => setChannelForm((value) => ({ ...value, slug: event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 32) }))}
+                        placeholder="art-market"
+                        className={inputClass()}
+                      />
+                    </label>
+                    <label className="grid gap-1">
+                      <span className="text-[10px] uppercase tracking-[0.16em] text-white/48">Name</span>
+                      <input
+                        value={channelForm.name}
+                        onChange={(event) => setChannelForm((value) => ({ ...value, name: event.target.value.slice(0, 48) }))}
+                        placeholder="Art Market"
+                        className={inputClass()}
+                      />
+                    </label>
+                    <label className="grid gap-1">
+                      <span className="text-[10px] uppercase tracking-[0.16em] text-white/48">Description</span>
+                      <textarea
+                        value={channelForm.description}
+                        onChange={(event) => setChannelForm((value) => ({ ...value, description: event.target.value.slice(0, 240) }))}
+                        placeholder="What is this channel about?"
+                        rows={3}
+                        className={`${inputClass()} resize-none`}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="pixel-btn-soft pixel-btn-soft-amber"
+                      disabled={!hasProfile || !channelForm.slug.trim() || !channelForm.name.trim()}
+                      onClick={submitChannel}
+                    >
+                      Create channel
+                    </button>
+                  </div>
+                ) : null}
               </PixelPanel>
             </aside>
           </section>
