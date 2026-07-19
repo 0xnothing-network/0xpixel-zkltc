@@ -70,13 +70,13 @@ interface FetchCandlesParams {
 }
 
 interface StoredResponse {
-  version: 32;
+  version: 33;
   savedAt: number;
   response: CandlesResponse;
 }
 
-export const CANDLE_QUERY_KEY = 'candles-edge-v32';
-const CANDLE_SESSION_CACHE_PREFIX = 'candles:v32';
+export const CANDLE_QUERY_KEY = 'candles-edge-v33';
+const CANDLE_SESSION_CACHE_PREFIX = 'candles:v33';
 const SUPPORTED_INTERVALS = new Set([15, 60, 240, 1440]);
 const SESSION_CACHE_MAX_AGE_MS = 24 * 60 * 60_000;
 const FULL_HISTORY_REQUEST_TIMEOUT_MS = 60_000;
@@ -239,7 +239,7 @@ function readCachedResponse(cacheKey: string): CandlesResponse | undefined {
     if (!raw) return undefined;
     const stored = JSON.parse(raw) as Partial<StoredResponse>;
     if (
-      stored.version !== 32 ||
+      stored.version !== 33 ||
       !isFiniteNumber(stored.savedAt) ||
       Date.now() - stored.savedAt > SESSION_CACHE_MAX_AGE_MS ||
       !stored.response
@@ -264,7 +264,7 @@ function writeCachedResponse(cacheKey: string, response: CandlesResponse) {
   if (typeof window === 'undefined') return;
   try {
     const merged = mergeCandleResponses(readCachedResponse(cacheKey), response);
-    const stored: StoredResponse = { version: 32, savedAt: Date.now(), response: merged };
+    const stored: StoredResponse = { version: 33, savedAt: Date.now(), response: merged };
     sessionStorage.setItem(
       `${CANDLE_SESSION_CACHE_PREFIX}:${cacheKey}`,
       JSON.stringify(stored),

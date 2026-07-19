@@ -5,13 +5,10 @@ import {
   loadDexPoolSnapshot,
   type DexPoolSnapshot,
 } from '@/lib/dexOnchainFallback';
+import { DEX_SUBGRAPH_URL } from '@/lib/dexSubgraph';
 
 export const runtime = 'nodejs';
-
-const DEFAULT_DEX_SUBGRAPH_URL =
-  'https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.7/gn';
-const SUBGRAPH_URL_RAW = process.env.NEXT_PUBLIC_SUBGRAPH_URL || DEFAULT_DEX_SUBGRAPH_URL;
-const SUBGRAPH_URL = SUBGRAPH_URL_RAW === 'disabled' ? '' : SUBGRAPH_URL_RAW;
+export const maxDuration = 60;
 
 const SUPPORTED_INTERVALS = new Set([15, 60, 240, 1440]);
 const PAGE_SIZE = 1000;
@@ -241,7 +238,7 @@ async function fetchGraphql(
     const timeoutId = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
 
     try {
-      const response = await fetch(SUBGRAPH_URL, {
+      const response = await fetch(DEX_SUBGRAPH_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({ query: CANDLES_QUERY, variables }),
@@ -382,20 +379,18 @@ async function loadCandlesWithFallback({
   });
 
   let indexed: CandlesResponseBody | null = null;
-  let upstreamError = SUBGRAPH_URL ? '' : 'DEX subgraph is disabled';
-  if (SUBGRAPH_URL) {
-    try {
-      indexed = await loadIndexedCandles(
-        pairId,
-        token0,
-        token1,
-        interval,
-        token0Decimals,
-        token1Decimals,
-      );
-    } catch (error) {
-      upstreamError = error instanceof Error ? error.message : 'Subgraph unavailable';
-    }
+  let upstreamError = '';
+  try {
+    indexed = await loadIndexedCandles(
+      pairId,
+      token0,
+      token1,
+      interval,
+      token0Decimals,
+      token1Decimals,
+    );
+  } catch (error) {
+    upstreamError = error instanceof Error ? error.message : 'Subgraph unavailable';
   }
 
   const snapshot = await snapshotPromise;

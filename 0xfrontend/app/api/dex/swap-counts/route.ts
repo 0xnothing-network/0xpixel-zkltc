@@ -1,12 +1,8 @@
 import { NextResponse } from 'next/server';
+import { DEX_SUBGRAPH_URL } from '@/lib/dexSubgraph';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-const DEFAULT_DEX_SUBGRAPH_URL =
-  'https://api.goldsky.com/api/public/project_cmqmpust19i8v01t595z8hpq4/subgraphs/zeroxdex/1.0.7/gn';
-const SUBGRAPH_URL_RAW = process.env.NEXT_PUBLIC_SUBGRAPH_URL || DEFAULT_DEX_SUBGRAPH_URL;
-const SUBGRAPH_URL = SUBGRAPH_URL_RAW === 'disabled' ? '' : SUBGRAPH_URL_RAW;
 
 const PAGE_SIZE = 1000;
 const CACHE_TTL_MS = 15_000;
@@ -79,7 +75,7 @@ async function fetchPage(after: string): Promise<{
   candles: IndexedCandleCount[];
   meta: SubgraphMeta | null;
 }> {
-  const response = await fetch(SUBGRAPH_URL, {
+  const response = await fetch(DEX_SUBGRAPH_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -159,13 +155,6 @@ async function loadSwapCounts(): Promise<SwapCountsResponse> {
 
 export async function GET() {
   const headers = { 'Cache-Control': 'no-store' };
-
-  if (!SUBGRAPH_URL) {
-    return NextResponse.json(
-      { error: 'DEX subgraph URL is not configured' },
-      { status: 503, headers },
-    );
-  }
 
   const now = Date.now();
   if (cachedResponse && cachedResponse.expiresAt > now) {
