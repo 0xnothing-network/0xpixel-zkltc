@@ -11,7 +11,7 @@ const ChartWindow = dynamic(loadChartWindow, {
   ssr: false,
 });
 
-import { useAccount, useReadContract, useReadContracts, useConnect, useDisconnect, useBlockNumber, useWriteContract, useSwitchChain, usePublicClient, useWatchContractEvent } from "wagmi";
+import { useAccount, useReadContract, useReadContracts, useConnect, useDisconnect, useWatchBlockNumber, useWriteContract, useSwitchChain, usePublicClient, useWatchContractEvent } from "wagmi";
 import { erc20Abi, formatUnits, maxUint256, parseUnits } from "viem";
 import { useDexStats, useAllPools, useDexRead, useRewardRead, useDexWrite, NATIVE_TOKEN, useTokenBalance, useTokenAllowance, Token, type PoolDataTuple } from "@/lib/use0xDex";
 import { DEX_ABI, DEX_ADDRESS, NATIVE_ADDRESS } from "@/lib/0xDexAbi";
@@ -19,9 +19,8 @@ import { NUSD_ADDRESS, NUSD_ABI } from "@/lib/NUSDContract";
 import { REWARD_MANAGER_ADDRESS } from "@/lib/rewardAbi";
 import { useToast } from "@/components/Toast";
 import { PageLoader } from "@/components/PageLoader";
-import { useGSAP } from "@gsap/react";
-import { gsapPixelStagger } from "@/lib/gsap-animations";
 import { fetchCandlesRequest, getCandlesQueryKey } from "@/app/hooks/useCandleData";
+import { useDocumentVisibility } from "@/app/hooks/useDocumentVisibility";
 import {
   getAddressExplorerUrl,
   getTokenExplorerUrl,
@@ -122,7 +121,6 @@ const BPS_DENOM = 10000n; // matches `swapFee / 10000` in 0xDex.sol
 type ChartTf = 15 | 60 | 240 | 1440;
 const DEFAULT_CHART_TF: ChartTf = 15;
 const CHART_PRELOAD_TIMEFRAMES = [15, 60, 240, 1440] as const satisfies readonly ChartTf[];
-const CHART_WARM_POOL_LIMIT = 2;
 const CHART_TIMEFRAMES = new Set<number>([15, 60, 240, 1440]);
 const SWAP_SLIPPAGE_BPS = 300n;
 const SWAP_PRICE_REFRESH_MS = 2_000;
@@ -889,18 +887,9 @@ function ChartIcon() {
   );
 }
 
-// ============================================================
-// Shimmer Animation Style
-// ============================================================
-const shimmerStyle = `
-  @keyframes shimmer {
-    0% { background-position: 200% 0; }
-    100% { background-position: -200% 0; }
-  }
-`;
-
 export default function DexAllInOne() {
   const queryClient = useQueryClient();
+  const isDocumentVisible = useDocumentVisibility();
   const { address, isConnected, chainId } = useAccount();
   const { connect, connectors } = useConnect();
   const { disconnect } = useDisconnect();
@@ -909,7 +898,6 @@ export default function DexAllInOne() {
   const toast = useToast();
   const { addLiquidity, removeLiquidity, claimReward } = useDexWrite();
   const LITVM_CHAIN_ID = 4441;
-  const poolListRef = useRef<HTMLDivElement>(null);
   const publicClient = usePublicClient();
   const [swapHistory, setSwapHistory] = useState<SwapHistoryItem[]>([]);
   const [swapHistoryLoading, setSwapHistoryLoading] = useState(false);
@@ -921,17 +909,6 @@ export default function DexAllInOne() {
   const swapHistoryAnchorRef = useRef(SWAP_HISTORY_MAX_TIMESTAMP);
   const swapHistorySkipRef = useRef(0);
   const swapHistoryLoadMoreInFlightRef = useRef(false);
-
-  // Pixel-style stagger entry for pool cards
-  useGSAP(
-    () => {
-      if (!poolListRef.current) return;
-      const cards = poolListRef.current.querySelectorAll(".pool-card-item");
-      if (cards.length === 0) return;
-      gsapPixelStagger(cards, { stagger: 0.05, delay: 0.1 });
-    },
-    { scope: poolListRef }
-  );
 
   // State
   const [mounted, setMounted] = useState(false);
@@ -1007,26 +984,6 @@ export default function DexAllInOne() {
   const chartWarmCacheRef = useRef(new Set<string>());
   const dexBlockRefetchAtRef = useRef(0);
   const dexBlockRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const warmChart = () => {
-      void loadChartWindow();
-    };
-    const win = window as typeof window & {
-      requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
-      cancelIdleCallback?: (handle: number) => void;
-    };
-
-    if (win.requestIdleCallback) {
-      const handle = win.requestIdleCallback(warmChart, { timeout: 2500 });
-      return () => win.cancelIdleCallback?.(handle);
-    }
-
-    const handle = window.setTimeout(warmChart, 1200);
-    return () => window.clearTimeout(handle);
-  }, []);
 
   // Data
   const stats = useDexStats();
@@ -1222,13 +1179,14 @@ export default function DexAllInOne() {
   }, []);
 
   useEffect(() => {
+    if (!isDocumentVisible) return;
     let cancelled = false;
     const controller = new AbortController();
 
     async function loadSwapHistoryCounts() {
       try {
         const response = await fetch("/api/dex/swap-counts", {
-          cache: "no-store",
+          cache: "default",
           signal: controller.signal,
         });
         if (!response.ok) {
@@ -1255,9 +1213,10 @@ export default function DexAllInOne() {
       controller.abort();
       window.clearInterval(refreshId);
     };
-  }, []);
+  }, [isDocumentVisible]);
 
   useEffect(() => {
+    if (!isDocumentVisible) return;
     let cancelled = false;
     let requestInFlight = false;
     const controller = new AbortController();
@@ -1310,7 +1269,7 @@ export default function DexAllInOne() {
       controller.abort();
       window.clearInterval(refreshId);
     };
-  }, [fetchSwapHistoryFromSubgraph, swapHistoryPairId]);
+  }, [fetchSwapHistoryFromSubgraph, isDocumentVisible, swapHistoryPairId]);
 
   const loadOlderSwapHistory = useCallback(async () => {
     if (
@@ -1355,6 +1314,7 @@ export default function DexAllInOne() {
     address: DEX_ADDRESS as `0x${string}`,
     abi: DEX_ABI,
     eventName: "Swapped",
+    enabled: isDocumentVisible,
     onLogs(logs) {
       const hasSelectedPairSwap = (logs as SwapLogLike[]).some((log) => {
         if (!hasSwapArgs(log) || !swapTokenOut) return false;
@@ -1645,54 +1605,6 @@ export default function DexAllInOne() {
     });
   }, [poolOptions, allPoolData, pairFilter]);
 
-  useEffect(() => {
-    if (typeof window === "undefined" || !poolOptions.length || !allPoolData.length) return;
-
-    let cancelled = false;
-    const warmVisibleCharts = async () => {
-      await loadChartWindow();
-
-      const targets = sortedPoolIndices
-        .slice(0, CHART_WARM_POOL_LIMIT)
-        .map((poolIndex) => ({ poolIndex, target: getChartPreloadTarget(poolIndex) }))
-        .filter((item): item is { poolIndex: number; target: ChartPreloadTarget } => !!item.target);
-
-      for (const { poolIndex, target } of targets) {
-        if (cancelled) return;
-        warmChartForPool(poolIndex, target.chartAnchor);
-      }
-    };
-
-    const win = window as typeof window & {
-      requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
-      cancelIdleCallback?: (handle: number) => void;
-    };
-
-    if (win.requestIdleCallback) {
-      const handle = win.requestIdleCallback(() => {
-        void warmVisibleCharts();
-      }, { timeout: 3500 });
-      return () => {
-        cancelled = true;
-        win.cancelIdleCallback?.(handle);
-      };
-    }
-
-    const handle = window.setTimeout(() => {
-      void warmVisibleCharts();
-    }, 1800);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(handle);
-    };
-  }, [
-    allPoolData,
-    getChartPreloadTarget,
-    poolOptions.length,
-    sortedPoolIndices,
-    warmChartForPool,
-  ]);
-
   // Check if selected pool is Base Pool (contains NUSD) - only Base Pools can farm
   const isSelectedBasePool = useMemo(() => {
     if (poolOptions.length <= selectedFarmPool) return true;
@@ -1743,8 +1655,6 @@ export default function DexAllInOne() {
   const { data: balancePoolToken } = useTokenBalance(address, poolToken);
   const { data: balanceNUSD } = useTokenBalance(address, KNOWN_TOKENS[1]);
 
-  // Real-time block updates for auto-refresh
-  const { data: blockNumber } = useBlockNumber({ watch: true });
   const { refetch: refetchPool } = useDexRead("pools", pairId ? [pairId] : undefined, !!pairId);
 
   // Allowances - use useReadContract directly for better reliability
@@ -1790,12 +1700,12 @@ export default function DexAllInOne() {
   }, [swapAmountIn, poolData, swapTokenIn, swapTokenOut, swapFeeBps]);
 
   useEffect(() => {
-    if (!swapAmountIn || !pairId || !refetchPool) return;
+    if (!isDocumentVisible || !swapAmountIn || !pairId || !refetchPool) return;
     const intervalId = window.setInterval(() => {
       void refetchPool();
     }, SWAP_PRICE_REFRESH_MS);
     return () => window.clearInterval(intervalId);
-  }, [pairId, refetchPool, swapAmountIn]);
+  }, [isDocumentVisible, pairId, refetchPool, swapAmountIn]);
 
   const refetchDexLiveReads = useCallback(() => {
     refetchAllowanceIn?.();
@@ -1824,7 +1734,7 @@ export default function DexAllInOne() {
     const elapsed = now - dexBlockRefetchAtRef.current;
     if (elapsed >= 4_000) {
       dexBlockRefetchAtRef.current = now;
-      refetchDexLiveReads();
+      if (!document.hidden) refetchDexLiveReads();
       return;
     }
 
@@ -1832,14 +1742,15 @@ export default function DexAllInOne() {
     dexBlockRefetchTimerRef.current = setTimeout(() => {
       dexBlockRefetchTimerRef.current = null;
       dexBlockRefetchAtRef.current = Date.now();
-      refetchDexLiveReads();
+      if (!document.hidden) refetchDexLiveReads();
     }, 4_000 - elapsed);
   }, [refetchDexLiveReads]);
 
-  // Auto-refetch on new blocks, throttled to avoid RPC/UI bursts.
-  useEffect(() => {
-    if (blockNumber) scheduleDexLiveReads();
-  }, [blockNumber, scheduleDexLiveReads]);
+  // Refresh on new blocks without putting every block number in component state.
+  useWatchBlockNumber({
+    enabled: isDocumentVisible,
+    onBlockNumber: scheduleDexLiveReads,
+  });
 
   useEffect(() => () => {
     if (dexBlockRefetchTimerRef.current) {
@@ -2218,7 +2129,6 @@ export default function DexAllInOne() {
 
   return (
     <>
-      <style>{shimmerStyle}</style>
       <div className="dex-page min-h-screen bg-[#0F0F23]">
       {/* Header */}
       <header className="sticky top-0 z-50 bg-[#1A1A2E]/90 backdrop-blur-xl border-b border-[#2D2D44]">
@@ -2749,7 +2659,6 @@ export default function DexAllInOne() {
             </div>
             <div
               className="dex-top-pairs-list space-y-2"
-              ref={poolListRef}
               role="region"
               aria-label="All top pairs"
               tabIndex={0}

@@ -1,33 +1,19 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono, Press_Start_2P } from "next/font/google";
+import { JetBrains_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 import { Providers } from "./providers";
-
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
-  display: "swap",
-  preload: true,
-});
+import { PUBLIC_APP_URL } from "@/lib/publicConfig";
 
 const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
   variable: "--font-mono",
   display: "swap",
-  preload: true,
-});
-
-const pressStart2P = Press_Start_2P({
-  subsets: ["latin"],
-  weight: "400",
-  variable: "--font-pixel",
-  display: "swap",
-  preload: true,
+  preload: false,
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? "https://0xnothing.net"),
+  metadataBase: new URL(PUBLIC_APP_URL),
   title: "0xNothing | Nothing to everything",
   description: "Pixel art, token factory, and DEX tools on LitVm Testnet.",
   openGraph: {
@@ -50,7 +36,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark" data-scroll-behavior="smooth">
-      <body className={`${inter.variable} ${jetbrainsMono.variable} ${pressStart2P.variable} font-sans antialiased`}>
+      <body className={`${jetbrainsMono.variable} font-sans antialiased`}>
         <a href="#main-content" className="skip-link">Skip to content</a>
         <Providers>
           <div id="main-content">{children}</div>

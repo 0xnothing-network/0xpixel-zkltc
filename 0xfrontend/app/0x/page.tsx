@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   useAccount,
   useConnect,
@@ -16,6 +17,7 @@ import {
 import { hexToString, isAddress, keccak256, stringToHex } from "viem";
 import { litvm } from "@/config/wagmi";
 import { useToast } from "@/components/Toast";
+import { useDocumentVisibility } from "@/app/hooks/useDocumentVisibility";
 import {
   ZEROXN_ABI,
   ZEROXN_ADDRESS,
@@ -42,6 +44,8 @@ import {
 
 const GLOBAL_FEED_LIMIT = 24;
 const POST_SCAN_LIMIT = 72;
+const PROFILE_POST_PAGE_SIZE = 12;
+const NOTIFICATION_PAGE_SIZE = 20;
 const CHANNEL_LIMIT = 12;
 const GROUP_LIMIT = 12;
 const MESSAGE_SCAN_LIMIT = 96;
@@ -56,9 +60,23 @@ const GROUP_MESSAGE_ENVELOPE_KIND = "0xN_GROUP_AESGCM_V1";
 const GROUP_KEY_ENVELOPE_KIND = "0xN_GROUP_KEY_ECDH_P256_AESGCM_V1";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
-type Tab = "feed" | "channels" | "groups" | "chat" | "dm" | "profile";
+type Tab = "feed" | "channels" | "groups" | "chat" | "dm" | "profile" | "notifications";
 type DmBox = "inbox" | "sent";
 type FeedMode = "newest" | "following";
+
+type SocialNotification = {
+  id: string;
+  kind: "like" | "comment" | "follow";
+  actor: `0x${string}`;
+  postId?: string;
+  timestamp: number;
+  transactionHash: `0x${string}`;
+};
+
+type SocialNotificationResponse = {
+  notifications: SocialNotification[];
+  generatedAt: number;
+};
 
 type StoredDmKeyPair = {
   publicJwk: JsonWebKey;
@@ -430,6 +448,7 @@ async function decryptDmEnvelope(envelope: DmEnvelope, currentAddress: string, l
 }
 
 export default function ZeroxSocialPage() {
+  const isDocumentVisible = useDocumentVisibility();
   const [mounted, setMounted] = useState(false);
   const [tab, setTab] = useState<Tab>("feed");
   const [profileForm, setProfileForm] = useState({
@@ -443,6 +462,9 @@ export default function ZeroxSocialPage() {
   const [postPixelToken, setPostPixelToken] = useState("");
   const [composerOpen, setComposerOpen] = useState(false);
   const [feedMode, setFeedMode] = useState<FeedMode>("newest");
+  const [visibleProfilePostCount, setVisibleProfilePostCount] = useState(PROFILE_POST_PAGE_SIZE);
+  const [visibleNotificationCount, setVisibleNotificationCount] = useState(NOTIFICATION_PAGE_SIZE);
+  const [notificationsSeenAt, setNotificationsSeenAt] = useState<number | null>(null);
   const [channelTarget, setChannelTarget] = useState("");
   const [channelSearch, setChannelSearch] = useState("");
   const [channelCreateOpen, setChannelCreateOpen] = useState(false);
@@ -468,6 +490,7 @@ export default function ZeroxSocialPage() {
   const [ownedPixelsError, setOwnedPixelsError] = useState("");
   const liveRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastLiveRefetchAtRef = useRef(0);
+  const tabsRef = useRef<HTMLElement | null>(null);
 
   const { address, isConnected, chainId } = useAccount();
   const { connect, connectors, isPending: isConnecting } = useConnect();
@@ -553,11 +576,14 @@ export default function ZeroxSocialPage() {
     args: address ? [address] : undefined,
     query: { enabled: Boolean(address), refetchInterval: LIVE_SLOW_MS },
   });
-  const { data: postCount, refetch: refetchPostCount } = useReadContract({
+  const { data: postCount, refetch: refetchPostCount, isLoading: postCountLoading } = useReadContract({
     address: ZEROXN_ADDRESS,
     abi: ZEROXN_ABI,
     functionName: "postCount",
-    query: { enabled: tab === "feed", refetchInterval: tab === "feed" ? LIVE_NORMAL_MS : false },
+    query: {
+      enabled: tab === "feed" || tab === "profile",
+      refetchInterval: tab === "feed" || tab === "profile" ? LIVE_NORMAL_MS : false,
+    },
   });
   const { data: channelCount, refetch: refetchChannelCount } = useReadContract({
     address: ZEROXN_ADDRESS,
@@ -581,6 +607,70 @@ export default function ZeroxSocialPage() {
   const profile = profileData as ZeroxNProfile | undefined;
   const hasProfile = isProfileReady(profile);
   const canUseSocial = mounted && hasProfile;
+
+  const {
+    data: notificationData,
+    error: notificationsError,
+    isLoading: notificationsLoading,
+    isFetching: notificationsFetching,
+    refetch: refetchNotifications,
+  } = useQuery<SocialNotificationResponse>({
+    queryKey: ["0x-notifications", address],
+    enabled: canUseSocial && Boolean(address),
+    staleTime: 5_000,
+    refetchInterval: tab === "notifications" ? LIVE_NORMAL_MS : 60_000,
+    refetchOnWindowFocus: true,
+    queryFn: async ({ signal }) => {
+      const response = await fetch(`/api/social/notifications?address=${address}`, { signal });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error || "Could not load notifications.");
+      }
+      return response.json() as Promise<SocialNotificationResponse>;
+    },
+  });
+
+  const notifications = useMemo(
+    () => notificationData?.notifications ?? [],
+    [notificationData?.notifications],
+  );
+  const unreadNotificationCount = useMemo(() => {
+    if (notificationsSeenAt === null) return 0;
+    return notifications.filter((notification) => notification.timestamp > notificationsSeenAt).length;
+  }, [notifications, notificationsSeenAt]);
+  const visibleNotifications = useMemo(
+    () => notifications.slice(0, visibleNotificationCount),
+    [notifications, visibleNotificationCount],
+  );
+
+  useEffect(() => {
+    setVisibleProfilePostCount(PROFILE_POST_PAGE_SIZE);
+    setVisibleNotificationCount(NOTIFICATION_PAGE_SIZE);
+    if (!address) {
+      setNotificationsSeenAt(null);
+      return;
+    }
+
+    const stored = window.localStorage.getItem(`0x-notifications-seen:${address.toLowerCase()}`);
+    const parsed = stored ? Number(stored) : 0;
+    setNotificationsSeenAt(Number.isFinite(parsed) && parsed > 0 ? parsed : 0);
+  }, [address]);
+
+  useEffect(() => {
+    if (tab !== "notifications" || !address || notificationsSeenAt === null || notifications.length === 0) return;
+    const latestTimestamp = notifications.reduce(
+      (latest, notification) => Math.max(latest, notification.timestamp),
+      notificationsSeenAt,
+    );
+    if (latestTimestamp <= notificationsSeenAt) return;
+    window.localStorage.setItem(`0x-notifications-seen:${address.toLowerCase()}`, latestTimestamp.toString());
+    setNotificationsSeenAt(latestTimestamp);
+  }, [address, notifications, notificationsSeenAt, tab]);
+
+  useEffect(() => {
+    const activeTab = tabsRef.current?.querySelector<HTMLElement>("[aria-current='page']");
+    activeTab?.scrollIntoView({ block: "nearest", inline: "center" });
+  }, [tab]);
 
   useEffect(() => {
     if (profile && profile[5]) {
@@ -669,6 +759,66 @@ export default function ZeroxSocialPage() {
 
     return globalPosts.slice(0, GLOBAL_FEED_LIMIT);
   }, [feedMode, followingFeedData, globalPosts]);
+
+  const totalPostCount = (postCount as bigint | undefined) ?? 0n;
+  const {
+    data: profilePostIdsData,
+    error: profilePostIdsError,
+    isLoading: profilePostIdsLoading,
+    refetch: refetchProfilePostIds,
+  } = useReadContract({
+    address: ZEROXN_ADDRESS,
+    abi: ZEROXN_ABI,
+    functionName: "getUserPosts",
+    args: address && totalPostCount > 0n ? [address, 0n, totalPostCount] : undefined,
+    query: {
+      enabled: tab === "profile" && Boolean(address) && totalPostCount > 0n,
+      refetchInterval: tab === "profile" ? LIVE_NORMAL_MS : false,
+    },
+  });
+
+  const profilePostIds = useMemo(
+    () => [...((profilePostIdsData ?? []) as readonly bigint[])].reverse(),
+    [profilePostIdsData],
+  );
+  const visibleProfilePostIds = useMemo(
+    () => profilePostIds.slice(0, visibleProfilePostCount),
+    [profilePostIds, visibleProfilePostCount],
+  );
+  const {
+    data: profilePostData,
+    error: profilePostDataError,
+    isLoading: profilePostDataLoading,
+    refetch: refetchProfilePostData,
+  } = useReadContracts({
+    contracts: visibleProfilePostIds.map((postId) => ({
+      address: ZEROXN_ADDRESS,
+      abi: ZEROXN_ABI,
+      functionName: "posts" as const,
+      args: [postId],
+    })),
+    allowFailure: true,
+    query: {
+      enabled: tab === "profile" && visibleProfilePostIds.length > 0,
+      refetchInterval: tab === "profile" && visibleProfilePostIds.length > 0 ? LIVE_NORMAL_MS : false,
+    },
+  });
+
+  const profilePosts = useMemo(
+    () => visibleProfilePostIds
+      .map((postId, index) => {
+        const result = profilePostData?.[index];
+        if (!result || result.status !== "success" || !result.result) return null;
+        return { postId, post: result.result as ZeroxNPost };
+      })
+      .filter((item): item is { postId: bigint; post: ZeroxNPost } => Boolean(item)),
+    [profilePostData, visibleProfilePostIds],
+  );
+  const profilePostsLoading = postCountLoading
+    || profilePostIdsLoading
+    || (visibleProfilePostIds.length > 0 && profilePostDataLoading);
+  const profilePostReadFailures = profilePostData?.filter((result) => result.status === "failure").length ?? 0;
+  const profilePostsError = profilePostIdsError || profilePostDataError || profilePostReadFailures > 0;
 
   const recentMessageIds = useMemo(() => {
     const count = (messageCount as bigint | undefined) ?? 0n;
@@ -1209,6 +1359,12 @@ export default function ZeroxSocialPage() {
       void refetchInbox();
       void refetchSent();
       void refetchDmMessages();
+    } else if (tab === "profile") {
+      void refetchPostCount();
+      void refetchProfilePostIds();
+      void refetchProfilePostData();
+    } else if (tab === "notifications") {
+      void refetchNotifications();
     }
   }, [
     refetchChannelCount,
@@ -1223,6 +1379,9 @@ export default function ZeroxSocialPage() {
     refetchMessages,
     refetchPostCount,
     refetchProfile,
+    refetchProfilePostData,
+    refetchProfilePostIds,
+    refetchNotifications,
     refetchSelectedChannelMember,
     refetchSelectedChannelPostData,
     refetchSelectedChannelPosts,
@@ -1264,7 +1423,7 @@ export default function ZeroxSocialPage() {
     address: ZEROXN_ADDRESS,
     abi: ZEROXN_ABI,
     onLogs: scheduleLiveSocialRefetch,
-    enabled: canUseSocial,
+    enabled: canUseSocial && isDocumentVisible,
   });
 
   async function runTx(label: string, request: SocialTxRequest) {
@@ -1654,6 +1813,24 @@ export default function ZeroxSocialPage() {
             <span className="text-lg font-bold">0x</span>
           </Link>
           <div className="zeroxn-app-actions flex flex-wrap items-center gap-2">
+            {canUseSocial ? (
+              <button
+                type="button"
+                className={`zeroxn-alerts-trigger pixel-btn-soft pixel-btn-soft-sm ${
+                  tab === "notifications" || unreadNotificationCount > 0
+                    ? "pixel-btn-soft-amber"
+                    : "pixel-btn-soft-secondary"
+                }`}
+                onClick={() => setTab("notifications")}
+                aria-pressed={tab === "notifications"}
+                aria-label={`${unreadNotificationCount} unread notifications`}
+              >
+                <span>Alerts</span>
+                <span className="zeroxn-alert-count" aria-hidden="true">
+                  {unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}
+                </span>
+              </button>
+            ) : null}
             {mounted && isConnected ? (
               <button
                 type="button"
@@ -1815,13 +1992,14 @@ export default function ZeroxSocialPage() {
             </PixelPanel>
           </section>
         ) : (
-          <nav className="zeroxn-tabs flex gap-2 overflow-x-auto">
+          <nav ref={tabsRef} className="zeroxn-tabs flex gap-2 overflow-x-auto">
             {tabs.map((item) => (
               <button
                 key={item.key}
                 type="button"
                 className={`pixel-btn-soft flex items-center justify-between ${tab === item.key ? "pixel-btn-soft-indigo" : "pixel-btn-soft-secondary"}`}
                 onClick={() => setTab(item.key)}
+                aria-current={tab === item.key ? "page" : undefined}
               >
                 <span>{item.label}</span>
                 <span className={`ml-2 ${item.tone}`}>{item.meta}</span>
@@ -1951,8 +2129,164 @@ export default function ZeroxSocialPage() {
           </section>
         ) : null}
 
+        {canUseSocial && tab === "notifications" ? (
+          <section className="zeroxn-notifications mx-auto grid w-full gap-4" aria-live="polite">
+            <div className="zeroxn-section-head flex flex-wrap items-center justify-between gap-3 border-b border-white/12 pb-3">
+              <div>
+                <h2 className="text-xl font-bold text-white">Notifications</h2>
+                <p className="mt-1 text-xs text-white/48">
+                  Showing {formatCount(visibleNotifications.length)} of {formatCount(notifications.length)}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="pixel-btn-soft pixel-btn-soft-secondary pixel-btn-soft-sm"
+                onClick={() => void refetchNotifications()}
+                disabled={notificationsFetching}
+              >
+                {notificationsFetching ? "Refreshing" : "Refresh"}
+              </button>
+            </div>
+
+            {notificationsLoading ? (
+              <div className="grid gap-2" aria-label="Loading notifications">
+                {Array.from({ length: 4 }, (_, index) => (
+                  <div key={index} className="zeroxn-notification-skeleton h-20 border border-white/10 bg-white/[0.025]" />
+                ))}
+              </div>
+            ) : notificationsError ? (
+              <div className="zeroxn-empty border border-[var(--pixel-red)]/45 bg-black p-5 text-sm text-white/65">
+                <p className="font-bold text-[var(--pixel-red)]">Notifications unavailable</p>
+                <p className="mt-2">{notificationsError instanceof Error ? notificationsError.message : "Try again shortly."}</p>
+              </div>
+            ) : notifications.length > 0 ? (
+              <div className="grid gap-4">
+                <div className="zeroxn-notification-list border-t border-white/10">
+                  {visibleNotifications.map((notification) => {
+                    const action = notification.kind === "like"
+                      ? "liked your post"
+                      : notification.kind === "comment"
+                        ? "commented on your post"
+                        : "followed you";
+                    return (
+                      <article key={notification.id} className="zeroxn-notification-row grid gap-3 border-b border-white/10 py-4 sm:grid-cols-[7rem_minmax(0,1fr)_auto] sm:items-center">
+                        <span className={`zeroxn-notification-kind is-${notification.kind}`}>
+                          {notification.kind}
+                        </span>
+                        <div className="grid min-w-0 gap-2">
+                          <ProfileBadge address={notification.actor} dense />
+                          <p className="text-xs text-white/68">{action}</p>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 sm:grid sm:justify-items-end">
+                          <span className="text-[10px] text-white/38">{formatDate(notification.timestamp)}</span>
+                          {notification.postId ? (
+                            <Link
+                              href={`/0x/p/${notification.postId}`}
+                              className="pixel-btn-soft pixel-btn-soft-indigo pixel-btn-soft-sm"
+                            >
+                              Open post #{notification.postId}
+                            </Link>
+                          ) : null}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+                {visibleNotificationCount < notifications.length ? (
+                  <button
+                    type="button"
+                    className="pixel-btn-soft pixel-btn-soft-secondary justify-self-center"
+                    onClick={() => setVisibleNotificationCount((count) => count + NOTIFICATION_PAGE_SIZE)}
+                  >
+                    Load more notifications
+                  </button>
+                ) : null}
+              </div>
+            ) : (
+              <div className="zeroxn-empty border border-white/12 bg-black p-8 text-sm text-white/58">
+                <p className="text-lg font-bold text-white">No notifications yet</p>
+                <p className="mt-2">Likes, comments, and new followers will appear here.</p>
+              </div>
+            )}
+          </section>
+        ) : null}
+
         {canUseSocial && tab === "profile" ? (
-          <section className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
+          <>
+            <section className="zeroxn-profile-posts mx-auto grid w-full gap-4">
+              <div className="zeroxn-section-head flex flex-wrap items-center justify-between gap-3 border-b border-white/12 pb-3">
+                <div>
+                  <h2 className="text-xl font-bold text-white">My posts</h2>
+                  <p className="mt-1 text-xs text-white/48">
+                    Showing {formatCount(profilePosts.length)} of {formatCount(profilePostIds.length)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="pixel-btn-soft pixel-btn-soft-indigo pixel-btn-soft-sm"
+                  onClick={() => {
+                    setTab("feed");
+                    setComposerOpen(true);
+                  }}
+                >
+                  Create post
+                </button>
+              </div>
+
+              {profilePostsLoading ? (
+                <div className="grid gap-3" aria-label="Loading your posts">
+                  {Array.from({ length: 3 }, (_, index) => (
+                    <div key={index} className="zeroxn-profile-post-skeleton h-40 border border-white/10 bg-white/[0.025]" />
+                  ))}
+                </div>
+              ) : profilePostsError ? (
+                <div className="zeroxn-empty border border-[var(--pixel-red)]/45 bg-black p-5 text-sm text-white/65">
+                  <p className="font-bold text-[var(--pixel-red)]">Could not load your posts</p>
+                  <button
+                    type="button"
+                    className="pixel-btn-soft pixel-btn-soft-secondary pixel-btn-soft-sm mt-3"
+                    onClick={() => {
+                      void refetchPostCount();
+                      void refetchProfilePostIds();
+                      void refetchProfilePostData();
+                    }}
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : profilePosts.length > 0 ? (
+                <div className="grid gap-4">
+                  {profilePosts.map(({ postId, post }) => (
+                    <PostCard
+                      key={postId.toString()}
+                      postId={postId}
+                      post={post}
+                      viewer={address}
+                      runTx={runTx}
+                      ownedPixels={ownedPixels}
+                      ownedPixelsLoading={ownedPixelsLoading}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="zeroxn-empty border border-white/12 bg-black p-8 text-sm text-white/58">
+                  <p className="text-lg font-bold text-white">No posts yet</p>
+                  <p className="mt-2">Your global and channel posts will appear here.</p>
+                </div>
+              )}
+
+              {visibleProfilePostCount < profilePostIds.length ? (
+                <button
+                  type="button"
+                  className="pixel-btn-soft pixel-btn-soft-secondary justify-self-center"
+                  onClick={() => setVisibleProfilePostCount((count) => count + PROFILE_POST_PAGE_SIZE)}
+                >
+                  Load more posts
+                </button>
+              ) : null}
+            </section>
+
+          <section className="zeroxn-profile-summary grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
             <PixelPanel>
               <PanelTitle title="Your profile" />
               <div className="grid gap-3 p-4">
@@ -1963,7 +2297,6 @@ export default function ZeroxSocialPage() {
                     onChange={(event) => setProfileForm((value) => ({ ...value, username: normalizeUsername(event.target.value) }))}
                     placeholder="username"
                     className={inputClass()}
-                    disabled={hasProfile}
                   />
                 </label>
                 <label className="grid gap-1">
@@ -2070,6 +2403,7 @@ export default function ZeroxSocialPage() {
               </div>
             </PixelPanel>
           </section>
+          </>
         ) : null}
 
         {canUseSocial && tab === "channels" ? (

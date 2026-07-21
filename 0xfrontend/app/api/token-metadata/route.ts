@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { publicClient, PIXEL_NFT_CONTRACT_ADDRESS } from "@/lib/contract";
 import { PixelNFTABI } from "@/lib/abi";
-import { pixelDataToSVG } from "@/lib/gridParser";
+import { getPixelImageUrl } from "@/lib/pixelImage";
 import {
   fetchTokenMetadataFromSubgraph,
   hasMarketplaceSubgraph,
@@ -64,11 +64,18 @@ export async function GET(request: Request) {
 
   try {
     const result = await fetchMetadataBatch(uniqueIds);
-    return NextResponse.json({ tokens: result });
+    return NextResponse.json(
+      { tokens: result },
+      {
+        headers: {
+          "Cache-Control": "public, s-maxage=30, stale-while-revalidate=30",
+        },
+      },
+    );
   } catch (err) {
     return NextResponse.json(
       { error: (err as Error).message || "Unknown error" },
-      { status: 500 }
+      { status: 500, headers: { "Cache-Control": "no-store" } }
     );
   }
 }
@@ -145,7 +152,7 @@ async function fetchMetadataBatch(
     const tuple = r.result as readonly [string, bigint, string, string, bigint, string];
     const [name, gridSize, pixelData, creator, mintedAt] = tuple;
     const imageUrl = pixelData && gridSize
-      ? pixelDataToSVG(pixelData, Number(gridSize))
+      ? getPixelImageUrl(id)
       : "";
     const meta: TokenMetadata = {
       tokenId: id,

@@ -154,7 +154,9 @@ async function loadSwapCounts(): Promise<SwapCountsResponse> {
 }
 
 export async function GET() {
-  const headers = { 'Cache-Control': 'no-store' };
+  const headers = {
+    'Cache-Control': 'public, s-maxage=15, stale-while-revalidate=15',
+  };
 
   const now = Date.now();
   if (cachedResponse && cachedResponse.expiresAt > now) {
@@ -185,7 +187,7 @@ export async function GET() {
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Unable to count DEX swaps' },
-      { status: 502, headers },
+      { status: 502, headers: { 'Cache-Control': 'no-store' } },
     );
   }
 }

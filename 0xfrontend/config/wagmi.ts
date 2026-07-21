@@ -1,13 +1,11 @@
 import { defineChain } from "viem";
-import { LITVM_EXPLORER_URL } from "@/lib/explorer";
+import {
+  LITVM_EXPLORER_URL,
+  LITVM_RPC_URL,
+  MULTICALL3_ADDRESS,
+} from "@/lib/publicConfig";
 
-const DEFAULT_LITVM_RPC = "https://liteforge.rpc.caldera.xyz/infra-partner-http";
-const DEFAULT_LITVM_WS = "";
-
-export const LITVM_RPC_URL =
-  process.env.NEXT_PUBLIC_LITVM_RPC_URL || DEFAULT_LITVM_RPC;
-export const LITVM_WS_URL =
-  process.env.NEXT_PUBLIC_LITVM_WS_URL || DEFAULT_LITVM_WS;
+export { LITVM_RPC_URL } from "@/lib/publicConfig";
 
 export const litvm = defineChain({
   id: 4441,
@@ -16,7 +14,6 @@ export const litvm = defineChain({
   rpcUrls: {
     default: {
       http: [LITVM_RPC_URL],
-      ...(LITVM_WS_URL ? { webSocket: [LITVM_WS_URL] } : {}),
     },
   },
   blockExplorers: {
@@ -27,7 +24,7 @@ export const litvm = defineChain({
   },
   contracts: {
     multicall3: {
-      address: "0xca11bde05977b3631167028862be2a173976ca11",
+      address: MULTICALL3_ADDRESS,
       blockCreated: 1,
     },
   },

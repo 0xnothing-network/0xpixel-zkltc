@@ -1,3 +1,5 @@
+import { REWARD_MANAGER_ADDRESS as PUBLIC_REWARD_MANAGER_ADDRESS } from "@/lib/publicConfig";
+
 export const REWARD_MANAGER_ABI = [
   {
     inputs: [
@@ -110,6 +112,4 @@ export const REWARD_MANAGER_ABI = [
   },
 ] as const;
 
-export const REWARD_MANAGER_ADDRESS: `0x${string}` =
-  (process.env.NEXT_PUBLIC_REWARD_MANAGER_ADDRESS as `0x${string}`) ||
-  "0xCEBbeE6CeAe309E647Be85600dA455C7B15C0de9";
+export const REWARD_MANAGER_ADDRESS = PUBLIC_REWARD_MANAGER_ADDRESS;

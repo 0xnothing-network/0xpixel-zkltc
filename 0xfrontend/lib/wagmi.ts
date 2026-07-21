@@ -1,8 +1,8 @@
 import { createConfig, http } from "wagmi";
-import { coinbaseWallet, injected } from "wagmi/connectors";
+import { injected } from "wagmi/connectors";
 import { litvm, LITVM_RPC_URL } from "@/config/wagmi";
 
-const connectors = [injected(), coinbaseWallet({ appName: "0xDex" })];
+const connectors = [injected()];
 
 export const wagmiConfig = createConfig({
   ssr: true,
@@ -10,6 +10,7 @@ export const wagmiConfig = createConfig({
   connectors,
   transports: {
     [litvm.id]: http(LITVM_RPC_URL, {
+      batch: { batchSize: 100, wait: 10 },
       retryCount: 2,
       retryDelay: 300,
       timeout: 15_000,

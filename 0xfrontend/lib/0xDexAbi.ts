@@ -1,4 +1,6 @@
 // ============================================================
+
+import { DEX_ADDRESS as PUBLIC_DEX_ADDRESS } from "@/lib/publicConfig";
 // 0xDex ABI - test-mainnet deployment
 // Contract: 0x873cb0402F0e74Db66663255e6B3535ca134C818
 // Chain: LitVM LiteForge, chain id 4441
@@ -296,9 +298,7 @@ export const DEX_ABI = [
   { stateMutability: "payable", type: "receive" },
 ] as const;
 
-export const DEX_ADDRESS: `0x${string}` =
-  (process.env.NEXT_PUBLIC_DEX_ADDRESS as `0x${string}`) ||
-  "0x873cb0402F0e74Db66663255e6B3535ca134C818";
+export const DEX_ADDRESS = PUBLIC_DEX_ADDRESS;
 
 export const NATIVE_ADDRESS =
   "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE" as const;

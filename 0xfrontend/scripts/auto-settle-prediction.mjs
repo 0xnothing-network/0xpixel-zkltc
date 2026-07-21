@@ -162,7 +162,6 @@ Usage:
 
 Env:
   PREDICTION_SETTLER_PRIVATE_KEY=0x...
-  NEXT_PUBLIC_LITVM_RPC_URL=https://...
   AUTO_SETTLE_INTERVAL_MS=60000
   AUTO_SETTLE_LOOKBACK=720
   AUTO_SETTLE_SCAN_RECENT_ROUNDS=24
@@ -409,7 +408,7 @@ async function main() {
     .filter(Boolean);
 
   const config = {
-    rpcUrl: env("NEXT_PUBLIC_LITVM_RPC_URL", env("LITVM_RPC_URL", DEFAULTS.RPC_URL)),
+    rpcUrl: DEFAULTS.RPC_URL,
     predictionAddress: DEFAULTS.PREDICTION_ADDRESS,
     privateKey: normalizePrivateKey(env("PREDICTION_SETTLER_PRIVATE_KEY")),
     assets,

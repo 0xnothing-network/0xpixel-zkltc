@@ -58,6 +58,7 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
 
   const firedRef = useRef(false);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const preparedPixelDataRef = useRef<string[][] | null>(null);
   const toastIdsRef = useRef<{ submitted?: string; confirmed?: string }>({});
 
   useEffect(() => {
@@ -75,30 +76,27 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
     [pixelData]
   );
 
-  const previewBase64 = useMemo(() => {
-    if (!hasDrawing) return "";
-    return pixelDataToPNG(pixelData, gridSize);
-  }, [pixelData, gridSize, hasDrawing]);
-
-  const packedPixelBytes = useMemo(() => {
-    if (!hasDrawing) return "0x" as `0x${string}`;
-    return pixelDataToPackedBytes(pixelData, gridSize);
-  }, [pixelData, gridSize, hasDrawing]);
-
-  // Debounce so we don't spam checkOriginal on every pixel stroke.
+  const [previewBase64, setPreviewBase64] = useState("");
   const [debouncedPackedBytes, setDebouncedPackedBytes] = useState<`0x${string}`>("0x");
 
+  // PNG encoding and byte packing are deferred until the current stroke is idle.
   useEffect(() => {
+    preparedPixelDataRef.current = null;
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     if (!hasDrawing) {
-      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      setPreviewBase64("");
       setDebouncedPackedBytes("0x");
       return;
     }
-    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    setPreviewBase64("");
+    setDebouncedPackedBytes("0x");
+    const snapshot = pixelData;
     debounceTimerRef.current = setTimeout(() => {
-      setDebouncedPackedBytes(packedPixelBytes);
+      setPreviewBase64(pixelDataToPNG(snapshot, gridSize));
+      setDebouncedPackedBytes(pixelDataToPackedBytes(snapshot, gridSize));
+      preparedPixelDataRef.current = snapshot;
     }, DEBOUNCE_MS);
-  }, [packedPixelBytes, hasDrawing]);
+  }, [gridSize, hasDrawing, pixelData]);
 
   const isCheckingOriginal = debouncedPackedBytes === "0x" && hasDrawing;
 
@@ -209,11 +207,12 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
     if (toastIdsRef.current.submitted) toast.dismiss(toastIdsRef.current.submitted);
 
     try {
-      if (packedPixelBytes === "0x" || packedPixelBytes.length <= 2) {
-        toast.warning("Nothing to mint", "Draw at least one pixel first.");
+      if (preparedPixelDataRef.current !== pixelData || debouncedPackedBytes.length <= 2) {
+        toast.info("Preparing artwork", "Wait a moment for the artwork check to finish.");
         setIsLoading(false);
         return;
       }
+      const packedPixelBytes = debouncedPackedBytes;
 
       const data = encodeFunctionData({
         abi: MintAbi,
@@ -275,7 +274,8 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
     gridSize,
     wcClient,
     sendTransactionAsync,
-    packedPixelBytes,
+    pixelData,
+    debouncedPackedBytes,
     toast,
     chainId,
     switchChain,
@@ -286,6 +286,7 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
     !isConfirming &&
     !!name.trim() &&
     hasDrawing &&
+    debouncedPackedBytes !== "0x" &&
     isOriginal === true;
 
   const gridByteSize = useMemo(() => {
@@ -327,7 +328,7 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
               : "rgba(255,255,255,0.05)",
           }}
         >
-          {hasDrawing ? (
+          {hasDrawing && previewBase64 ? (
             /* eslint-disable-next-line @next/next/no-img-element */
             <img
               src={`data:image/png;base64,${previewBase64}`}
@@ -335,6 +336,10 @@ export function MintPanel({ pixelData, gridSize, onMintSuccess }: MintPanelProps
               className="w-full h-full object-contain"
               style={{ imageRendering: "pixelated" }}
             />
+          ) : hasDrawing ? (
+            <div className="grid h-full w-full place-items-center" aria-label="Preparing preview">
+              <span className="h-7 w-7 animate-spin rounded-full border-2 border-white/15 border-t-white/70" />
+            </div>
           ) : (
             <div className="w-full h-full flex flex-col items-center justify-center gap-2">
               <svg

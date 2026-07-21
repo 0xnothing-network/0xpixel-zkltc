@@ -1,7 +1,10 @@
 import { createPublicClient, http } from "viem";
 import { PixelNFTABI } from "./abi";
-import { pixelDataToSVG } from "./gridParser";
 import { litvm, LITVM_RPC_URL } from "@/config/wagmi";
+import {
+  PIXEL_MARKETPLACE_ADDRESS as PUBLIC_PIXEL_MARKETPLACE_ADDRESS,
+  PIXEL_NFT_ADDRESS,
+} from "@/lib/publicConfig";
 import {
   getTokenExplorerUrl,
   getTransactionExplorerUrl,
@@ -14,13 +17,9 @@ export {
   getTransactionExplorerUrl,
 } from "./explorer";
 
-export const PIXEL_NFT_CONTRACT_ADDRESS: `0x${string}` =
-  (process.env.NEXT_PUBLIC_PIXEL_NFT_ADDRESS as `0x${string}`) ||
-  "0x33A32b9b2BEe864f9e42BFa39cA7BDC72f655988";
+export const PIXEL_NFT_CONTRACT_ADDRESS = PIXEL_NFT_ADDRESS;
 
-export const PIXEL_MARKETPLACE_ADDRESS: `0x${string}` =
-  (process.env.NEXT_PUBLIC_PIXEL_MARKETPLACE_ADDRESS as `0x${string}`) ||
-  "0x13337cadA78d53C90E3c0EcE44C17c467C1a86F4";
+export const PIXEL_MARKETPLACE_ADDRESS = PUBLIC_PIXEL_MARKETPLACE_ADDRESS;
 
 export function getExplorerUrl(tokenId?: bigint | number | string): string {
   return getTokenExplorerUrl(PIXEL_NFT_CONTRACT_ADDRESS, tokenId);
@@ -75,22 +74,10 @@ async function withRetry<T>(
   throw lastErr;
 }
 
-interface TokenData {
-  name: string;
-  gridSize: bigint;
-  pixelData: string;
-  creator: string;
-  mintedAt: bigint;
-  artworkHash: string;
-}
-
 const CACHE_TTL_SUCCESS = 30_000;
-const CACHE_TTL_ERROR = 2_000;
-const TOKEN_DATA_CACHE_MAX = 4_096;
 const USER_NFT_CACHE_MAX = 1_024;
 
 type CacheEntry<T> = { data: T; timestamp: number; isError?: boolean };
-const tokenDataCache = new Map<string, CacheEntry<TokenData | null>>();
 const userNftCache = new Map<string, CacheEntry<bigint[]>>();
 
 function setBoundedCache<K, V>(
@@ -105,45 +92,6 @@ function setBoundedCache<K, V>(
     const oldestKey = cache.keys().next().value;
     if (oldestKey === undefined) break;
     cache.delete(oldestKey);
-  }
-}
-
-export async function fetchTokenDataCached(tokenId: bigint): Promise<TokenData | null> {
-  const key = tokenId.toString();
-  const cached = tokenDataCache.get(key);
-  if (cached) {
-    const ttl = cached.isError ? CACHE_TTL_ERROR : CACHE_TTL_SUCCESS;
-    if (Date.now() - cached.timestamp < ttl) return cached.data;
-  }
-
-  try {
-    const raw = await withRetry(() =>
-      publicClient.readContract({
-        address: PIXEL_NFT_CONTRACT_ADDRESS,
-        abi: PixelNFTABI,
-        functionName: "tokenData",
-        args: [tokenId],
-      })
-    );
-    const tuple = raw as unknown as [
-      string, bigint, string, string, bigint, string,
-    ];
-    const result: TokenData = {
-      name: tuple[0],
-      gridSize: tuple[1],
-      pixelData: tuple[2],
-      creator: tuple[3],
-      mintedAt: tuple[4],
-      artworkHash: tuple[5],
-    };
-    setBoundedCache(tokenDataCache, key, { data: result, timestamp: Date.now() }, TOKEN_DATA_CACHE_MAX);
-    return result;
-  } catch (err) {
-    console.error(`[Contract] tokenData(${tokenId}) error:`, err);
-    if (!cached) {
-      setBoundedCache(tokenDataCache, key, { data: null, timestamp: Date.now(), isError: true }, TOKEN_DATA_CACHE_MAX);
-    }
-    return cached?.data ?? null;
   }
 }
 
@@ -224,29 +172,6 @@ export async function getUserTokenIds(address: string): Promise<bigint[]> {
     setBoundedCache(userNftCache, addr, { data: [], timestamp: Date.now(), isError: true }, USER_NFT_CACHE_MAX);
     throw err;
   }
-}
-
-export async function getUserNFTs(address: string) {
-  if (!address || typeof address !== "string" || !address.match(/^0x[0-9a-fA-F]{40}$/)) {
-    return [];
-  }
-  const tokenIds = await getUserTokenIds(address);
-  if (tokenIds.length === 0) return [];
-
-  const results = await Promise.all(
-    tokenIds.map((id) => fetchTokenDataCached(id))
-  );
-
-  return tokenIds
-    .map((id, i) => ({
-      tokenId: id,
-      data: results[i],
-      imageUrl:
-        results[i]?.pixelData && results[i]?.gridSize
-          ? pixelDataToSVG(results[i]!.pixelData, Number(results[i]!.gridSize))
-          : "",
-    }))
-    .filter((nft) => nft.data !== null && nft.imageUrl !== "");
 }
 
 export async function getListingImage(tokenId: bigint): Promise<string> {

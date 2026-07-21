@@ -35,7 +35,7 @@ const pixelMetadataInflight = new Map<string, Promise<PixelMetadata | null>>();
 const pixelMetadataResolvers = new Map<string, Array<(value: PixelMetadata | null) => void>>();
 const pixelMetadataQueue = new Set<string>();
 let pixelMetadataQueueTimer: ReturnType<typeof setTimeout> | null = null;
-const SOCIAL_ROW_REFRESH_MS = 8_000;
+const SOCIAL_ROW_REFRESH_MS = 30_000;
 const PIXEL_METADATA_CACHE_MAX = 512;
 
 function requestPixelMetadata(id: string): Promise<PixelMetadata | null> {
@@ -594,7 +594,13 @@ export function GroupRoleBadge({
   );
 }
 
-export function CommentRow({ commentId }: { commentId: bigint }) {
+export function CommentRow({
+  commentId,
+  onReply,
+}: {
+  commentId: bigint;
+  onReply?: (author: `0x${string}`) => void;
+}) {
   const { data } = useReadContract({
     address: ZEROXN_ADDRESS,
     abi: ZEROXN_ABI,
@@ -610,7 +616,18 @@ export function CommentRow({ commentId }: { commentId: bigint }) {
     <div className="border-t border-white/8 py-3">
       <div className="mb-2 flex items-center justify-between gap-3">
         <ProfileBadge address={comment[1]} dense />
-        <span className="text-[10px] text-white/35">{formatDate(comment[4])}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-white/35">{formatDate(comment[4])}</span>
+          {onReply ? (
+            <button
+              type="button"
+              className="pixel-btn-soft pixel-btn-soft-secondary pixel-btn-soft-sm"
+              onClick={() => onReply(comment[1])}
+            >
+              Reply
+            </button>
+          ) : null}
+        </div>
       </div>
       <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-white/78">{comment[3]}</p>
       {comment[5] ? (
@@ -662,7 +679,9 @@ export function PostCard({
   const [comment, setComment] = useState("");
   const [shareCopied, setShareCopied] = useState(false);
   const [pixelToken, setPixelToken] = useState("");
+  const [visibleCommentLimit, setVisibleCommentLimit] = useState(20);
   const shareTimerRef = useRef<number | null>(null);
+  const commentInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => () => {
     if (shareTimerRef.current) clearTimeout(shareTimerRef.current);
@@ -676,8 +695,9 @@ export function PostCard({
     query: { enabled: Boolean(viewer), refetchInterval: viewer ? SOCIAL_ROW_REFRESH_MS : false },
   });
   const commentCount = post[6] ?? 0;
-  const commentOffset = detailed ? 0n : BigInt(Math.max(commentCount - 3, 0));
-  const commentLimit = detailed ? 80n : 3n;
+  const requestedCommentLimit = detailed ? visibleCommentLimit : 3;
+  const commentOffset = BigInt(Math.max(commentCount - requestedCommentLimit, 0));
+  const commentLimit = BigInt(requestedCommentLimit);
   const { data: commentIds, refetch: refetchComments } = useReadContract({
     address: ZEROXN_ADDRESS,
     abi: ZEROXN_ABI,
@@ -712,6 +732,13 @@ export function PostCard({
     setComment("");
     setPixelToken("");
     void refetchComments();
+  };
+
+  const handleReplyToComment = (author: `0x${string}`) => {
+    const mention = `@${shortAddress(author)}`;
+    setComment((current) => current.trim() ? `${current.trimEnd()}\n${mention} ` : `${mention} `);
+    commentInputRef.current?.focus();
+    commentInputRef.current?.scrollIntoView({ block: "center" });
   };
 
   const handleShareLink = async () => {
@@ -776,17 +803,17 @@ export function PostCard({
             title={liked ? "Liked" : "Like"}
             aria-label={liked ? "Liked" : "Like"}
           >
-            <span className="zeroxn-action-icon" aria-hidden="true">{liked ? "\u2665" : "\u2661"}</span>
+            <span>{liked ? "Liked" : "Like"}</span>
             <span>{formatCount(post[5])}</span>
           </button>
           {detailed ? (
-            <a href="#comment-box" className="pixel-btn-soft pixel-btn-soft-indigo text-center" title="Comment" aria-label="Comment">
-              <span className="zeroxn-action-icon" aria-hidden="true">{"\u25a3"}</span>
+            <a href={`#comment-box-${postId.toString()}`} className="pixel-btn-soft pixel-btn-soft-indigo text-center" title="Comments" aria-label="Comments">
+              <span>Comments</span>
               <span>{formatCount(post[6])}</span>
             </a>
           ) : (
-            <Link href={`/0x/p/${postId.toString()}`} className="pixel-btn-soft pixel-btn-soft-indigo text-center" title="Comment" aria-label="Comment">
-              <span className="zeroxn-action-icon" aria-hidden="true">{"\u25a3"}</span>
+            <Link href={`/0x/p/${postId.toString()}`} className="pixel-btn-soft pixel-btn-soft-indigo text-center" title="Open comments" aria-label="Open comments">
+              <span>Comments</span>
               <span>{formatCount(post[6])}</span>
             </Link>
           )}
@@ -798,7 +825,7 @@ export function PostCard({
             title="Share"
             aria-label="Share"
           >
-            <span className="zeroxn-action-icon" aria-hidden="true">{shareCopied ? "\u2713" : "\u2197"}</span>
+            <span>{shareCopied ? "Copied" : "Share"}</span>
           </button>
         </div>
 
@@ -811,15 +838,27 @@ export function PostCard({
         {detailed ? (
           <div className="border-t border-white/10 pt-3">
             <div className="space-y-1">
+              {commentCount > visibleCommentLimit ? (
+                <button
+                  type="button"
+                  className="pixel-btn-soft pixel-btn-soft-secondary pixel-btn-soft-sm mb-2"
+                  onClick={() => setVisibleCommentLimit((limit) => limit + 20)}
+                >
+                  Load earlier comments
+                </button>
+              ) : null}
               {previewComments.length > 0 ? (
-                previewComments.map((id) => <CommentRow key={id.toString()} commentId={id} />)
+                previewComments.map((id) => (
+                  <CommentRow key={id.toString()} commentId={id} onReply={handleReplyToComment} />
+                ))
               ) : (
                 <p className="py-2 text-xs text-white/35">No comments yet.</p>
               )}
             </div>
 
-            <div id="comment-box" className="mt-3 grid gap-2 scroll-mt-24">
+            <div id={`comment-box-${postId.toString()}`} className="mt-3 grid gap-2 scroll-mt-24">
               <textarea
+                ref={commentInputRef}
                 value={comment}
                 onChange={(event) => setComment(event.target.value)}
                 maxLength={360}

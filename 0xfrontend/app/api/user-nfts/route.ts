@@ -5,7 +5,7 @@ import {
   getUserTokenIds,
   publicClient,
 } from "@/lib/contract";
-import { pixelDataToSVG } from "@/lib/gridParser";
+import { getPixelImageUrl } from "@/lib/pixelImage";
 import { MarketplaceAbi } from "@/lib/marketplaceAbi";
 import { PixelNFTABI } from "@/lib/abi";
 import {
@@ -122,7 +122,7 @@ async function fetchNativeNfts(address: string, force = false): Promise<NativeNf
       tokenId: tokenId.toString(),
       name: data?.[0] ?? "Untitled",
       imageUrl: data?.[2] && data?.[1]
-        ? pixelDataToSVG(data[2], Number(data[1]))
+        ? getPixelImageUrl(tokenId)
         : "",
       listing,
     };
@@ -136,16 +136,24 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const address = searchParams.get("address");
   const force = searchParams.get("force") === "1";
+  const responseHeaders = {
+    "Cache-Control": force
+      ? "no-store"
+      : "public, s-maxage=30, stale-while-revalidate=30",
+  };
   if (!address || !/^0x[0-9a-fA-F]{40}$/.test(address)) {
     return NextResponse.json({ error: "Invalid address" }, { status: 400 });
   }
   try {
     const tokens = await fetchNativeNfts(address.toLowerCase(), force);
-    return NextResponse.json({ tokens, count: tokens.length });
+    return NextResponse.json(
+      { tokens, count: tokens.length },
+      { headers: responseHeaders },
+    );
   } catch (err) {
     return NextResponse.json(
       { error: (err as Error).message || "Unknown error" },
-      { status: 500 }
+      { status: 500, headers: { "Cache-Control": "no-store" } }
     );
   }
 }

@@ -1,3 +1,5 @@
+import { NUSD_ADDRESS as PUBLIC_NUSD_ADDRESS } from "@/lib/publicConfig";
+
 export const NUSD_ABI = [
   {
     inputs: [],
@@ -217,6 +219,4 @@ export const NUSD_ABI = [
   },
 ] as const;
 
-export const NUSD_ADDRESS =
-  (process.env.NEXT_PUBLIC_NUSD_ADDRESS as `0x${string}`) ||
-  "0xF2d0fd65d9f62D57255AF6350f807E6c11A4CFdb";
+export const NUSD_ADDRESS = PUBLIC_NUSD_ADDRESS;

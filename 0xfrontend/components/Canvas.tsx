@@ -68,7 +68,6 @@ export function Canvas({
   const currentToolRef = useRef<Tool>("pencil");
   const selectedColorRef = useRef(selectedColor);
   const pixelDataRef = useRef(pixelData);
-  const strokeSnapshotRef = useRef<string[][] | null>(null);
 
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -419,9 +418,8 @@ export function Canvas({
       return;
     }
 
-    strokeSnapshotRef.current = pixelDataRef.current.map(row => [...row]);
     /* eslint-disable react-hooks/exhaustive-deps */
-    onStrokeStart?.(strokeSnapshotRef.current);
+    onStrokeStart?.(pixelDataRef.current);
     paintPixels(coords.x, coords.y, tool, selectedColorRef.current);
   }, [getGridCoords, gridSize, floodFill, paintPixels, onStrokeStart, onColorPick]);
 
@@ -471,7 +469,6 @@ export function Canvas({
     isDrawingRef.current = false;
     isPanningRef.current = false;
     activePointerRef.current = null;
-    strokeSnapshotRef.current = null;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
   }, []);
 
@@ -479,7 +476,6 @@ export function Canvas({
     isDrawingRef.current = false;
     isPanningRef.current = false;
     activePointerRef.current = null;
-    strokeSnapshotRef.current = null;
     const previewCanvas = previewCanvasRef.current;
     if (previewCanvas) {
       const pctx = previewCanvas.getContext("2d");

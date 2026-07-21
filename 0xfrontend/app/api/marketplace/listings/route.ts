@@ -1,40 +1,38 @@
 import { NextResponse } from "next/server";
+import type { Address } from "viem";
 import {
   publicClient,
   PIXEL_NFT_CONTRACT_ADDRESS,
   PIXEL_MARKETPLACE_ADDRESS,
 } from "@/lib/contract";
-import { MarketplaceAbi } from "@/lib/marketplaceAbi";
+import { MarketplaceAbi, marketplaceNftKey } from "@/lib/marketplaceAbi";
 import { PixelNFTABI } from "@/lib/abi";
-import { pixelDataToSVG } from "@/lib/gridParser";
+import { getPixelImageUrl } from "@/lib/pixelImage";
 import {
-  fetchMarketplaceListingsFromSubgraph,
+  fetchAllMarketplaceListingsFromSubgraph,
   fetchTokenMetadataFromSubgraph,
   hasMarketplaceSubgraph,
 } from "@/lib/marketplaceSubgraph";
+import { fetchValidatedErc721Metadata } from "@/lib/erc721Metadata.server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// Cache CDN for 15s. Stale-while-revalidate = 60s for snappy repeat loads.
 export const revalidate = 15;
 
 interface ListingDTO {
   listingId: string;
+  collection: Address;
   tokenId: string;
   price: string;
-  seller: `0x${string}`;
+  seller: Address;
   active: boolean;
-}
-
-interface InternalListingDTO extends ListingDTO {
-  collection: `0x${string}`;
 }
 
 interface TokenDTO {
   tokenId: string;
   name: string;
   imageUrl: string;
-  creator: `0x${string}`;
+  creator: Address;
   mintedAt: number;
 }
 
@@ -50,113 +48,86 @@ interface CacheEntry<T> {
 
 const TOKEN_TTL = 60_000;
 const LISTING_TTL = 15_000;
-// Keep marketplace reads grouped while leaving headroom below provider limits.
 const MARKETPLACE_MULTICALL_BATCH_SIZE = 16_384;
+const payloadCache = new Map<string, CacheEntry<ListingsPayload>>();
+const pixelTokenCache = new Map<string, CacheEntry<TokenDTO | null>>();
 
-const tokenCache = new Map<string, CacheEntry<TokenDTO | null>>();
-const listingCache = new Map<string, CacheEntry<ListingDTO[]>>();
-const subgraphPayloadCache = new Map<string, CacheEntry<ListingsPayload>>();
-
-/**
- * Returns a single payload with active listings + per-token metadata so the
- * client renders the whole page from one round-trip instead of 4+ separate
- * RPC calls. Backed by an in-memory cache and Next.js route caching.
- */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const force = searchParams.get("force") === "1";
-  const cacheKey = "listings:all";
+  const responseHeaders = {
+    "Cache-Control": force
+      ? "no-store"
+      : "public, s-maxage=15, stale-while-revalidate=15",
+  };
+  const cacheKey = "listings:all-metadata-valid";
+  const cached = payloadCache.get(cacheKey);
 
+  if (!force && cached && Date.now() - cached.ts < LISTING_TTL) {
+    return NextResponse.json(cached.value, { headers: responseHeaders });
+  }
+
+  try {
+    const candidates = await withTimeout(
+      loadListingCandidates(),
+      15_000,
+      "Marketplace listing read timed out",
+    );
+    const purchasable = await withTimeout(
+      filterPurchasableListings(candidates),
+      15_000,
+      "Marketplace listing validation timed out",
+    );
+    const tokens = await withTimeout(
+      fetchTokensForListings(purchasable),
+      30_000,
+      "Marketplace metadata read timed out",
+    );
+
+    const listings = purchasable.filter((listing) => {
+      if (isPixelCollection(listing.collection)) return true;
+      return Boolean(tokens[marketplaceNftKey(listing.collection, listing.tokenId)]?.imageUrl);
+    });
+    const visibleKeys = new Set(
+      listings.map((listing) => marketplaceNftKey(listing.collection, listing.tokenId)),
+    );
+    const visibleTokens = Object.fromEntries(
+      Object.entries(tokens).filter(([key]) => visibleKeys.has(key)),
+    );
+    const payload = { listings, tokens: visibleTokens };
+    payloadCache.set(cacheKey, { value: payload, ts: Date.now() });
+    return NextResponse.json(payload, { headers: responseHeaders });
+  } catch (error) {
+    console.error("[marketplace] listing load failed:", error);
+    if (cached) return NextResponse.json(cached.value, { headers: responseHeaders });
+    return NextResponse.json(
+      { error: "Marketplace data unavailable" },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+}
+
+async function loadListingCandidates(): Promise<ListingDTO[]> {
   if (hasMarketplaceSubgraph()) {
-    const cachedPayload = subgraphPayloadCache.get(cacheKey);
-    if (!force && cachedPayload && Date.now() - cachedPayload.ts < LISTING_TTL) {
-      return NextResponse.json(cachedPayload.value);
-    }
-
     try {
-      const payload = await fetchMarketplaceListingsFromSubgraph();
-      subgraphPayloadCache.set(cacheKey, { value: payload, ts: Date.now() });
-      return NextResponse.json(payload);
+      const listings = await fetchAllMarketplaceListingsFromSubgraph();
+      return listings.map((listing) => ({
+        listingId: listing.listingId,
+        collection: listing.collection,
+        tokenId: listing.tokenId,
+        price: listing.price,
+        seller: listing.seller,
+        active: listing.active,
+      }));
     } catch (error) {
       console.warn("[marketplace] subgraph listing fetch failed; using RPC:", error);
     }
   }
-
-  const cached = listingCache.get(cacheKey);
-  let listings: ListingDTO[];
-
-  if (!force && cached && Date.now() - cached.ts < LISTING_TTL) {
-    listings = cached.value;
-  } else {
-    try {
-      listings = await withTimeout(
-        fetchActiveListings(),
-        12_000,
-        "Marketplace RPC listing read timed out"
-      );
-      listingCache.set(cacheKey, { value: listings, ts: Date.now() });
-    } catch (err) {
-      console.error("[marketplace] RPC listing fetch failed:", err);
-      // Return stale if available, otherwise propagate.
-      if (cached) listings = cached.value;
-      else {
-        return NextResponse.json(
-          { error: "Marketplace data unavailable" },
-          { status: 503 }
-        );
-      }
-    }
-  }
-
-  if (listings.length === 0) {
-    return NextResponse.json({ listings: [], tokens: {} });
-  }
-
-  const tokenIds = listings.map((listing) => listing.tokenId);
-  let tokens: Record<string, TokenDTO | null>;
-  try {
-    tokens = await withTimeout(
-      fetchTokensForListings(tokenIds),
-      12_000,
-      "Marketplace RPC metadata read timed out"
-    );
-  } catch (error) {
-    console.warn("[marketplace] RPC metadata fallback to subgraph:", error);
-    if (hasMarketplaceSubgraph()) {
-      try {
-        tokens = await fetchTokenMetadataFromSubgraph(tokenIds);
-      } catch (subgraphError) {
-        console.error("[marketplace] metadata subgraph fallback failed:", subgraphError);
-        tokens = Object.fromEntries(tokenIds.map((tokenId) => [tokenId, null]));
-      }
-    } else {
-      tokens = Object.fromEntries(tokenIds.map((tokenId) => [tokenId, null]));
-    }
-  }
-
-  return NextResponse.json({ listings, tokens });
+  return fetchActiveListingsOnchain();
 }
 
-async function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  message: string
-): Promise<T> {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-  }
-}
-
-async function fetchActiveListings(): Promise<ListingDTO[]> {
-  // Step 1: page through active listing IDs using the contract's listing-id
-  // cursor. The offset is not an array index; it must advance to the last ID.
-  const idsRaw: bigint[] = [];
+async function fetchActiveListingsOnchain(): Promise<ListingDTO[]> {
+  const ids: bigint[] = [];
   const seenIds = new Set<string>();
   const pageSize = 100n;
   let offset = 0n;
@@ -168,13 +139,13 @@ async function fetchActiveListings(): Promise<ListingDTO[]> {
       functionName: "getActiveListings",
       args: [offset, pageSize],
     })) as bigint[];
+    if (page.length === 0) break;
 
-    if (!page || page.length === 0) break;
     for (const id of page) {
       const key = id.toString();
       if (!seenIds.has(key)) {
         seenIds.add(key);
-        idsRaw.push(id);
+        ids.push(id);
       }
     }
     if (page.length < Number(pageSize)) break;
@@ -183,13 +154,11 @@ async function fetchActiveListings(): Promise<ListingDTO[]> {
     offset = nextOffset;
   }
 
-  if (!idsRaw || idsRaw.length === 0) return [];
-
-  // Step 2: batch fetch listing details via multicall.
-  const listingResults = await publicClient.multicall({
+  if (ids.length === 0) return [];
+  const results = await publicClient.multicall({
     allowFailure: true,
     batchSize: MARKETPLACE_MULTICALL_BATCH_SIZE,
-    contracts: idsRaw.map((id) => ({
+    contracts: ids.map((id) => ({
       address: PIXEL_MARKETPLACE_ADDRESS,
       abi: MarketplaceAbi,
       functionName: "listings" as const,
@@ -197,37 +166,26 @@ async function fetchActiveListings(): Promise<ListingDTO[]> {
     })),
   });
 
-  const out: InternalListingDTO[] = [];
-  for (let i = 0; i < idsRaw.length; i++) {
-    const r = listingResults[i];
-    if (!r || r.status !== "success") continue;
-    const v = r.result as readonly [
-      `0x${string}`,
-      bigint,
-      bigint,
-      `0x${string}`,
-      boolean,
-    ];
-    if (!v[4]) continue; // inactive
-    if (v[0].toLowerCase() !== PIXEL_NFT_CONTRACT_ADDRESS.toLowerCase()) continue;
-    out.push({
-      collection: v[0],
-      listingId: idsRaw[i].toString(),
-      tokenId: v[1].toString(),
-      price: v[2].toString(),
-      seller: v[3],
-      active: v[4],
+  const listings: ListingDTO[] = [];
+  for (let index = 0; index < ids.length; index++) {
+    const result = results[index];
+    if (!result || result.status !== "success") continue;
+    const tuple = result.result as readonly [Address, bigint, bigint, Address, boolean];
+    if (!tuple[4]) continue;
+    listings.push({
+      listingId: ids[index].toString(),
+      collection: tuple[0],
+      tokenId: tuple[1].toString(),
+      price: tuple[2].toString(),
+      seller: tuple[3],
+      active: true,
     });
   }
-
-  return filterPurchasableListings(out);
+  return listings;
 }
 
-async function filterPurchasableListings(
-  listings: InternalListingDTO[]
-): Promise<ListingDTO[]> {
+async function filterPurchasableListings(listings: ListingDTO[]): Promise<ListingDTO[]> {
   if (listings.length === 0) return [];
-
   const results = await publicClient.multicall({
     allowFailure: true,
     batchSize: MARKETPLACE_MULTICALL_BATCH_SIZE,
@@ -256,111 +214,129 @@ async function filterPurchasableListings(
     }),
   });
 
-  const out: ListingDTO[] = [];
-  for (let i = 0; i < listings.length; i++) {
-    const listing = listings[i];
-    const owner = results[i * 3];
-    const approved = results[i * 3 + 1];
-    const approvedForAll = results[i * 3 + 2];
-
+  return listings.filter((listing, index) => {
+    const owner = results[index * 3];
+    const approved = results[index * 3 + 1];
+    const approvedForAll = results[index * 3 + 2];
     const ownerMatches =
       owner?.status === "success" &&
       String(owner.result).toLowerCase() === listing.seller.toLowerCase();
-
     const tokenApproved =
       approved?.status === "success" &&
       String(approved.result).toLowerCase() === PIXEL_MARKETPLACE_ADDRESS.toLowerCase();
-
     const collectionApproved =
       approvedForAll?.status === "success" && approvedForAll.result === true;
-
-    if (!ownerMatches || (!tokenApproved && !collectionApproved)) continue;
-
-    out.push({
-      listingId: listing.listingId,
-      tokenId: listing.tokenId,
-      price: listing.price,
-      seller: listing.seller,
-      active: listing.active,
-    });
-  }
-
-  return out;
+    return ownerMatches && (tokenApproved || collectionApproved);
+  });
 }
 
 async function fetchTokensForListings(
-  tokenIds: string[]
+  listings: ListingDTO[],
 ): Promise<Record<string, TokenDTO | null>> {
-  const unique = Array.from(new Set(tokenIds));
-  const out: Record<string, TokenDTO | null> = {};
+  const output: Record<string, TokenDTO | null> = {};
+  const pixelListings = listings.filter((listing) => isPixelCollection(listing.collection));
+  const pixelIds = Array.from(new Set(pixelListings.map((listing) => listing.tokenId)));
 
-  const missing: string[] = [];
-  for (const id of unique) {
-    const c = tokenCache.get(id);
-    if (c && Date.now() - c.ts < TOKEN_TTL) {
-      out[id] = c.value;
-    } else {
-      missing.push(id);
+  let subgraphTokens: Awaited<ReturnType<typeof fetchTokenMetadataFromSubgraph>> = {};
+  if (pixelIds.length > 0 && hasMarketplaceSubgraph()) {
+    try {
+      subgraphTokens = await fetchTokenMetadataFromSubgraph(pixelIds);
+    } catch (error) {
+      console.warn("[marketplace] pixel metadata subgraph failed; using RPC:", error);
     }
   }
 
-  if (missing.length === 0) return out;
+  const missingPixelIds = pixelIds.filter((tokenId) => !subgraphTokens[tokenId]?.imageUrl);
+  const onchainPixelTokens = await fetchPixelTokensOnchain(missingPixelIds);
+  for (const listing of pixelListings) {
+    const metadata = subgraphTokens[listing.tokenId] ?? onchainPixelTokens[listing.tokenId] ?? null;
+    output[marketplaceNftKey(listing.collection, listing.tokenId)] = metadata;
+  }
 
-  // Single multicall for all missing tokens.
+  const genericListings = listings.filter((listing) => !isPixelCollection(listing.collection));
+  const genericMetadata = await fetchValidatedErc721Metadata(
+    genericListings.map((listing) => ({
+      collection: listing.collection,
+      tokenId: listing.tokenId,
+    })),
+  );
+  Object.assign(output, genericMetadata);
+  return output;
+}
+
+async function fetchPixelTokensOnchain(
+  tokenIds: string[],
+): Promise<Record<string, TokenDTO | null>> {
+  const output: Record<string, TokenDTO | null> = {};
+  const missing: string[] = [];
+  for (const tokenId of tokenIds) {
+    const cached = pixelTokenCache.get(tokenId);
+    if (cached && Date.now() - cached.ts < TOKEN_TTL) {
+      output[tokenId] = cached.value;
+    } else {
+      missing.push(tokenId);
+    }
+  }
+  if (missing.length === 0) return output;
+
   const results = await publicClient.multicall({
     allowFailure: true,
     batchSize: MARKETPLACE_MULTICALL_BATCH_SIZE,
-    contracts: missing.map((id) => ({
+    contracts: missing.map((tokenId) => ({
       address: PIXEL_NFT_CONTRACT_ADDRESS,
       abi: PixelNFTABI,
       functionName: "tokenData" as const,
-      args: [BigInt(id)] as const,
+      args: [BigInt(tokenId)] as const,
     })),
   });
 
-  for (let i = 0; i < missing.length; i++) {
-    const id = missing[i];
-    const r = results[i];
-    if (!r || r.status !== "success") {
-      tokenCache.set(id, { value: null, ts: Date.now() });
-      out[id] = null;
-      continue;
-    }
-    const tuple = r.result as readonly [
-      string,
-      bigint,
-      string,
-      string,
-      bigint,
-      string,
-    ];
-    const [name, gridSize, pixelData, creator, mintedAt] = tuple;
-    const imageUrl =
-      pixelData && gridSize
-        ? pixelDataToSVG(pixelData, Number(gridSize))
+  for (let index = 0; index < missing.length; index++) {
+    const tokenId = missing[index];
+    const result = results[index];
+    let metadata: TokenDTO | null = null;
+    if (result?.status === "success") {
+      const tuple = result.result as readonly [string, bigint, string, Address, bigint, string];
+      const imageUrl = tuple[2] && tuple[1]
+        ? getPixelImageUrl(tokenId)
         : "";
-    const meta: TokenDTO = {
-      tokenId: id,
-      name: name || `Token #${id}`,
-      imageUrl,
-      creator: creator as `0x${string}`,
-      mintedAt: Number(mintedAt),
-    };
-    tokenCache.set(id, { value: meta, ts: Date.now() });
-    out[id] = meta;
+      metadata = imageUrl
+        ? {
+            tokenId,
+            name: tuple[0] || `Token #${tokenId}`,
+            imageUrl,
+            creator: tuple[3],
+            mintedAt: Number(tuple[4]),
+          }
+        : null;
+    }
+    pixelTokenCache.set(tokenId, { value: metadata, ts: Date.now() });
+    output[tokenId] = metadata;
   }
 
-  if (tokenCache.size > 4096) {
-    const now = Date.now();
-    for (const [k, v] of tokenCache) {
-      if (now - v.ts > TOKEN_TTL) tokenCache.delete(k);
-    }
-    while (tokenCache.size > 4096) {
-      const oldestKey = tokenCache.keys().next().value;
-      if (oldestKey === undefined) break;
-      tokenCache.delete(oldestKey);
-    }
+  while (pixelTokenCache.size > 4_096) {
+    const oldestKey = pixelTokenCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    pixelTokenCache.delete(oldestKey);
   }
+  return output;
+}
 
-  return out;
+function isPixelCollection(collection: string): boolean {
+  return collection.toLowerCase() === PIXEL_NFT_CONTRACT_ADDRESS.toLowerCase();
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }

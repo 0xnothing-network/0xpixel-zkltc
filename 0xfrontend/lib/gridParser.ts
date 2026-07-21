@@ -130,76 +130,84 @@ export function pixelDataToJSON(pixelData: string[][], gridSize: number): string
   return pixelDataToOnchainText(pixelData, gridSize).replaceAll(" ", "\n");
 }
 
-/** Parse a compact JSON string back into pixelData 2D array. */
-export function jsonToPixelData(json: string, gridSize = 16): { gridSize: number; pixelData: string[][] } | null {
-  try {
-    const pixelData: string[][] = Array.from({ length: gridSize }, () =>
-      Array(gridSize).fill("transparent")
-    );
-    const pattern = /\[(\d+),(\d+)\]\s*=\s*(#[0-9A-Fa-f]{6})/g;
-    let match;
-    while ((match = pattern.exec(json)) !== null) {
-      const x = parseInt(match[1]);
-      const y = parseInt(match[2]);
-      const color = match[3].toUpperCase();
-      if (y >= 0 && y < gridSize && x >= 0 && x < gridSize) {
-        pixelData[y][x] = color;
-      }
-    }
-    return { gridSize, pixelData };
-  } catch {
-    return null;
-  }
-}
-
-/** Download a string as a file. */
-export function downloadAsFile(content: string, filename: string, mimeType: string) {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 /** Convert on-chain pixelData back to SVG string. Accepts text, packed-hex (RLE), and legacy PNG base64. */
 export function pixelDataToSVG(pixelData: string, gridSize: number): string {
-  if (!pixelData) return "";
-
-  // Packed binary hex (RLE: 12 chars/run = xyRGB counts; legacy per-pixel: 10 chars)
-  if (/^(0x)?[0-9a-fA-F]+$/.test(pixelData)) {
-    const clean = pixelData.startsWith("0x") ? pixelData.slice(2) : pixelData;
-    if (clean.length === 0) return "";
-    if (clean.length % 12 === 0) {
-      const text = packedBytesToOnchainText(pixelData);
-      if (text) return renderTextToSVG(text, gridSize);
-    }
-    return "";
-  }
-
-  // Legacy text format: [x,y]=#RRGGBB
-  return renderTextToSVG(pixelData, gridSize);
-}
-
-function renderTextToSVG(text: string, gridSize: number): string {
-  const rects: string[] = [];
-  const re = /\[(\d+),(\d+)\]\s*=\s*(#[0-9A-Fa-f]{6})/g;
-  let match;
-  while ((match = re.exec(text)) !== null) {
-    const x = parseInt(match[1]);
-    const y = parseInt(match[2]);
-    const color = match[3];
-    rects.push(`<rect x="${x}" y="${y}" width="1" height="1" fill="${color}"/>`);
-  }
-  if (rects.length === 0) return "";
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${gridSize}" height="${gridSize}" viewBox="0 0 ${gridSize} ${gridSize}" shape-rendering="crispEdges">${rects.join("")}</svg>`;
-  // Use Buffer in Node (server/Edge), fall back to btoa in the browser.
+  const svg = pixelDataToSVGMarkup(pixelData, gridSize);
+  if (!svg) return "";
   const encoded =
     typeof Buffer !== "undefined"
       ? Buffer.from(svg, "utf-8").toString("base64")
       : btoa(svg);
   return `data:image/svg+xml;base64,${encoded}`;
+}
+
+type SvgRun = { x: number; y: number; width: number; color: string };
+
+/** Render immutable on-chain pixel data as compact SVG markup. */
+export function pixelDataToSVGMarkup(pixelData: string, gridSize: number): string {
+  if (!pixelData || !Number.isInteger(gridSize) || gridSize <= 0 || gridSize > 256) return "";
+
+  const runs = /^(0x)?[0-9a-fA-F]+$/.test(pixelData)
+    ? packedDataToRuns(pixelData, gridSize)
+    : textDataToRuns(pixelData, gridSize);
+  if (runs.length === 0) return "";
+
+  const pathsByColor = new Map<string, string[]>();
+  for (const run of runs) {
+    const segments = pathsByColor.get(run.color) ?? [];
+    segments.push(`M${run.x} ${run.y}h${run.width}v1h-${run.width}z`);
+    pathsByColor.set(run.color, segments);
+  }
+  const paths = [...pathsByColor.entries()]
+    .map(([color, segments]) => `<path fill="${color}" d="${segments.join("")}"/>`)
+    .join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${gridSize}" height="${gridSize}" viewBox="0 0 ${gridSize} ${gridSize}" shape-rendering="crispEdges">${paths}</svg>`;
+}
+
+function packedDataToRuns(pixelData: string, gridSize: number): SvgRun[] {
+  const clean = pixelData.startsWith("0x") ? pixelData.slice(2) : pixelData;
+  if (clean.length === 0 || clean.length % 12 !== 0) return [];
+  const runs: SvgRun[] = [];
+  for (let index = 0; index < clean.length; index += 12) {
+    const x = parseInt(clean.slice(index, index + 2), 16);
+    const y = parseInt(clean.slice(index + 2, index + 4), 16);
+    const count = parseInt(clean.slice(index + 4, index + 6), 16);
+    const color = `#${clean.slice(index + 6, index + 12).toUpperCase()}`;
+    if (x >= gridSize || y >= gridSize || count <= 0) continue;
+    runs.push({ x, y, width: Math.min(count, gridSize - x), color });
+  }
+  return runs;
+}
+
+function textDataToRuns(text: string, gridSize: number): SvgRun[] {
+  const rows = Array.from({ length: gridSize }, () => new Map<number, string>());
+  const re = /\[(\d+),(\d+)\]\s*=\s*(#[0-9A-Fa-f]{6})/g;
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    const x = parseInt(match[1]);
+    const y = parseInt(match[2]);
+    if (x >= gridSize || y >= gridSize) continue;
+    rows[y].set(x, match[3].toUpperCase());
+  }
+
+  const runs: SvgRun[] = [];
+  for (let y = 0; y < rows.length; y++) {
+    const pixels = [...rows[y].entries()].sort((left, right) => left[0] - right[0]);
+    for (let index = 0; index < pixels.length;) {
+      const [x, color] = pixels[index];
+      let width = 1;
+      while (
+        index + width < pixels.length &&
+        pixels[index + width][0] === x + width &&
+        pixels[index + width][1] === color
+      ) {
+        width += 1;
+      }
+      runs.push({ x, y, width, color });
+      index += width;
+    }
+  }
+  return runs;
 }
 
 /** Download pixelData as a PNG file. */

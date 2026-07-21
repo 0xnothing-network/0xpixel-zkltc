@@ -3,14 +3,22 @@ import Image from "next/image";
 import Link from "next/link";
 import { PREDICTION_ADDRESS } from "@/lib/0xPredictionAbi";
 import { ZEROXN_ADDRESS } from "@/lib/0xNAbi";
+import {
+  DEX_ADDRESS,
+  FACTORY_ADDRESS,
+  NUSD_ADDRESS,
+  PIXEL_MARKETPLACE_ADDRESS,
+  PIXEL_NFT_ADDRESS,
+  REWARD_MANAGER_ADDRESS,
+} from "@/lib/publicConfig";
 
 const CONTRACTS = {
-  pixel: process.env.NEXT_PUBLIC_PIXEL_NFT_ADDRESS || "0x33A32b9b2BEe864f9e42BFa39cA7BDC72f655988",
-  marketplace: process.env.NEXT_PUBLIC_PIXEL_MARKETPLACE_ADDRESS || "0x13337cadA78d53C90E3c0EcE44C17c467C1a86F4",
-  dex: process.env.NEXT_PUBLIC_DEX_ADDRESS || "0x873cb0402F0e74Db66663255e6B3535ca134C818",
-  reward: process.env.NEXT_PUBLIC_REWARD_MANAGER_ADDRESS || "0xCEBbeE6CeAe309E647Be85600dA455C7B15C0de9",
-  nusd: process.env.NEXT_PUBLIC_NUSD_ADDRESS || "0xF2d0fd65d9f62D57255AF6350f807E6c11A4CFdb",
-  factory: process.env.NEXT_PUBLIC_FACTORY_ADDRESS || "0x93F9d4cF10cB785B47BFaD64ecccEA4D66C73508",
+  pixel: PIXEL_NFT_ADDRESS,
+  marketplace: PIXEL_MARKETPLACE_ADDRESS,
+  dex: DEX_ADDRESS,
+  reward: REWARD_MANAGER_ADDRESS,
+  nusd: NUSD_ADDRESS,
+  factory: FACTORY_ADDRESS,
   prediction: PREDICTION_ADDRESS,
   zeroxn: ZEROXN_ADDRESS,
 };

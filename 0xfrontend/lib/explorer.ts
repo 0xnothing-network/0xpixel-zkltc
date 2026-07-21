@@ -1,8 +1,5 @@
-const DEFAULT_LITVM_EXPLORER_URL = "https://liteforge.explorer.caldera.xyz";
-
-export const LITVM_EXPLORER_URL = (
-  process.env.NEXT_PUBLIC_LITVM_EXPLORER_URL || DEFAULT_LITVM_EXPLORER_URL
-).replace(/\/+$/, "");
+export { LITVM_EXPLORER_URL } from "@/lib/publicConfig";
+import { LITVM_EXPLORER_URL } from "@/lib/publicConfig";
 
 export function getAddressExplorerUrl(address: string): string {
   return `${LITVM_EXPLORER_URL}/address/${encodeURIComponent(address)}`;

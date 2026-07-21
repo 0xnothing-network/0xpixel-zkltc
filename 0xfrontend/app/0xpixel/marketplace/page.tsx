@@ -3,8 +3,14 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useAccount, usePublicClient, useSwitchChain, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { formatEther } from "viem";
-import { PIXEL_MARKETPLACE_ADDRESS, shortenAddress, getMarketplaceTxUrl, getExplorerUrl } from "@/lib/contract";
-import { MarketplaceAbi, type RawListing } from "@/lib/marketplaceAbi";
+import {
+  PIXEL_MARKETPLACE_ADDRESS,
+  PIXEL_NFT_CONTRACT_ADDRESS,
+  shortenAddress,
+  getMarketplaceTxUrl,
+  getTokenExplorerUrl,
+} from "@/lib/contract";
+import { MarketplaceAbi, marketplaceNftKey, type RawListing } from "@/lib/marketplaceAbi";
 import { GridSkeleton } from "@/components/Skeleton";
 import { useToast } from "@/components/Toast";
 import { LITVM_CHAIN_ID } from "@/lib/chainSwitch";
@@ -24,6 +30,7 @@ interface TokenMetadata {
 interface ListingsResponse {
   listings: Array<{
     listingId: string;
+    collection: `0x${string}`;
     tokenId: string;
     price: string;
     seller: `0x${string}`;
@@ -66,7 +73,7 @@ export default function MarketplacePage() {
   const { address } = useAccount();
 
   return (
-    <div className="min-h-[calc(100vh-64px)] px-3 py-6 sm:px-4 sm:py-8 max-w-7xl mx-auto" style={{ fontFamily: "var(--font-departure)" }}>
+    <div className="min-h-[calc(100vh-64px)] max-w-7xl mx-auto px-3 py-5 sm:px-4 sm:py-6" style={{ fontFamily: "var(--font-departure)" }}>
       <MarketplaceHeader />
       <MarketplaceBody userAddress={address} />
     </div>
@@ -75,19 +82,14 @@ export default function MarketplacePage() {
 
 function MarketplaceHeader() {
   return (
-    <div className="flex items-center justify-between mb-6 sm:mb-8">
-      <div>
-        <h1
-          className="text-2xl sm:text-3xl font-bold text-white"
-          style={{ fontFamily: "var(--font-departure)" }}
-        >
-          Marketplace
-        </h1>
-        <p className="text-[#94A3B8] mt-1 text-sm sm:text-base" style={{ fontFamily: "var(--font-departure)" }}>
-          Buy and sell 0xPIXEL NFTs
-        </p>
-      </div>
-    </div>
+    <header className="mb-4 sm:mb-5">
+      <h1
+        className="text-2xl sm:text-3xl font-bold text-white"
+        style={{ fontFamily: "var(--font-departure)" }}
+      >
+        Marketplace
+      </h1>
+    </header>
   );
 }
 
@@ -158,6 +160,7 @@ function MarketplaceBody({ userAddress }: BodyProps) {
       .filter((l) => l.active)
       .map((l) => ({
         listingId: BigInt(l.listingId),
+        collection: l.collection,
         tokenId: BigInt(l.tokenId),
         price: BigInt(l.price),
         seller: l.seller,
@@ -198,7 +201,7 @@ function MarketplaceBody({ userAddress }: BodyProps) {
   }, [handleRefresh]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 sm:space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="text-sm text-[#94A3B8]" style={{ fontFamily: "var(--font-departure)" }}>
           {loading && !data
@@ -207,14 +210,14 @@ function MarketplaceBody({ userAddress }: BodyProps) {
             ? "No listings"
             : `${sorted.length} listing${sorted.length === 1 ? "" : "s"}`}
         </div>
-        <div className="flex w-full items-center gap-2 sm:w-auto">
+        <div className="grid w-full grid-cols-[minmax(0,1fr)_2.75rem] items-center gap-2 sm:flex sm:w-auto">
           <select
             value={sort}
             onChange={(e) => {
               setSort(e.target.value as SortKey);
               setPage(1);
             }}
-            className="min-w-0 flex-1 sm:flex-none bg-[#0F0F23] border border-[#2D2D44] text-white text-sm rounded-lg px-3 py-2.5 sm:py-2 focus:outline-none focus:border-[#8888ff]"
+            className="h-11 min-w-0 flex-1 bg-[#0F0F23] border border-[#2D2D44] text-white text-sm rounded-lg px-3 focus:outline-none focus:border-[#8888ff] sm:h-10 sm:flex-none"
             style={{ fontFamily: "var(--font-departure)" }}
           >
             <option value="newest">Newest</option>
@@ -224,7 +227,7 @@ function MarketplaceBody({ userAddress }: BodyProps) {
           <button
             onClick={handleRefresh}
             aria-busy={loading || undefined}
-            className="pixel-btn-soft pixel-btn-soft-indigo px-3 py-2.5 sm:py-2 transition-colors"
+            className="pixel-btn-soft pixel-btn-soft-indigo inline-grid h-11 w-11 shrink-0 place-items-center p-0 transition-colors sm:h-10 sm:w-10"
             aria-label="Refresh"
             title="Refresh"
           >
@@ -267,7 +270,7 @@ function MarketplaceBody({ userAddress }: BodyProps) {
                 key={nft.listingId.toString()}
                 listing={nft}
                 userAddress={userAddress}
-                meta={data?.tokens[nft.tokenId.toString()] ?? null}
+                meta={data?.tokens[marketplaceNftKey(nft.collection, nft.tokenId)] ?? null}
                 onActionComplete={handleActionComplete}
               />
             ))}
@@ -289,7 +292,7 @@ function Pagination({ page, totalPages, onChange }: { page: number; totalPages: 
       <button
         onClick={() => onChange(Math.max(1, page - 1))}
         disabled={page <= 1}
-        className="px-4 py-3 sm:py-2 bg-[#1A1A2E] border border-[#2D2D44] rounded-lg text-white disabled:opacity-50 hover:border-[#8888ff]/50 transition-colors"
+        className="min-h-11 px-4 py-3 sm:py-2 bg-[#1A1A2E] border border-[#2D2D44] rounded-lg text-white disabled:opacity-50 hover:border-[#8888ff]/50 transition-colors"
         style={{ fontFamily: "var(--font-departure)" }}
       >
         Prev
@@ -298,7 +301,7 @@ function Pagination({ page, totalPages, onChange }: { page: number; totalPages: 
       <button
         onClick={() => onChange(Math.min(totalPages, page + 1))}
         disabled={page >= totalPages}
-        className="px-4 py-3 sm:py-2 bg-[#1A1A2E] border border-[#2D2D44] rounded-lg text-white disabled:opacity-50 hover:border-[#8888ff]/50 transition-colors"
+        className="min-h-11 px-4 py-3 sm:py-2 bg-[#1A1A2E] border border-[#2D2D44] rounded-lg text-white disabled:opacity-50 hover:border-[#8888ff]/50 transition-colors"
         style={{ fontFamily: "var(--font-departure)" }}
       >
         Next
@@ -486,9 +489,9 @@ function ActivityRow({ event }: { event: MarketActivityEvent }) {
   const hasTxHash = event.txHash !== "0x0000000000000000000000000000000000000000000000000000000000000000";
 
   return (
-    <article className="grid grid-cols-[44px_minmax(0,1fr)] gap-3 p-3 sm:grid-cols-[56px_minmax(0,1fr)_auto] sm:items-center sm:gap-4 sm:p-4">
+    <article className="marketplace-activity-row grid grid-cols-[44px_minmax(0,1fr)] gap-3 p-3 sm:grid-cols-[56px_minmax(0,1fr)_auto] sm:items-center sm:gap-4 sm:p-4">
       <a
-        href={getExplorerUrl(event.tokenId)}
+        href={getTokenExplorerUrl(PIXEL_NFT_CONTRACT_ADDRESS, event.tokenId)}
         target="_blank"
         rel="noopener noreferrer"
         className="h-11 w-11 overflow-hidden rounded-lg border border-[#2D2D44] bg-[#0F0F23] sm:h-14 sm:w-14"
@@ -515,7 +518,7 @@ function ActivityRow({ event }: { event: MarketActivityEvent }) {
             {label}
           </span>
           <a
-            href={getExplorerUrl(event.tokenId)}
+            href={getTokenExplorerUrl(PIXEL_NFT_CONTRACT_ADDRESS, event.tokenId)}
             target="_blank"
             rel="noopener noreferrer"
             className="min-w-0 truncate text-sm font-bold text-white transition-colors hover:text-[#AAAADD] sm:text-base"
@@ -754,7 +757,7 @@ function ListingCard({
   return (
     <div className="bg-[#1A1A2E] rounded-xl sm:rounded-2xl border border-[#2D2D44] overflow-hidden hover:border-[#8888ff]/40 transition-all hover:shadow-lg hover:shadow-[#8888ff]/10">
       <a
-        href={getExplorerUrl(listing.tokenId)}
+        href={getTokenExplorerUrl(listing.collection, listing.tokenId)}
         target="_blank"
         rel="noopener noreferrer"
         className="block aspect-square bg-gradient-to-br from-[#1A1A2E] to-[#0F0F23] relative overflow-hidden"
@@ -799,7 +802,7 @@ function ListingCard({
           <button
             onClick={handleCancel}
             disabled={busy !== null || isConfirming}
-            className="w-full py-3 sm:py-2.5 rounded-lg bg-red-500/20 border border-red-500/40 text-red-300 text-[10px] sm:text-xs font-bold hover:bg-red-500/30 transition-colors disabled:opacity-50"
+            className="min-h-11 w-full py-3 sm:py-2.5 rounded-lg bg-red-500/20 border border-red-500/40 text-red-300 text-[10px] sm:text-xs font-bold hover:bg-red-500/30 transition-colors disabled:opacity-50"
           >
             {busy === "cancel" || isConfirming ? "Cancelling..." : "Cancel Listing"}
           </button>
@@ -807,7 +810,7 @@ function ListingCard({
           <button
             onClick={handleBuy}
             disabled={busy !== null || isConfirming || isSwitchingChain}
-            className="w-full py-3 sm:py-2.5 rounded-lg bg-[#8888ff] hover:bg-[#AAAADD] text-white text-[10px] sm:text-xs font-bold transition-colors disabled:opacity-50"
+            className="min-h-11 w-full py-3 sm:py-2.5 rounded-lg bg-[#8888ff] hover:bg-[#AAAADD] text-white text-[10px] sm:text-xs font-bold transition-colors disabled:opacity-50"
           >
             {isSwitchingChain ? "Switching..." : busy === "buy" || isConfirming ? "Buying..." : "Buy Now"}
           </button>

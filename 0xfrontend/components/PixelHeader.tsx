@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
-import { shortenAddress } from "@/lib/contract";
+import { getAddressExplorerUrl, shortenAddress } from "@/lib/contract";
 import { useToast } from "@/components/Toast";
 import { normalizeError, shortHashOrAddr } from "@/lib/errors";
 import { LITVM_CHAIN_ID } from "@/lib/chainSwitch";
@@ -214,7 +214,7 @@ function AppHeader() {
         </button>
         <a
           role="menuitem"
-          href={`https://liteforge.explorer.caldera.xyz/address/${address}`}
+          href={address ? getAddressExplorerUrl(address) : "#"}
           target="_blank"
           rel="noopener noreferrer"
           className="w-full flex items-center gap-2 px-3.5 py-2.5 text-sm text-white hover:bg-white/[0.08] transition-colors"

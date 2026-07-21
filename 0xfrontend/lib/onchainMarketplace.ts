@@ -11,21 +11,19 @@ import {
   PIXEL_NFT_CONTRACT_ADDRESS,
   publicClient,
 } from "@/lib/contract";
-import { pixelDataToSVG } from "@/lib/gridParser";
+import { getPixelImageUrl } from "@/lib/pixelImage";
+import {
+  MARKETPLACE_START_BLOCK as PUBLIC_MARKETPLACE_START_BLOCK,
+  PIXEL_START_BLOCK as PUBLIC_PIXEL_START_BLOCK,
+} from "@/lib/publicConfig";
 import type {
   SubgraphMarketEventDTO,
   SubgraphMarketEventType,
   SubgraphTokenMetadata,
 } from "@/lib/marketplaceSubgraph";
 
-const PIXEL_START_BLOCK = parseStartBlock(
-  process.env.NEXT_PUBLIC_PIXEL_START_BLOCK,
-  24_867_130n
-);
-const MARKETPLACE_START_BLOCK = parseStartBlock(
-  process.env.NEXT_PUBLIC_MARKETPLACE_START_BLOCK,
-  24_867_505n
-);
+const PIXEL_START_BLOCK = PUBLIC_PIXEL_START_BLOCK;
+const MARKETPLACE_START_BLOCK = PUBLIC_MARKETPLACE_START_BLOCK;
 const EXPLORER_PAGE_SIZE = 1_000;
 const EXPLORER_MAX_RANGES = 64;
 const EXPLORER_TIMEOUT_MS = 8_000;
@@ -428,7 +426,7 @@ async function fetchTokenMetadata(
         name: name || `Token #${tokenId}`,
         imageUrl:
           pixelData && gridSize > 0n
-            ? pixelDataToSVG(pixelData, Number(gridSize))
+            ? getPixelImageUrl(tokenId)
             : "",
         creator: creator.toLowerCase() as `0x${string}`,
         mintedAt: Number(mintedAt),
@@ -478,15 +476,6 @@ function uintFromTopic(topic: Hex | null | undefined): bigint | null {
 function parseRpcNumber(value: string): number {
   const parsed = value.startsWith("0x") ? Number(BigInt(value)) : Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
-}
-
-function parseStartBlock(value: string | undefined, fallback: bigint): bigint {
-  if (!value || !/^\d+$/.test(value)) return fallback;
-  try {
-    return BigInt(value);
-  } catch {
-    return fallback;
-  }
 }
 
 function isPresent<T>(value: T | null): value is T {

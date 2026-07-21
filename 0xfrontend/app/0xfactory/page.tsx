@@ -6,11 +6,9 @@ import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { useWriteContract, useReadContract, usePublicClient } from "wagmi";
 import { formatUnits } from "viem";
 import { LITVM_CHAIN_ID } from "@/lib/chainSwitch";
+import { FACTORY_ADDRESS } from "@/lib/publicConfig";
+import { getTokenExplorerUrl } from "@/lib/explorer";
 import { useToast } from "@/components/Toast";
-
-const FACTORY_ADDRESS =
-  (process.env.NEXT_PUBLIC_FACTORY_ADDRESS as `0x${string}`) ||
-  "0x93F9d4cF10cB785B47BFaD64ecccEA4D66C73508";
 
 const FACTORY_ABI = [
   {
@@ -527,7 +525,7 @@ function TokenRow({ token, index }: { token: string; index: number }) {
           )}
         </button>
         <a
-          href={`https://liteforge.explorer.caldera.xyz/token/${token}`}
+          href={getTokenExplorerUrl(token)}
           target="_blank"
           rel="noopener noreferrer"
           className="pixel-btn pixel-btn-sm pixel-btn-secondary opacity-0 group-hover:opacity-100 transition-opacity"

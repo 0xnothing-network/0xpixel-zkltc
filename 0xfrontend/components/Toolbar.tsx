@@ -1,8 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { gsap } from "gsap";
-import { useGSAP } from "@gsap/react";
+import { useState, useEffect } from "react";
 
 interface ToolbarProps {
   selectedColor: string;
@@ -35,30 +33,9 @@ export function Toolbar({
   const [recentColors, setRecentColors] = useState<string[]>([]);
   const [mounted, setMounted] = useState(false);
   const [customHex, setCustomHex] = useState(selectedColor);
-  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { setMounted(true); }, []);
   useEffect(() => { setCustomHex(selectedColor); }, [selectedColor]);
-
-  useGSAP(() => {
-    if (!containerRef.current || !mounted) return;
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const touchDevice = window.matchMedia("(hover: none)").matches;
-    if (reducedMotion || touchDevice) return;
-
-    const children = Array.from(containerRef.current.children);
-    gsap.fromTo(
-      children,
-      { opacity: 0, y: 20 },
-      {
-        opacity: 1,
-        y: 0,
-        duration: 0.5,
-        stagger: 0.08,
-        ease: "power3.out",
-      }
-    );
-  }, { scope: containerRef, dependencies: [mounted] });
 
   const handleColorSelect = (color: string) => {
     onColorChange(color);
@@ -69,8 +46,7 @@ export function Toolbar({
 
   return (
     <div
-      ref={containerRef}
-      className="bg-[#1A1A2E] rounded-2xl p-3 sm:p-5 border border-[#2D2D44] flex flex-col gap-4 sm:gap-6"
+      className="animate-fadeInUp bg-[#1A1A2E] rounded-2xl p-3 sm:p-5 border border-[#2D2D44] flex flex-col gap-4 sm:gap-6"
     >
       {!mounted ? (
         <>
@@ -268,37 +244,10 @@ function ColorButton({
   isSelected: boolean;
   onClick: () => void;
 }) {
-  const btnRef = useRef<HTMLButtonElement>(null);
-
-  useGSAP(() => {
-    if (!btnRef.current) return;
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const touchDevice = window.matchMedia("(hover: none)").matches;
-    if (reducedMotion || touchDevice) return;
-
-    const handleMouseEnter = () => {
-      gsap.to(btnRef.current, { scale: 1.15, duration: 0.15, ease: "power2.out" });
-    };
-
-    const handleMouseLeave = () => {
-      gsap.to(btnRef.current, { scale: 1, duration: 0.15, ease: "power2.out" });
-    };
-
-    const btn = btnRef.current;
-    btn.addEventListener("mouseenter", handleMouseEnter);
-    btn.addEventListener("mouseleave", handleMouseLeave);
-
-    return () => {
-      btn.removeEventListener("mouseenter", handleMouseEnter);
-      btn.removeEventListener("mouseleave", handleMouseLeave);
-    };
-  }, { scope: btnRef });
-
   return (
     <button
-      ref={btnRef}
       onClick={onClick}
-      className="aspect-square min-h-8 rounded sm:min-h-0"
+      className="pixel-color-button aspect-square min-h-8 rounded sm:min-h-0"
       style={{
         backgroundColor: color,
         outline: isSelected ? "2px solid white" : "2px solid transparent",

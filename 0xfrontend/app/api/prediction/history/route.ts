@@ -95,7 +95,7 @@ export async function GET(request: Request) {
   const force = searchParams.get("force") === "1";
   const cached = historyCache.get(userAddress);
   if (!force && cached && Date.now() - cached.timestamp < HISTORY_CACHE_TTL_MS) {
-    return json(cached.value);
+    return json(cached.value, 200, true);
   }
 
   try {
@@ -103,7 +103,7 @@ export async function GET(request: Request) {
     const history = await fetchRoundHistory(rounds, userAddress);
     const value: PredictionHistoryPayload = { history, source: "explorer" };
     writeCache(userAddress, value);
-    return json(value);
+    return json(value, 200, !force);
   } catch (error) {
     console.error("[prediction-history] history fetch failed:", error);
     return json({ error: "Prediction history is unavailable" }, 503);
@@ -294,9 +294,13 @@ function writeCache(key: string, value: PredictionHistoryPayload) {
   }
 }
 
-function json(value: unknown, status = 200) {
+function json(value: unknown, status = 200, cacheable = false) {
   return NextResponse.json(value, {
     status,
-    headers: { "Cache-Control": "private, no-store" },
+    headers: {
+      "Cache-Control": cacheable
+        ? "public, s-maxage=15, stale-while-revalidate=15"
+        : "no-store",
+    },
   });
 }

@@ -1,31 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import Link from "next/link";
-import { gsap } from "gsap";
-import { ScrollTrigger } from "gsap/ScrollTrigger";
-import { useGSAP } from "@gsap/react";
-import { useAccount, useReadContract, useBlockNumber } from "wagmi";
+import { useAccount, useReadContract } from "wagmi";
 import { OwnedNftCard, type OwnedNft } from "@/components/OwnedNftCard";
 import { GridSkeleton } from "@/components/Skeleton";
 import { PIXEL_MARKETPLACE_ADDRESS } from "@/lib/contract";
 import { MarketplaceAbi } from "@/lib/marketplaceAbi";
 
-gsap.registerPlugin(ScrollTrigger, useGSAP);
-
 type SortKey = "newest" | "oldest" | "name";
 
 export default function GalleryPage() {
   const { address, isConnected } = useAccount();
-  const { data: blockNumber } = useBlockNumber({ watch: false });
   const [refreshKey, setRefreshKey] = useState(0);
   const [sort, setSort] = useState<SortKey>("newest");
-
-  const headerRef = useRef<HTMLDivElement>(null);
-  const titleRef = useRef<HTMLHeadingElement>(null);
-  const subtitleRef = useRef<HTMLParagraphElement>(null);
-  const ctaRef = useRef<HTMLAnchorElement>(null);
-  const gridRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(() => {
     setRefreshKey((k) => k + 1);
@@ -37,7 +25,6 @@ export default function GalleryPage() {
     abi: MarketplaceAbi,
     functionName: "paused",
   });
-  void blockNumber;
 
   const sorted = useMemo<OwnedNft[]>(() => {
     if (!data) return [];
@@ -64,103 +51,26 @@ export default function GalleryPage() {
     return arr;
   }, [data, sort]);
 
-  useGSAP(() => {
-    const tl = gsap.timeline({ defaults: { ease: "power3.out" } });
-
-    if (titleRef.current) {
-      tl.fromTo(
-        titleRef.current,
-        { opacity: 0, y: 40, scale: 0.95 },
-        { opacity: 1, y: 0, scale: 1, duration: 0.8 }
-      );
-    }
-
-    if (subtitleRef.current) {
-      tl.fromTo(
-        subtitleRef.current,
-        { opacity: 0, y: 20 },
-        { opacity: 1, y: 0, duration: 0.6 },
-        "-=0.4"
-      );
-    }
-
-    if (ctaRef.current) {
-      tl.fromTo(
-        ctaRef.current,
-        { opacity: 0, scale: 0.9 },
-        { opacity: 1, scale: 1, duration: 0.5 },
-        "-=0.3"
-      );
-    }
-  });
-
-  useEffect(() => {
-    if (!gridRef.current || sorted.length === 0) return;
-
-    const cards = gridRef.current.querySelectorAll("[data-card]");
-    if (cards.length === 0) return;
-
-    // Use will-change for GPU acceleration
-    cards.forEach((card) => {
-      (card as HTMLElement).style.willChange = "transform, opacity";
-    });
-
-    const tween = gsap.fromTo(
-      cards,
-      { opacity: 0, y: 30, scale: 0.95 },
-      {
-        opacity: 1,
-        y: 0,
-        scale: 1,
-        duration: 0.6,
-        stagger: 0.08,
-        ease: "power3.out",
-        scrollTrigger: {
-          trigger: gridRef.current,
-          start: "top 80%",
-          toggleActions: "play none none none",
-        },
-        onComplete: () => {
-          // Clean up will-change after animation
-          cards.forEach((card) => {
-            (card as HTMLElement).style.willChange = "auto";
-          });
-        },
-      }
-    );
-
-    return () => {
-      tween.scrollTrigger?.kill();
-      tween.kill();
-      cards.forEach((card) => {
-        (card as HTMLElement).style.willChange = "auto";
-      });
-    };
-  }, [sorted.length]);
-
   return (
     <div className="min-h-[calc(100vh-64px)] px-3 py-6 sm:px-5 sm:py-10 max-w-7xl mx-auto" style={{ fontFamily: "var(--font-departure)" }}>
-      <div ref={headerRef} className="mb-6 sm:mb-10 flex items-end justify-between flex-wrap gap-4">
+      <div className="mb-6 sm:mb-10 flex items-end justify-between flex-wrap gap-4">
         <div>
           <h1
-            ref={titleRef}
-            className="text-2xl sm:text-4xl font-bold text-white mb-2"
+            className="hero-fade-in text-2xl sm:text-4xl font-bold text-white mb-2"
             style={{ fontFamily: "var(--font-departure)" }}
           >
             MY GALLERY
           </h1>
           <p
-            ref={subtitleRef}
-            className="text-[#94A3B8] text-sm"
+            className="hero-fade-in-delay text-[#94A3B8] text-sm"
             style={{ fontFamily: "var(--font-departure)" }}
           >
             Your 0xPIXEL collection
           </p>
         </div>
         <Link
-          ref={ctaRef}
           href="/0xpixel"
-          className="pixel-btn pixel-btn-indigo"
+          className="animate-fadeInUp-delay-2 pixel-btn pixel-btn-indigo"
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -210,15 +120,15 @@ export default function GalleryPage() {
             </select>
           </div>
           <div
-            ref={gridRef}
-            className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-6"
+            className="nft-grid grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-6"
           >
-            {sorted.map((nft) => (
-              <div key={nft.tokenId.toString()} data-card>
+            {sorted.map((nft, index) => (
+              <div key={nft.tokenId.toString()}>
                 <OwnedNftCard
                   nft={nft}
                   isPaused={paused === true}
                   onChanged={refresh}
+                  priority={index < 4}
                 />
               </div>
             ))}
@@ -230,25 +140,8 @@ export default function GalleryPage() {
 }
 
 function NotConnected() {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useGSAP(() => {
-    if (!ref.current) return;
-    gsap.fromTo(
-      ref.current.children,
-      { opacity: 0, y: 30 },
-      {
-        opacity: 1,
-        y: 0,
-        duration: 0.6,
-        stagger: 0.1,
-        ease: "power3.out",
-      }
-    );
-  }, { scope: ref });
-
   return (
-    <div ref={ref} className="text-center py-20">
+    <div className="animate-fadeInUp text-center py-20">
       <h2
         className="text-xl font-bold text-white mb-2"
         style={{ fontFamily: "var(--font-departure)" }}
@@ -266,25 +159,8 @@ function NotConnected() {
 }
 
 function EmptyState() {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useGSAP(() => {
-    if (!ref.current) return;
-    gsap.fromTo(
-      ref.current.children,
-      { opacity: 0, y: 30 },
-      {
-        opacity: 1,
-        y: 0,
-        duration: 0.6,
-        stagger: 0.1,
-        ease: "power3.out",
-      }
-    );
-  }, { scope: ref });
-
   return (
-    <div ref={ref} className="text-center py-20">
+    <div className="animate-fadeInUp text-center py-20">
       <div className="w-24 h-24 mx-auto mb-6 bg-[#1A1A2E] rounded-2xl flex items-center justify-center border border-[#2D2D44]">
         <svg
           width="48"
@@ -333,21 +209,9 @@ function ErrorState({
   message: string;
   onRetry: () => void;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useGSAP(() => {
-    if (!ref.current) return;
-    gsap.fromTo(
-      ref.current,
-      { opacity: 0, scale: 0.95 },
-      { opacity: 1, scale: 1, duration: 0.5, ease: "power3.out" }
-    );
-  }, { scope: ref });
-
   return (
     <div
-      ref={ref}
-      className="text-center py-16 bg-[#1A1A2E] border border-red-500/30 rounded-2xl"
+      className="animate-fadeInUp text-center py-16 bg-[#1A1A2E] border border-red-500/30 rounded-2xl"
     >
       <p
         className="text-red-300 mb-4"
@@ -384,7 +248,7 @@ function useUserNfts(address: `0x${string}` | undefined, refreshKey: number) {
     if (refreshKey > 0) params.set("force", "1");
     fetch(`/api/user-nfts?${params.toString()}`, {
       signal: ctrl.signal,
-      cache: "no-store",
+      cache: refreshKey > 0 ? "no-store" : "default",
     })
       .then(async (r) => {
         if (!r.ok) {

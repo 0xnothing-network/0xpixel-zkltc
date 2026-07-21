@@ -66,10 +66,7 @@ export function useDexRead<T = unknown>(
     query: { enabled },
   });
 
-  return {
-    ...result,
-    data: result.data as T | undefined,
-  };
+  return result as Omit<typeof result, "data"> & { data: T | undefined };
 }
 
 export function useRewardRead<T = unknown>(
@@ -85,10 +82,7 @@ export function useRewardRead<T = unknown>(
     query: { enabled },
   });
 
-  return {
-    ...result,
-    data: result.data as T | undefined,
-  };
+  return result as Omit<typeof result, "data"> & { data: T | undefined };
 }
 
 // ============================================================
@@ -227,7 +221,7 @@ export function useTokenAllowance(token: Token | null, spender: `0x${string}`) {
     },
   });
 
-  return { ...result, refetch: result.refetch };
+  return result;
 }
 
 // ============================================================
@@ -263,6 +257,8 @@ export function useAllPools() {
     allowFailure: true,
     query: { enabled: !!pairIds && pairIds.length > 0 },
   });
+  const refetchPairIds = pairIdsQuery.refetch;
+  const refetchPoolInfos = poolInfosQuery.refetch;
 
   const result = useMemo<
     | {
@@ -289,21 +285,16 @@ export function useAllPools() {
 
   const refetch = useCallback(async () => {
     const [pairIdsResult] = await Promise.allSettled([
-      pairIdsQuery.refetch(),
-      poolInfosQuery.refetch(),
+      refetchPairIds(),
+      refetchPoolInfos(),
     ]);
     return pairIdsResult.status === "fulfilled" ? pairIdsResult.value : undefined;
-  }, [pairIdsQuery, poolInfosQuery]);
+  }, [refetchPairIds, refetchPoolInfos]);
 
   return {
-    ...pairIdsQuery,
     data: result,
     refetch,
   };
-}
-
-export function usePoolExists(pairId: `0x${string}` | undefined) {
-  return useDexRead<boolean>("poolExists", pairId ? [pairId] : undefined, !!pairId);
 }
 
 export function usePoolInfo(pairId: `0x${string}` | undefined) {
@@ -351,69 +342,9 @@ export function usePoolByTokens(
   return { pairId, pool };
 }
 
-export function usePoolPriceInfo(pairId: `0x${string}` | undefined) {
-  return useDexRead<readonly [bigint, bigint, bigint, bigint]>(
-    "getPoolPriceInfo",
-    pairId ? [pairId] : undefined,
-    !!pairId,
-  );
-}
-
-export function useSpotPrice(tokenIn: `0x${string}` | undefined, tokenOut: `0x${string}` | undefined) {
-  const { data: pairId, isLoading: loadingPair, error: pairError } = useDexRead<`0x${string}`>(
-    "getPairId",
-    tokenIn && tokenOut ? [tokenIn, tokenOut] : undefined,
-    !!tokenIn && !!tokenOut,
-  );
-  const { data: poolData, isLoading: loadingPool, error: poolError } = useDexRead<
-    readonly [
-      `0x${string}`,
-      `0x${string}`,
-      bigint,
-      bigint,
-      bigint,
-      bigint,
-      bigint,
-      bigint,
-      bigint,
-    ]
-  >("pools", pairId ? [pairId] : undefined, !!pairId);
-
-  const data = useMemo(() => {
-    if (!poolData || !tokenIn || poolData[2] === 0n || poolData[3] === 0n) return undefined;
-    return tokenIn.toLowerCase() === poolData[0].toLowerCase()
-      ? (poolData[2] * 10n ** 18n) / poolData[3]
-      : (poolData[3] * 10n ** 18n) / poolData[2];
-  }, [poolData, tokenIn]);
-
-  return {
-    data,
-    isLoading: loadingPair || loadingPool,
-    error: pairError || poolError,
-  };
-}
-
 // ============================================================
 // Rewards
 // ============================================================
-
-export function useUserPendingReward() {
-  const { address } = useAccount();
-  return useRewardRead<bigint>(
-    "getUserPendingReward",
-    address ? [address] : undefined,
-    !!address,
-  );
-}
-
-export function useUserNUSDLocked() {
-  const { address } = useAccount();
-  return useRewardRead<bigint>(
-    "userNUSDLocked",
-    address ? [address] : undefined,
-    !!address,
-  );
-}
 
 export function useDexStats() {
   const { data: totalNUSDLocked, isLoading: loadingNUSD } = useRewardRead<bigint>("totalNUSDLocked");
@@ -432,19 +363,6 @@ export function useDexStats() {
       loading: isLoading,
     }),
     [totalNUSDLocked, totalRewardPool, accRewardPerNUSD, swapFee, isLoading],
-  );
-}
-
-export function useDexOwner() {
-  const { address } = useAccount();
-  const { data: owner } = useDexRead<`0x${string}`>("owner");
-
-  return useMemo(
-    () => ({
-      isOwner: !!owner && !!address && owner.toLowerCase() === address.toLowerCase(),
-      owner,
-    }),
-    [owner, address],
   );
 }
 
@@ -623,10 +541,25 @@ export function useRealtimePrice(
     address: DEX_ADDRESS,
     abi: DEX_ABI,
     eventName: "Swapped",
+    enabled: Boolean(token0 && token1),
     onLogs: (logs) => {
+      if (!token0 || !token1) return;
+      const t0 = token0.toLowerCase();
+      const t1 = token1.toLowerCase();
+      const relevantLogs = logs.filter((log) => {
+        const args = log.args as SwappedEvent["args"];
+        if (!args) return false;
+        const tokenIn = args.tokenIn.toLowerCase();
+        const tokenOut = args.tokenOut.toLowerCase();
+        return (
+          (tokenIn === t0 && tokenOut === t1) ||
+          (tokenIn === t1 && tokenOut === t0)
+        );
+      });
+      if (relevantLogs.length === 0) return;
       setEvents((prev) => {
         const updated = [
-          ...logs.map((log) => ({
+          ...relevantLogs.map((log) => ({
             args: log.args as SwappedEvent["args"],
             blockNumber: log.blockNumber,
           })),
@@ -679,38 +612,4 @@ export function useRealtimePrice(
   }, [events, token0, token1, token0Decimals, token1Decimals]);
 
   return { latestPrice: latest, recentEvents: events };
-}
-
-/**
- * Subscribe to realtime price updates for a token pair and call onUpdate
- * whenever the price changes (with optional throttle in ms).
- */
-export function useRealtimePriceCallback(
-  token0: `0x${string}` | undefined,
-  token1: `0x${string}` | undefined,
-  onUpdate: (price: number) => void,
-  throttleMs = 100,
-) {
-  const { latestPrice } = useRealtimePrice(token0, token1);
-  const lastUpdateRef = useRef(0);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (!latestPrice) return;
-    const now = Date.now();
-    if (now - lastUpdateRef.current < throttleMs) {
-      // Throttle: cancel pending and schedule new
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      timeoutRef.current = setTimeout(() => {
-        lastUpdateRef.current = Date.now();
-        onUpdate(latestPrice.price);
-      }, throttleMs);
-    } else {
-      lastUpdateRef.current = now;
-      onUpdate(latestPrice.price);
-    }
-    return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    };
-  }, [latestPrice, throttleMs, onUpdate]);
 }

@@ -808,10 +808,9 @@ input[type="range"]::-webkit-slider-thumb:hover {
 }
 
 .nft-card {
-  opacity: 0;
-  transform: translateY(20px);
-  animation: cardSlideIn 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-  will-change: transform, opacity;
+  opacity: 1;
+  transform: none;
+  animation: cardSlideIn 0.5s cubic-bezier(0.4, 0, 0.2, 1) backwards;
 }
 
 .nft-card:nth-child(1) { animation-delay: 0.05s; }
@@ -1055,7 +1054,6 @@ input[type="range"]::-webkit-slider-thumb:hover {
 .pixel-nav-icon,
 .home-action,
 .home-card {
-  transform: translate3d(0,0,0);
   transition:
     transform 160ms ease,
     box-shadow 160ms ease,
@@ -8882,9 +8880,7 @@ button:disabled {
     background-color,
     border-color,
     opacity,
-    transform,
-    box-shadow,
-    filter !important;
+    transform !important;
 }
 
 .pixel-app-header,
@@ -8953,11 +8949,8 @@ body::after {
   backdrop-filter: blur(10px);
 }
 
-.zeroxn-hero-card,
 .zeroxn-panel,
-.zeroxn-stat-card,
 .zeroxn-post-card,
-.zeroxn-feed-head,
 .zeroxn-empty {
   background:
     linear-gradient(180deg, rgba(12, 12, 12, 0.98), rgba(3, 3, 3, 0.98)) !important;
@@ -8970,10 +8963,7 @@ body::after {
 
 .zeroxn-panel,
 .zeroxn-post-card,
-.zeroxn-stat-card,
-.zeroxn-feed-head,
 .zeroxn-empty,
-.zeroxn-channel-card,
 .zeroxn-nft-picker,
 .zeroxn-nft-attachment {
   transition:
@@ -8984,8 +8974,6 @@ body::after {
 }
 
 .zeroxn-post-card:hover,
-.zeroxn-stat-card:hover,
-.zeroxn-channel-card:hover,
 .zeroxn-nft-attachment:hover {
   border-color: rgba(247, 244, 233, 0.32) !important;
   transform: translate(-1px, -1px);
@@ -8999,27 +8987,6 @@ body::after {
 .zeroxn-panel-title {
   background:
     linear-gradient(90deg, rgba(255, 255, 255, 0.045), transparent 70%) !important;
-}
-
-.zeroxn-stat-card {
-  position: relative;
-  overflow: hidden;
-}
-
-.zeroxn-stat-card::after {
-  content: "";
-  position: absolute;
-  inset: auto 0 0 0;
-  height: 3px;
-  background: rgba(247, 244, 233, 0.62);
-}
-
-.zeroxn-accent-green::after {
-  background: var(--pixel-green);
-}
-
-.zeroxn-accent-amber::after {
-  background: var(--pixel-amber);
 }
 
 .zeroxn-composer textarea,
@@ -9119,13 +9086,6 @@ body::after {
     3px 3px 0 #000 !important;
 }
 
-.zeroxn-post-actions .pixel-btn-soft .zeroxn-action-icon {
-  color: #fffdf3;
-  font-size: 0.9rem;
-  line-height: 1;
-  opacity: 0.96;
-}
-
 .zeroxn-post-actions .pixel-btn-soft:disabled {
   opacity: 0.88 !important;
   filter: none !important;
@@ -9137,10 +9097,6 @@ body::after {
     linear-gradient(180deg, rgba(0, 255, 138, 0.16), rgba(0, 0, 0, 0.98)) !important;
   border-color: rgba(0, 255, 138, 0.56) !important;
   color: var(--pixel-green) !important;
-}
-
-.zeroxn-post-actions .pixel-btn-soft-emerald .zeroxn-action-icon {
-  color: var(--pixel-green);
 }
 
 .zeroxn-post-actions .pixel-btn-soft-indigo {
@@ -9157,11 +9113,6 @@ body::after {
   border-color: rgba(255, 226, 92, 0.68) !important;
   color: var(--pixel-amber) !important;
   text-shadow: 2px 2px 0 #000 !important;
-}
-
-.zeroxn-post-actions .pixel-btn-soft-amber .zeroxn-action-icon {
-  color: var(--pixel-amber);
-  font-size: 1rem;
 }
 
 .zeroxn-follow-btn.pixel-btn-soft {
@@ -9291,11 +9242,6 @@ body::after {
   align-self: start !important;
 }
 
-.zeroxn-post-metrics span {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018)) !important;
-}
-
 .zeroxn-nft-picker {
   background: rgba(255, 255, 255, 0.025) !important;
 }
@@ -9316,11 +9262,6 @@ body::after {
 
 .zeroxn-nft-attachment img {
   image-rendering: pixelated;
-}
-
-.zeroxn-channel-card {
-  background:
-    linear-gradient(180deg, rgba(10, 10, 10, 0.98), rgba(2, 2, 2, 0.98)) !important;
 }
 
 .zeroxn-group-room-card {
@@ -9377,13 +9318,8 @@ body::after {
 }
 
 @media (max-width: 640px) {
-  .zeroxn-hero-card {
-    padding: 1rem !important;
-  }
-
   .zeroxn-post-card,
-  .zeroxn-panel,
-  .zeroxn-feed-head {
+  .zeroxn-panel {
     box-shadow: 4px 4px 0 #000 !important;
   }
 
@@ -9462,7 +9398,6 @@ body::after {
 
 .zeroxn-social .pixel-btn-soft:hover:not(:disabled) {
   border-color: rgba(255, 250, 240, 0.42) !important;
-  filter: brightness(1.08);
   transform: translate(-1px, -1px);
 }
 
@@ -9695,13 +9630,6 @@ body::after {
   color: #fff4aa !important;
   background:
     linear-gradient(180deg, rgba(255, 226, 92, 0.22), rgba(41, 31, 0, 0.98)) !important;
-}
-
-.zeroxn-action-icon {
-  min-width: 1rem;
-  font-family: Arial, Helvetica, sans-serif !important;
-  font-weight: 900;
-  text-shadow: none !important;
 }
 
 .zeroxn-comment-preview {
@@ -10066,10 +9994,6 @@ body::after {
     linear-gradient(180deg, rgba(255, 226, 92, 0.2), rgba(34, 25, 0, 0.98)) !important;
 }
 
-.zeroxn-action-icon {
-  color: currentColor !important;
-}
-
 .zeroxn-group-role-badge {
   display: inline-grid;
   min-height: 1.15rem;
@@ -10223,8 +10147,7 @@ body::after {
 .zeroxn-social .pixel-btn-soft {
   transition:
     transform 120ms ease,
-    border-color 120ms ease,
-    filter 120ms ease;
+    border-color 120ms ease;
 }
 
 .zeroxn-social .pixel-btn-soft:active:not(:disabled),
@@ -10568,7 +10491,6 @@ img[src^="data:image/svg+xml"],
 .pixel-tab,
 .titlebar-btn {
   touch-action: manipulation;
-  transform: translateZ(0);
 }
 
 .pixel-btn-soft:disabled,
@@ -10591,7 +10513,6 @@ img[src^="data:image/svg+xml"],
 @supports (content-visibility: auto) {
   .zeroxn-post-card,
   .zeroxn-group-message,
-  .zeroxn-channel-card,
   .zeroxn-group-room-card {
     content-visibility: auto;
     contain-intrinsic-size: 280px;
@@ -11164,5 +11085,210 @@ img[src^="data:image/svg+xml"],
 @media (prefers-reduced-motion: reduce) {
   .zeroxn-channel-room-card {
     transition: none;
+  }
+}
+
+/* 0x profile history and notification activity. */
+.zeroxn-alerts-trigger {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
+
+.zeroxn-alert-count {
+  display: inline-grid;
+  width: 1.45rem;
+  height: 1.45rem;
+  place-items: center;
+  border: 1px solid currentColor;
+  background: #050505;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.zeroxn-profile-posts,
+.zeroxn-notifications {
+  width: min(100%, var(--zeroxn-feed-max)) !important;
+}
+
+.zeroxn-section-head {
+  min-height: 3.75rem;
+}
+
+.zeroxn-profile-post-skeleton,
+.zeroxn-notification-skeleton {
+  overflow: hidden;
+}
+
+.zeroxn-notification-list {
+  contain: content;
+}
+
+.zeroxn-notification-row {
+  min-height: 5.25rem;
+}
+
+.zeroxn-notification-kind {
+  display: inline-flex;
+  width: fit-content;
+  min-width: 5.8rem;
+  min-height: 1.8rem;
+  align-items: center;
+  border-left: 3px solid currentColor;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 0.35rem 0.55rem;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.zeroxn-notification-kind.is-like {
+  color: var(--pixel-green);
+}
+
+.zeroxn-notification-kind.is-comment {
+  color: #9aa7ff;
+}
+
+.zeroxn-notification-kind.is-follow {
+  color: var(--pixel-amber);
+}
+
+.zeroxn-notification-row .pixel-btn-soft {
+  white-space: nowrap;
+}
+
+.zeroxn-post-actions {
+  grid-template-columns: repeat(3, minmax(0, 7.5rem));
+  width: min(100%, 24rem) !important;
+}
+
+.zeroxn-post-actions .pixel-btn-soft {
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .zeroxn-alerts-trigger {
+    padding-inline: 0.55rem !important;
+  }
+
+  .zeroxn-app-actions {
+    gap: 0.4rem !important;
+  }
+
+  .zeroxn-feed-toolbar {
+    position: static !important;
+  }
+
+  .zeroxn-section-head {
+    align-items: stretch !important;
+  }
+
+  .zeroxn-section-head > button {
+    width: 100%;
+  }
+
+  .zeroxn-profile-summary .grid-cols-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .zeroxn-profile-summary .grid-cols-3 > div {
+    padding: 0.65rem !important;
+  }
+
+  .zeroxn-notification-row {
+    gap: 0.65rem;
+  }
+
+  .zeroxn-notification-row .pixel-btn-soft {
+    max-width: 70%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+/* Behavior-preserving runtime optimizations for long, interactive surfaces. */
+.pixel-color-button {
+  transition: transform 150ms ease;
+}
+
+.zeroxn-topbar,
+.zeroxn-feed-toolbar,
+.zeroxn-social .zeroxn-tabs {
+  background-color: #000 !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.zeroxn-panel,
+.zeroxn-post-card,
+.zeroxn-empty,
+.zeroxn-nft-picker,
+.zeroxn-nft-attachment {
+  transition-property: border-color, transform !important;
+}
+
+.zeroxn-feed-post {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.035),
+    4px 4px 0 #000 !important;
+}
+
+.zeroxn-post-card:hover {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    5px 5px 0 #000 !important;
+}
+
+.dex-top-pairs-list .pool-card-item {
+  animation: cardSlideIn 350ms cubic-bezier(0.4, 0, 0.2, 1) backwards;
+}
+
+.dex-top-pairs-list .pool-card-item:nth-child(1) { animation-delay: 40ms; }
+.dex-top-pairs-list .pool-card-item:nth-child(2) { animation-delay: 80ms; }
+.dex-top-pairs-list .pool-card-item:nth-child(3) { animation-delay: 120ms; }
+.dex-top-pairs-list .pool-card-item:nth-child(4) { animation-delay: 160ms; }
+.dex-top-pairs-list .pool-card-item:nth-child(5) { animation-delay: 200ms; }
+.dex-top-pairs-list .pool-card-item:nth-child(6) { animation-delay: 240ms; }
+.dex-top-pairs-list .pool-card-item:nth-child(7) { animation-delay: 280ms; }
+.dex-top-pairs-list .pool-card-item:nth-child(8) { animation-delay: 320ms; }
+.dex-top-pairs-list .pool-card-item:nth-child(n + 9) { animation-delay: 360ms; }
+
+@supports (content-visibility: auto) {
+  .marketplace-activity-row,
+  .prediction-history-item {
+    content-visibility: auto;
+  }
+
+  .marketplace-activity-row {
+    contain-intrinsic-size: 80px;
+  }
+
+  .prediction-history-item {
+    contain-intrinsic-size: 120px;
+  }
+}
+
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .pixel-color-button:hover {
+    transform: scale(1.15);
+  }
+
+  .nft-card:hover {
+    transform: translateY(-8px) scale(1.02);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pixel-color-button,
+  .dex-top-pairs-list .pool-card-item {
+    animation: none !important;
+    transform: none !important;
+    transition: none !important;
   }
 }

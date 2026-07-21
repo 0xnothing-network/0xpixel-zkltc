@@ -26,11 +26,16 @@ export async function GET(request: Request) {
   const skip = clampNumber(searchParams.get("skip"), 0, 10_000, 0);
   const eventTypes = parseEventTypes(searchParams.get("type"));
   const force = searchParams.get("force") === "1";
+  const responseHeaders = {
+    "Cache-Control": force
+      ? "no-store"
+      : "public, s-maxage=15, stale-while-revalidate=15",
+  };
   const cacheKey = `${limit}:${skip}:${eventTypes.join(",") || "all"}`;
   const cached = activityCache.get(cacheKey);
 
   if (!force && cached && Date.now() - cached.ts < ACTIVITY_TTL) {
-    return NextResponse.json(cached.value);
+    return NextResponse.json(cached.value, { headers: responseHeaders });
   }
 
   if (hasMarketplaceSubgraph()) {
@@ -42,7 +47,7 @@ export async function GET(request: Request) {
       });
       const value = { events: payload.events };
       writeActivityCache(cacheKey, value);
-      return NextResponse.json(value);
+      return NextResponse.json(value, { headers: responseHeaders });
     } catch (err) {
       console.warn("[marketplace] activity subgraph failed; using on-chain data:", err);
     }
@@ -55,13 +60,13 @@ export async function GET(request: Request) {
       eventTypes: eventTypes.length ? eventTypes : undefined,
     });
     writeActivityCache(cacheKey, payload);
-    return NextResponse.json(payload);
+    return NextResponse.json(payload, { headers: responseHeaders });
   } catch (err) {
     console.error("[marketplace] on-chain activity fallback failed:", err);
-    if (cached) return NextResponse.json(cached.value);
+    if (cached) return NextResponse.json(cached.value, { headers: responseHeaders });
     return NextResponse.json(
       { error: "Marketplace activity is unavailable" },
-      { status: 503 }
+      { status: 503, headers: { "Cache-Control": "no-store" } }
     );
   }
 }

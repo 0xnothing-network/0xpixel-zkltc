@@ -272,18 +272,6 @@ function writeCachedResponse(cacheKey: string, response: CandlesResponse) {
   } catch {}
 }
 
-export function getCachedCandlesResponse(
-  token0: string,
-  token1: string,
-  intervalMinutes: number,
-  token0Decimals = 18,
-  token1Decimals = 18,
-) {
-  return readCachedResponse(
-    getCandlesCacheKey(token0, token1, intervalMinutes, token0Decimals, token1Decimals),
-  );
-}
-
 export function getCandlesQueryKey(
   pairId: string,
   token0: string,

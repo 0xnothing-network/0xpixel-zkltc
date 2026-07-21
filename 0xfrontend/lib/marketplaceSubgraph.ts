@@ -1,15 +1,6 @@
 import { PIXEL_NFT_CONTRACT_ADDRESS } from "@/lib/contract";
-import { pixelDataToSVG } from "@/lib/gridParser";
-
-const DEFAULT_MARKETPLACE_SUBGRAPH_URL =
-  "https://api.goldsky.com/api/public/project_cmr0mev6548fr01xtd92rc135/subgraphs/marketplace/1.0.1/gn";
-
-const MARKETPLACE_SUBGRAPH_URL_RAW =
-  process.env.NEXT_PUBLIC_MARKETPLACE_SUBGRAPH_URL ||
-  DEFAULT_MARKETPLACE_SUBGRAPH_URL;
-
-const MARKETPLACE_SUBGRAPH_URL =
-  MARKETPLACE_SUBGRAPH_URL_RAW === "disabled" ? "" : MARKETPLACE_SUBGRAPH_URL_RAW;
+import { getPixelImageUrl } from "@/lib/pixelImage";
+import { MARKETPLACE_SUBGRAPH_URL } from "@/lib/publicConfig";
 
 const PIXEL_COLLECTION = PIXEL_NFT_CONTRACT_ADDRESS.toLowerCase();
 const SUBGRAPH_TOKEN_BATCH_SIZE = 500;
@@ -24,6 +15,7 @@ export interface SubgraphTokenMetadata {
 
 export interface SubgraphListingDTO {
   listingId: string;
+  collection: `0x${string}`;
   tokenId: string;
   price: string;
   seller: `0x${string}`;
@@ -83,6 +75,7 @@ interface TokenNode {
 interface ListingNode {
   id: string;
   listingId: string;
+  collection: string;
   tokenId: string;
   price: string;
   seller: string;
@@ -163,6 +156,7 @@ const ACTIVE_LISTINGS_QUERY = `
     ) {
       id
       listingId
+      collection
       tokenId
       price
       seller
@@ -176,6 +170,29 @@ const ACTIVE_LISTINGS_QUERY = `
         creator
         mintedAt
       }
+    }
+  }
+`;
+
+const ALL_ACTIVE_LISTINGS_QUERY = `
+  query GetAllActiveMarketplaceListings(
+    $limit: Int!
+    $skip: Int!
+  ) {
+    listings(
+      first: $limit
+      skip: $skip
+      orderBy: listedAt
+      orderDirection: desc
+      where: { active: true }
+    ) {
+      id
+      listingId
+      collection
+      tokenId
+      price
+      seller
+      active
     }
   }
 `;
@@ -329,7 +346,7 @@ const TOKEN_METADATA_BY_IDS_QUERY = `
 `;
 
 export function hasMarketplaceSubgraph(): boolean {
-  return MARKETPLACE_SUBGRAPH_URL.length > 0;
+  return true;
 }
 
 export async function fetchTokenMetadataFromSubgraph(
@@ -447,6 +464,7 @@ export async function fetchMarketplaceListingsFromSubgraph(
       const tokenId = listing.tokenId;
       listings.push({
         listingId: listing.listingId,
+        collection: normalizeAddress(listing.collection),
         tokenId,
         price: listing.price,
         seller: normalizeAddress(listing.seller),
@@ -468,6 +486,42 @@ export async function fetchMarketplaceListingsFromSubgraph(
   }
 
   return { listings, tokens };
+}
+
+export async function fetchAllMarketplaceListingsFromSubgraph(
+  limit = 5_000,
+): Promise<SubgraphListingDTO[]> {
+  const listings: SubgraphListingDTO[] = [];
+  const pageSize = Math.min(Math.max(1, limit), 1_000);
+  let skip = 0;
+
+  while (listings.length < limit) {
+    const data = await graphFetch<{ listings: ListingNode[] }>(
+      ALL_ACTIVE_LISTINGS_QUERY,
+      {
+        limit: Math.min(pageSize, limit - listings.length),
+        skip,
+      },
+    );
+
+    const page = data.listings ?? [];
+    for (const listing of page) {
+      if (!listing.active) continue;
+      listings.push({
+        listingId: listing.listingId,
+        collection: normalizeAddress(listing.collection),
+        tokenId: listing.tokenId,
+        price: listing.price,
+        seller: normalizeAddress(listing.seller),
+        active: true,
+      });
+    }
+
+    if (page.length < pageSize) break;
+    skip += page.length;
+  }
+
+  return listings;
 }
 
 export async function fetchMarketplaceActivityFromSubgraph({
@@ -612,10 +666,6 @@ async function graphFetch<T>(
   query: string,
   variables: Record<string, unknown>
 ): Promise<T> {
-  if (!MARKETPLACE_SUBGRAPH_URL) {
-    throw new Error("Marketplace subgraph URL is not configured");
-  }
-
   const response = await fetch(MARKETPLACE_SUBGRAPH_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -642,7 +692,7 @@ function imageUrlFromToken(token: TokenNode): string {
   if (!token.pixelData || !token.gridSize) return "";
   const gridSize = Number(token.gridSize);
   if (!Number.isFinite(gridSize) || gridSize <= 0) return "";
-  return pixelDataToSVG(token.pixelData, gridSize);
+  return getPixelImageUrl(token.tokenId);
 }
 
 function tokenMetadataFromNode(token: TokenNode, tokenId: string): SubgraphTokenMetadata {

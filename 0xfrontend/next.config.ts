@@ -9,8 +9,6 @@ const nextConfig: NextConfig = {
     optimizePackageImports: [
       "wagmi",
       "viem",
-      "gsap",
-      "@gsap/react",
       "lightweight-charts",
       "@tanstack/react-query",
     ],
@@ -50,7 +48,7 @@ const nextConfig: NextConfig = {
         ],
       },
       {
-        source: "/icon.svg",
+        source: "/favicon.svg",
         headers: [
           { key: "Cache-Control", value: "public, max-age=86400, must-revalidate" },
         ],

@@ -8,18 +8,13 @@ import {
 } from "viem";
 import { DEX_ABI, DEX_ADDRESS } from "@/lib/0xDexAbi";
 import { LITVM_EXPLORER_URL, publicClient } from "@/lib/contract";
+import {
+  DEX_ONCHAIN_LOOKBACK_BLOCKS,
+  DEX_START_BLOCK as PUBLIC_DEX_START_BLOCK,
+} from "@/lib/publicConfig";
 
-const DEFAULT_DEX_START_BLOCK = 24_869_425n;
-const DEX_START_BLOCK = parseBlockEnv(
-  process.env.NEXT_PUBLIC_DEX_START_BLOCK,
-  DEFAULT_DEX_START_BLOCK
-);
-const LOOKBACK_BLOCKS = parseBlockEnv(
-  process.env.NEXT_PUBLIC_DEX_ONCHAIN_LOOKBACK_BLOCKS,
-  80_000n,
-  1_000n,
-  500_000n
-);
+const DEX_START_BLOCK = PUBLIC_DEX_START_BLOCK;
+const LOOKBACK_BLOCKS = DEX_ONCHAIN_LOOKBACK_BLOCKS;
 const SWAPPED_TOPIC = keccak256(
   toBytes("Swapped(address,address,address,uint256,uint256,uint256)")
 );
@@ -442,21 +437,6 @@ function addressFromTopic(topic: Hex | null | undefined): `0x${string}` | null {
 function parseRpcNumber(value: string): number {
   const parsed = value.startsWith("0x") ? Number(BigInt(value)) : Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
-}
-
-function parseBlockEnv(
-  value: string | undefined,
-  fallback: bigint,
-  min = 0n,
-  max = 100_000_000n
-): bigint {
-  if (!value || !/^\d+$/.test(value)) return fallback;
-  try {
-    const parsed = BigInt(value);
-    return parsed >= min && parsed <= max ? parsed : fallback;
-  } catch {
-    return fallback;
-  }
 }
 
 function isPresent<T>(value: T | null): value is T {

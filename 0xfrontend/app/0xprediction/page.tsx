@@ -30,6 +30,7 @@ import {
   NUSD_FAUCET_ADDRESS,
 } from "@/lib/0xNUSDFaucetAbi";
 import { useToast } from "@/components/Toast";
+import { useDocumentVisibility } from "@/app/hooks/useDocumentVisibility";
 
 type AssetTuple = readonly [
   string,
@@ -369,6 +370,7 @@ function PairStatusButton({
 }
 
 export default function PredictionPage() {
+  const isDocumentVisible = useDocumentVisibility();
   const toast = useToast();
   const publicClient = usePublicClient();
   const { address, isConnected, chainId } = useAccount();
@@ -390,10 +392,14 @@ export default function PredictionPage() {
 
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isDocumentVisible) return;
     setNow(Date.now());
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [isDocumentVisible]);
 
   const walletAddress = mounted ? address : undefined;
   const walletConnected = mounted && isConnected;
@@ -621,6 +627,7 @@ export default function PredictionPage() {
       setHistoryLoading(false);
       return;
     }
+    if (!isDocumentVisible) return;
 
     const controller = new AbortController();
     let loading = false;
@@ -637,7 +644,7 @@ export default function PredictionPage() {
         if (force) params.set("force", "1");
 
         const response = await fetch(`/api/prediction/history?${params.toString()}`, {
-          cache: "no-store",
+          cache: force ? "no-store" : "default",
           signal: controller.signal,
         });
         const payload = (await response.json().catch(() => null)) as HistoryApiResponse | null;
@@ -682,12 +689,12 @@ export default function PredictionPage() {
     }
 
     void loadHistory(historyNonce > 0);
-    const id = window.setInterval(() => void loadHistory(), 15_000);
+    const id = window.setInterval(() => void loadHistory(), 60_000);
     return () => {
       controller.abort();
       window.clearInterval(id);
     };
-  }, [historyNonce, walletAddress]);
+  }, [historyNonce, isDocumentVisible, walletAddress]);
 
   const refetchAll = async () => {
     await Promise.allSettled([
@@ -1233,7 +1240,7 @@ export default function PredictionPage() {
                   return (
                     <article
                       key={item.roundId.toString()}
-                      className="min-w-0 border border-white/10 bg-black p-3 sm:p-4"
+                      className="prediction-history-item min-w-0 border border-white/10 bg-black p-3 sm:p-4"
                     >
                       <div className="flex min-w-0 items-start justify-between gap-3">
                         <div className="min-w-0">
